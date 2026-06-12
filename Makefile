@@ -1,7 +1,9 @@
 .PHONY: venv install test lint build run clean
 
 VENV := venv
-PY := $(VENV)/bin/python
+# env -u PYTHONPATH: a globally-set PYTHONPATH leaks foreign packages into
+# venvs and makes pip skip installing "already satisfied" deps. Strip it.
+PY := env -u PYTHONPATH $(VENV)/bin/python
 
 venv:
 	python3 -m venv $(VENV)
@@ -13,7 +15,7 @@ test:
 	$(PY) -m pytest -q
 
 lint:
-	$(VENV)/bin/ruff check gojira tests
+	env -u PYTHONPATH $(VENV)/bin/ruff check gojira tests
 
 build:
 	docker build -t gojira:dev .
