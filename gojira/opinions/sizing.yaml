@@ -1,0 +1,50 @@
+# Gojira's workload-class sizing opinions.
+#
+# These are the defaults Gojira bakes into generated manifests. They are
+# deliberately burstable (requests < limits, ratio 1:2): production evidence
+# shows Guaranteed QoS at low utilization wastes nodes. Override per-app in
+# gojira.yaml with a justification.
+#
+# Ephemeral storage is always explicit — unset ephemeral specs are a hidden
+# node-packing constraint.
+
+ephemeral_storage:
+  requests: 4Gi
+  limits: 8Gi
+
+classes:
+  web:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+    hpa: { target_cpu_percent: 70, min_replicas: 2, max_replicas: 10 }
+    probes:
+      readiness: { type: http, path: /health }
+      liveness: { type: http, path: /health }
+
+  worker:
+    requests: { cpu: 500m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
+    hpa: null
+    probes:
+      liveness: { type: tcp }
+
+  cron:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+    hpa: null
+    probes: {}
+
+  heavy:
+    requests: { cpu: "1", memory: 1Gi }
+    limits: { cpu: "2", memory: 2Gi }
+    hpa: { target_cpu_percent: 70, min_replicas: 2, max_replicas: 6 }
+    probes:
+      readiness: { type: http, path: /health }
+      liveness: { type: http, path: /health }
+
+  gpu:
+    requests: { cpu: "1", memory: 4Gi, gpu: 1 }
+    limits: { cpu: "2", memory: 8Gi, gpu: 1 }
+    hpa: null
+    probes:
+      liveness: { type: http, path: /health }

@@ -1,0 +1,15 @@
+# Gojira configuration. Copy to config.yaml and fill in.
+# All values support ${ENV_VAR} and ${ENV_VAR:-default} interpolation.
+
+github:
+  app_id: ${GOJIRA_GITHUB_APP_ID}
+  private_key_path: /secrets/github-app.pem
+  webhook_secret: ${GOJIRA_WEBHOOK_SECRET}
+
+database:
+  url: sqlite:///gojira.db
+  # url: postgresql://gojira:${DB_PASSWORD}@localhost:5432/gojira
+
+defaults:
+  ar_location: us-central1
+  environments: [dev, qa, prod]
