@@ -36,4 +36,4 @@ Jinja2 + htmx · GitHub App · GCP (ADC)
 
 ## License
 
-TBD (Apache-2.0 proposed).
+[Apache-2.0](LICENSE)

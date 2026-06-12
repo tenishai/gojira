@@ -1,9 +1,9 @@
 # Gojira — Design Document
 
-**Status:** Draft for review
+**Status:** Approved — phase 1 in development
 **Date:** 2026-06-12
 **Authors:** Shaz + Ember (SRE AI)
-**License target:** Open source (Apache-2.0 proposed)
+**License:** Apache-2.0
 
 ---
 
@@ -81,11 +81,30 @@ What Gojira generates (committed via setup PR to the user's repo):
 | Artifact | Path | Contents |
 |---|---|---|
 | CI workflow | `.github/workflows/gojira-ci.yaml` | Build → push to AR → `kubectl apply -k k8s/overlays/dev` on merge to main. WIF auth, no long-lived keys |
-| Promote workflow | `.github/workflows/gojira-promote.yaml` | Tag-triggered: retag image (`crane copy` or `gcloud artifacts docker tags add`), open a prod-deploy PR. Merging that PR applies prod |
+| Promote workflow | `.github/workflows/gojira-promote.yaml` | Tag-triggered: retag image, deploy QA, then deploy prod behind a manual approval gate (see Environment flow) |
 | Kustomize base | `k8s/base/` | Deployment, Service, HPA (class-dependent), PDB |
-| Overlays | `k8s/overlays/{dev,prod}/` | Namespace, image tag, per-env resource patches. (QA overlay optional via config) |
+| Overlays | `k8s/overlays/{dev,qa,prod}/` | Namespace, image tag, per-env resource patches |
 | Observability wiring | in `k8s/base/` | Prometheus scrape annotations, `/metrics` port on Service, default PrometheusRules per class. Non-optional — a Gojira app is observable from its first deploy |
 | Gojira spec | `gojira.yaml` | The app's declared class + overrides; see below |
+
+### Environment flow
+
+```
+merge to main ──────────────► deploy dev        (automatic)
+push tag vX.Y.Z ────────────► deploy qa         (automatic)
+        └── same workflow ──► deploy prod       (manual approval gate)
+```
+
+The promote workflow runs on tag push: retags the already-built image
+(`gcloud artifacts docker tags add` — no rebuild, the dev image is the
+artifact), applies the QA overlay, then the prod job waits on a GitHub
+**environment protection rule** (`environment: production` with required
+reviewers) — a native Approve button in the Actions run.
+
+Caveat: environment protection rules require a public repo or a paid GitHub
+plan on private repos. The generator detects this at onboard time and falls
+back to a separate `workflow_dispatch`-triggered prod deploy for plans
+without it.
 
 ### gojira.yaml — the app's contract
 
@@ -98,7 +117,7 @@ app: clips-api
 class: web
 cluster: my-dev-cluster          # must match a Gojira-registered cluster
 namespace: clips
-environments: [dev, prod]
+environments: [dev, qa, prod]
 overrides:                       # optional; justification required
   requests: { cpu: "1", memory: "1Gi" }
   justification: "p99 CPU is 800m measured over 14 days"
@@ -203,8 +222,7 @@ database:
 
 defaults:
   ar_location: us-central1
-  environments: [dev, prod]
-  qa_overlay: false
+  environments: [dev, qa, prod]
 ```
 
 Clusters are registered through the UI/API (stored in DB), not in config —
@@ -253,17 +271,18 @@ default implementation. Phase 4 works as a per-service thermostat without it.
 - Build infrastructure — builds run in the user's GitHub Actions, not in
   Gojira.
 
-## Open questions
+## Resolved questions (2026-06-12)
 
-1. **AR layout** — one shared Artifact Registry repo per cluster/project vs
-   per-app repos. Lean: shared per project, image path `<ar>/<app>:<tag>`.
-2. **Prod gate** — promote workflow opens a prod PR (lean), vs manual
-   `workflow_dispatch`. PR-as-gate matches the platform's PR-centric model.
-3. **Dockerfile requirement** — phase 1 assumes the repo has a Dockerfile.
-   Buildpacks fallback later?
-4. **Cluster registration auth** — registering a cluster just stores
-   coordinates; Gojira's ADC must already reach it. Do we validate
-   connectivity at registration time? (Lean: yes, a `connectivity_check`
-   provision-step-style probe.)
-5. **License** — Apache-2.0 vs MIT. Lean Apache-2.0 (patent grant matters
-   for infra tooling).
+1. **AR layout** — one shared Artifact Registry repo per project. Image
+   path: `<location>-docker.pkg.dev/<project>/<ar-repo>/<app>:<tag>`.
+2. **Environment flow** — merge to main → dev (auto), tag → qa (auto),
+   prod behind a manual approval gate (GitHub environment protection,
+   `workflow_dispatch` fallback). See Environment flow section.
+3. **Dockerfile required** — phase 1 assumes a Dockerfile at repo root.
+   Onboarding validates it exists and fails with a clear message if not.
+   Buildpacks are a possible later fallback, not phase 1.
+4. **Cluster registration validates connectivity** — registration runs a
+   probe (`get-credentials` + `kubectl auth can-i`) before accepting the
+   cluster. A cluster Gojira can't reach is a registration error, not a
+   deploy-time surprise.
+5. **License** — Apache-2.0. Patent grant matters for infra tooling.
