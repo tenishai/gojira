@@ -33,6 +33,7 @@ include = ["gojira*"]
 
 [tool.setuptools.package-data]
 "gojira.opinions" = ["*.yaml"]
+"gojira.generator" = ["templates/**/*.j2"]
 
 [tool.ruff]
 line-length = 100

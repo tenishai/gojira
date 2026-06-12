@@ -1,0 +1,14 @@
+# Gojira app spec — this file is the contract between your repo and Gojira.
+# Change the class or add overrides here; Gojira regenerates the manifests
+# when this file changes.
+app: {{ spec.app }}
+class: {{ spec.workload_class }}
+cluster: {{ spec.cluster_name }}
+namespace: {{ spec.namespace }}
+environments: [{{ spec.environments | join(", ") }}]
+{% if spec.schedule %}
+schedule: "{{ spec.schedule }}"
+{% endif %}
+# overrides:                  # needs a justification — see docs
+#   requests: { cpu: "1", memory: 1Gi }
+#   justification: "measured p99 over 14 days"
