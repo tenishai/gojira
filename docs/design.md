@@ -47,7 +47,7 @@ reimplemented cleanly.
 |---|---|---|
 | Standalone vs extend existing platform | Standalone | Clean scope; open-sourceable; no coupling to internal systems |
 | GitHub integration | GitHub App | Scoped permissions, installation flow, webhooks, can push commits/PRs. OAuth-only can't push cleanly |
-| GCP auth (phase 1) | Operator's Application Default Credentials | Honest single-tenant story. Gojira runs where its operator has gcloud auth. Hosted multi-tenant is explicitly out of scope |
+| GCP auth (phase 1) | Operator's `gcloud` credentials | The v0.1 backend shells out to `gcloud`, so it uses the active `gcloud auth login` account — not ADC. (ADC matters only if we adopt the Python google-cloud SDKs.) Honest single-tenant story; hosted multi-tenant is out of scope |
 | State store | SQLite default, Postgres optional | Zero-setup for evaluators; same SQLAlchemy models serve both |
 | Language / stack | Python — FastAPI + SQLAlchemy + light server-rendered frontend (Jinja2 + htmx) | Fast to build, approachable for contributors, matches the proven Kodama shape |
 | Cloud scope | GCP/GKE only | Coherent v1 pitch: "Gojira deploys to GKE." Multi-cloud is someone else's PR |
