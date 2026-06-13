@@ -9,6 +9,7 @@ import logging
 from dataclasses import dataclass
 
 from gojira.gcp import GCPClient
+from gojira.generator import GeneratorSpec, render
 from gojira.provisioner import ProvisionContext, Step
 
 log = logging.getLogger(__name__)
@@ -67,6 +68,13 @@ class Names:
             f"principalSet://iam.googleapis.com/projects/{project_number}"
             f"/locations/global/workloadIdentityPools/{WIF_POOL}"
             f"/attribute.repository/{self.repo_full_name}"
+        )
+
+    def wif_provider_name(self, project_number: str) -> str:
+        """Full resource name the GH Actions auth step references."""
+        return (
+            f"projects/{project_number}/locations/global"
+            f"/workloadIdentityPools/{WIF_POOL}/providers/{WIF_PROVIDER}"
         )
 
     @property
@@ -199,6 +207,54 @@ class EnsureArtifactRepo:
         return n.ar_repo
 
 
+def build_spec(ctx: ProvisionContext, gcp: GCPClient) -> GeneratorSpec:
+    """Assemble the GeneratorSpec from app + cluster + provisioned identity.
+
+    Called after the GCP steps run, so the GSA and WIF provider the
+    generated workflows reference actually exist.
+    """
+    n = Names.derive(ctx)
+    num = gcp.project_number(n.project)
+    return GeneratorSpec(
+        app=ctx.app.name,
+        repo_full_name=ctx.app.repo_full_name,
+        namespace=ctx.app.namespace,
+        workload_class=ctx.app.workload_class,
+        cluster_name=ctx.cluster.name,
+        gcp_project=ctx.cluster.gcp_project,
+        location=ctx.cluster.location,
+        gke_cluster=ctx.cluster.gke_cluster,
+        ar_repo=ctx.cluster.ar_repo,
+        wif_provider=n.wif_provider_name(num),
+        gsa_email=n.gsa_email,
+        environments=ctx.config.defaults.environments,
+    )
+
+
+class GenerateArtifacts:
+    """Render workflows + manifests into the repo working tree.
+
+    Idempotent by overwrite: re-rendering the same spec produces identical
+    files, so there's nothing to 'check' — apply() always regenerates.
+    """
+
+    name = "generate_artifacts"
+
+    def check(self, ctx: ProvisionContext) -> str | None:
+        return None
+
+    def apply(self, ctx: ProvisionContext) -> str:
+        if ctx.workdir is None:
+            raise ValueError("generate_artifacts requires ctx.workdir (the repo working tree)")
+        files = render(build_spec(ctx, _gcp(ctx)))
+        for relpath, content in files.items():
+            target = ctx.workdir / relpath
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
+        log.info("generated %d artifacts into %s", len(files), ctx.workdir)
+        return f"{len(files)} files"
+
+
 def default_gcp_steps() -> list[Step]:
     """The GCP-side provision sequence. GitHub + kubectl steps append later."""
     return [
@@ -210,3 +266,8 @@ def default_gcp_steps() -> list[Step]:
         GrantIamRoles(),
         EnsureArtifactRepo(),
     ]
+
+
+def default_steps() -> list[Step]:
+    """The full phase-1 provision sequence built so far (GCP + artifact generation)."""
+    return [*default_gcp_steps(), GenerateArtifacts()]

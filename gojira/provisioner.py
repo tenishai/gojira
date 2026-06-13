@@ -10,6 +10,7 @@ comes for free from the ledger.
 import json
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol
 
 from sqlalchemy import select
@@ -29,6 +30,9 @@ class ProvisionContext:
     cluster: Cluster
     config: Config
     clients: dict = field(default_factory=dict)
+    # The repo working tree: generate_artifacts writes here, open_setup_pr
+    # commits and pushes it. Set by the service layer after cloning the repo.
+    workdir: Path | None = None
 
 
 class Step(Protocol):

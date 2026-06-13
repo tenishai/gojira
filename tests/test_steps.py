@@ -18,9 +18,12 @@ from gojira.steps import (
     WIF_POOL,
     WIF_PROVIDER,
     BindWifRepo,
+    GenerateArtifacts,
     GrantIamRoles,
     Names,
+    build_spec,
     default_gcp_steps,
+    default_steps,
 )
 
 
@@ -244,3 +247,53 @@ def test_bind_wif_uses_project_number_in_principal_set(session, ctx):
     step.apply(ctx(gcp))
     binding = next(iter(gcp.sa_bindings))
     assert "/projects/999000111/" in binding[1]
+
+
+# --- spec assembly + artifact generation ------------------------------------
+
+
+def test_build_spec_wires_provisioned_identity(ctx):
+    gcp = FakeGCPClient(project_num="773958892580")
+    spec = build_spec(ctx(gcp), gcp)
+    assert spec.app == "clips-api"
+    assert spec.gsa_email == "clips-api-deploy@shaz-499303.iam.gserviceaccount.com"
+    assert spec.wif_provider == (
+        "projects/773958892580/locations/global"
+        "/workloadIdentityPools/gojira/providers/github"
+    )
+    assert spec.environments == ["dev", "qa", "prod"]
+    assert spec.image == "us-central1-docker.pkg.dev/shaz-499303/apps/clips-api"
+
+
+def test_generate_artifacts_writes_working_tree(session, ctx, tmp_path):
+    gcp = FakeGCPClient()
+    c = ctx(gcp)
+    c.workdir = tmp_path
+    ref = GenerateArtifacts().apply(c)
+
+    assert (tmp_path / ".github/workflows/gojira-ci.yaml").exists()
+    assert (tmp_path / "k8s/base/deployment.yaml").exists()
+    assert (tmp_path / "k8s/overlays/prod/kustomization.yaml").exists()
+    assert "files" in ref
+    # the generated workflow references the real provisioned provider
+    ci = (tmp_path / ".github/workflows/gojira-ci.yaml").read_text()
+    assert "workloadIdentityPools/gojira/providers/github" in ci
+
+
+def test_generate_artifacts_requires_workdir(session, ctx):
+    with pytest.raises(ValueError, match="workdir"):
+        GenerateArtifacts().apply(ctx(FakeGCPClient()))
+
+
+def test_full_default_sequence_provisions_and_generates(session, ctx, tmp_path):
+    gcp = FakeGCPClient()
+    c = ctx(gcp)
+    c.workdir = tmp_path
+    result = ProvisionEngine(default_steps()).run(session, c)
+
+    assert result.completed
+    assert "generate_artifacts" in result.steps_run
+    assert (tmp_path / "gojira.yaml").exists()
+    # GCP resources created AND files written — the full phase-1 chain
+    assert gcp.service_accounts
+    assert (tmp_path / "k8s/base/service.yaml").exists()
