@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 
 from gojira.config import Config
 from gojira.gcp import GCPClient
+from gojira.github import SETUP_BRANCH, GitHubClient
 from gojira.k8s import KubectlClient
 from gojira.models import App, AppStatus, Base, Cluster, ProvisionStep, StepStatus
 from gojira.provisioner import ProvisionContext, ProvisionEngine
@@ -24,6 +25,8 @@ from gojira.steps import (
     GenerateArtifacts,
     GrantIamRoles,
     Names,
+    OpenSetupPr,
+    PrepareWorkdir,
     build_spec,
     default_gcp_steps,
     default_steps,
@@ -119,6 +122,51 @@ class FakeKubectlClient(KubectlClient):
         self.namespaces[namespace] = labels
 
 
+class FakeGitHubClient(GitHubClient):
+    """In-memory git/GitHub. Tracks the repo flow; preset an existing PR."""
+
+    def __init__(self, *, default_branch="main", existing_pr=None):
+        self._default_branch = default_branch
+        self.prs = {}  # head -> url
+        if existing_pr:
+            self.prs[SETUP_BRANCH] = existing_pr
+        self.cloned = None
+        self.branch = None
+        self.committed = False
+        self.pushed = None
+        self.calls: list[str] = []
+
+    def default_branch(self, repo):
+        return self._default_branch
+
+    def clone(self, repo, workdir):
+        self.calls.append(f"clone:{repo}")
+        (workdir / ".git").mkdir(parents=True, exist_ok=True)
+        self.cloned = repo
+
+    def checkout_branch(self, workdir, branch):
+        self.calls.append(f"checkout:{branch}")
+        self.branch = branch
+
+    def commit_all(self, workdir, message):
+        self.calls.append("commit")
+        self.committed = True
+        return True
+
+    def push(self, workdir, branch):
+        self.calls.append(f"push:{branch}")
+        self.pushed = branch
+
+    def existing_pr(self, repo, head):
+        return self.prs.get(head)
+
+    def open_pr(self, repo, head, base, title, body):
+        self.calls.append(f"open_pr:{head}->{base}")
+        url = f"https://github.com/{repo}/pull/1"
+        self.prs[head] = url
+        return url
+
+
 @pytest.fixture
 def session():
     engine = create_engine("sqlite://")
@@ -149,10 +197,12 @@ def ctx(session):
     session.add(app)
     session.commit()
 
-    def _ctx(gcp, kubectl=None, workdir=None):
+    def _ctx(gcp, kubectl=None, github=None, workdir=None):
         clients = {"gcp": gcp}
         if kubectl is not None:
             clients["kubectl"] = kubectl
+        if github is not None:
+            clients["github"] = github
         return ProvisionContext(
             app=app, cluster=cluster, config=Config(), clients=clients, workdir=workdir
         )
@@ -328,17 +378,52 @@ def test_ensure_namespace_skips_when_present(ctx):
     assert kube.calls == []  # check short-circuits; apply never runs
 
 
-def test_full_default_sequence_provisions_and_generates(session, ctx, tmp_path):
-    gcp = FakeGCPClient()
-    kube = FakeKubectlClient()
-    c = ctx(gcp, kubectl=kube, workdir=tmp_path)
+def test_prepare_workdir_clones_and_branches(ctx, tmp_path):
+    gh = FakeGitHubClient()
+    c = ctx(FakeGCPClient(), github=gh, workdir=tmp_path)
+    step = PrepareWorkdir()
+    assert step.check(c) is None  # no .git yet
+    step.apply(c)
+    assert gh.cloned == "shaz/clips-api"
+    assert gh.branch == SETUP_BRANCH
+    assert step.check(c) == str(tmp_path)  # now .git exists -> would skip
+
+
+def test_open_setup_pr_commits_pushes_and_records_url(ctx, tmp_path):
+    gh = FakeGitHubClient()
+    c = ctx(FakeGCPClient(), github=gh, workdir=tmp_path)
+    step = OpenSetupPr()
+    assert step.check(c) is None  # no PR yet
+    url = step.apply(c)
+    assert gh.committed and gh.pushed == SETUP_BRANCH
+    assert "open_pr:gojira/setup->main" in gh.calls
+    assert url == "https://github.com/shaz/clips-api/pull/1"
+    assert c.app.setup_pr_url == url
+
+
+def test_open_setup_pr_skips_when_pr_exists(ctx, tmp_path):
+    existing = "https://github.com/shaz/clips-api/pull/42"
+    gh = FakeGitHubClient(existing_pr=existing)
+    c = ctx(FakeGCPClient(), github=gh, workdir=tmp_path)
+    step = OpenSetupPr()
+    assert step.check(c) == existing  # skip — no duplicate PR
+    assert c.app.setup_pr_url == existing
+    assert "open_pr" not in " ".join(gh.calls)
+
+
+def test_full_default_sequence_end_to_end(session, ctx, tmp_path):
+    gcp, kube, gh = FakeGCPClient(), FakeKubectlClient(), FakeGitHubClient()
+    c = ctx(gcp, kubectl=kube, github=gh, workdir=tmp_path)
     result = ProvisionEngine(default_steps()).run(session, c)
 
     assert result.completed
-    assert "ensure_namespace" in result.steps_run
-    assert "generate_artifacts" in result.steps_run
-    assert (tmp_path / "gojira.yaml").exists()
-    # GCP resources + namespace created AND files written — the full phase-1 chain
+    assert c.app.status == AppStatus.AWAITING_PR
+    # every layer touched: GCP identity, namespace, generated files, PR opened
     assert gcp.service_accounts
     assert kube.namespaces["clips"] == MANAGED_LABEL
     assert (tmp_path / "k8s/base/service.yaml").exists()
+    assert (tmp_path / "gojira.yaml").exists()
+    assert c.app.setup_pr_url == "https://github.com/shaz/clips-api/pull/1"
+    # ledger captures the PR url as the final step's resource_ref
+    pr_row = next(r for r in session.scalars(select(ProvisionStep)) if r.step_name == "open_setup_pr")
+    assert pr_row.resource_ref == c.app.setup_pr_url

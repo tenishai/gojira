@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from gojira.gcp import GCPClient
 from gojira.generator import GeneratorSpec, render
+from gojira.github import SETUP_BRANCH, GitHubClient
 from gojira.k8s import KubectlClient
 from gojira.provisioner import ProvisionContext, Step
 
@@ -91,6 +92,10 @@ def _gcp(ctx: ProvisionContext) -> GCPClient:
 
 def _kubectl(ctx: ProvisionContext) -> KubectlClient:
     return ctx.clients["kubectl"]
+
+
+def _github(ctx: ProvisionContext) -> GitHubClient:
+    return ctx.clients["github"]
 
 
 class EnsureApisEnabled:
@@ -229,6 +234,71 @@ class EnsureNamespace:
         return ns
 
 
+class PrepareWorkdir:
+    """Clone the repo into the working tree and switch to the setup branch.
+
+    Runs before generate_artifacts so the rendered files land on top of the
+    real repo, ready to commit.
+    """
+
+    name = "prepare_workdir"
+
+    def check(self, ctx: ProvisionContext) -> str | None:
+        if ctx.workdir is None:
+            raise ValueError("prepare_workdir requires ctx.workdir")
+        return str(ctx.workdir) if (ctx.workdir / ".git").exists() else None
+
+    def apply(self, ctx: ProvisionContext) -> str:
+        if ctx.workdir is None:
+            raise ValueError("prepare_workdir requires ctx.workdir")
+        gh = _github(ctx)
+        gh.clone(ctx.app.repo_full_name, ctx.workdir)
+        gh.checkout_branch(ctx.workdir, SETUP_BRANCH)
+        return str(ctx.workdir)
+
+
+class OpenSetupPr:
+    """Commit the generated tree, push the setup branch, open the setup PR.
+
+    Idempotent on the durable outcome: if a setup PR is already open, record
+    and skip rather than opening a duplicate.
+    """
+
+    name = "open_setup_pr"
+
+    def check(self, ctx: ProvisionContext) -> str | None:
+        url = _github(ctx).existing_pr(ctx.app.repo_full_name, SETUP_BRANCH)
+        if url:
+            ctx.app.setup_pr_url = url
+        return url
+
+    def apply(self, ctx: ProvisionContext) -> str:
+        if ctx.workdir is None:
+            raise ValueError("open_setup_pr requires ctx.workdir")
+        gh = _github(ctx)
+        repo = ctx.app.repo_full_name
+        committed = gh.commit_all(ctx.workdir, "Add Gojira deploy config")
+        if not committed:
+            raise ValueError("nothing to commit — did generate_artifacts run?")
+        gh.push(ctx.workdir, SETUP_BRANCH)
+        base = gh.default_branch(repo)
+        url = gh.open_pr(
+            repo,
+            head=SETUP_BRANCH,
+            base=base,
+            title="Add Gojira deploy config",
+            body=(
+                f"Gojira provisioned deploy config for **{ctx.app.name}** "
+                f"(`{ctx.app.workload_class}`) targeting cluster "
+                f"`{ctx.cluster.name}`.\n\n"
+                "Merge to enable push-to-deploy: merge to main → dev, "
+                "tag → qa, manual approval → prod."
+            ),
+        )
+        ctx.app.setup_pr_url = url
+        return url
+
+
 def build_spec(ctx: ProvisionContext, gcp: GCPClient) -> GeneratorSpec:
     """Assemble the GeneratorSpec from app + cluster + provisioned identity.
 
@@ -291,10 +361,16 @@ def default_gcp_steps() -> list[Step]:
 
 
 def default_steps() -> list[Step]:
-    """The full phase-1 provision sequence built so far.
+    """The full phase-1 provision sequence.
 
-    GCP identity + Artifact Registry, then the cluster namespace, then
-    artifact generation. Requires ctx.clients['gcp'] and ['kubectl'], and
-    ctx.workdir for the generate step.
+    GCP identity + Artifact Registry, the cluster namespace, then the repo
+    flow: clone the working tree, render artifacts into it, open the setup
+    PR. Requires ctx.clients['gcp'|'kubectl'|'github'] and ctx.workdir.
     """
-    return [*default_gcp_steps(), EnsureNamespace(), GenerateArtifacts()]
+    return [
+        *default_gcp_steps(),
+        EnsureNamespace(),
+        PrepareWorkdir(),
+        GenerateArtifacts(),
+        OpenSetupPr(),
+    ]
