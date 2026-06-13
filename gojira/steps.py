@@ -10,9 +10,12 @@ from dataclasses import dataclass
 
 from gojira.gcp import GCPClient
 from gojira.generator import GeneratorSpec, render
+from gojira.k8s import KubectlClient
 from gojira.provisioner import ProvisionContext, Step
 
 log = logging.getLogger(__name__)
+
+MANAGED_LABEL = {"gojira.dev/managed": "true"}
 
 WIF_POOL = "gojira"
 WIF_PROVIDER = "github"
@@ -84,6 +87,10 @@ class Names:
 
 def _gcp(ctx: ProvisionContext) -> GCPClient:
     return ctx.clients["gcp"]
+
+
+def _kubectl(ctx: ProvisionContext) -> KubectlClient:
+    return ctx.clients["kubectl"]
 
 
 class EnsureApisEnabled:
@@ -207,6 +214,21 @@ class EnsureArtifactRepo:
         return n.ar_repo
 
 
+class EnsureNamespace:
+    """Create the app's namespace on the target cluster, labeled as managed."""
+
+    name = "ensure_namespace"
+
+    def check(self, ctx: ProvisionContext) -> str | None:
+        ns = ctx.app.namespace
+        return ns if _kubectl(ctx).namespace_exists(ns) else None
+
+    def apply(self, ctx: ProvisionContext) -> str:
+        ns = ctx.app.namespace
+        _kubectl(ctx).ensure_namespace(ns, MANAGED_LABEL)
+        return ns
+
+
 def build_spec(ctx: ProvisionContext, gcp: GCPClient) -> GeneratorSpec:
     """Assemble the GeneratorSpec from app + cluster + provisioned identity.
 
@@ -269,5 +291,10 @@ def default_gcp_steps() -> list[Step]:
 
 
 def default_steps() -> list[Step]:
-    """The full phase-1 provision sequence built so far (GCP + artifact generation)."""
-    return [*default_gcp_steps(), GenerateArtifacts()]
+    """The full phase-1 provision sequence built so far.
+
+    GCP identity + Artifact Registry, then the cluster namespace, then
+    artifact generation. Requires ctx.clients['gcp'] and ['kubectl'], and
+    ctx.workdir for the generate step.
+    """
+    return [*default_gcp_steps(), EnsureNamespace(), GenerateArtifacts()]

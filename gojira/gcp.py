@@ -14,9 +14,9 @@ semantics.
 """
 
 import logging
-import subprocess
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+
+from gojira.shell import CommandRunner
 
 log = logging.getLogger(__name__)
 
@@ -30,22 +30,6 @@ WIF_ATTRIBUTE_MAPPING = (
 
 class GCPError(RuntimeError):
     """A gcloud command failed for a reason other than 'not found'."""
-
-
-@dataclass
-class CommandResult:
-    returncode: int
-    stdout: str
-    stderr: str
-
-
-class CommandRunner:
-    """Runs a command, returns its result. Injectable so steps/clients test clean."""
-
-    def run(self, args: list[str]) -> CommandResult:
-        log.debug("exec: %s", " ".join(args))
-        proc = subprocess.run(args, capture_output=True, text=True)
-        return CommandResult(proc.returncode, proc.stdout.strip(), proc.stderr.strip())
 
 
 class GCPClient(ABC):
@@ -97,6 +81,11 @@ class GCPClient(ABC):
 
     @abstractmethod
     def create_artifact_repo(self, project: str, location: str, repo: str) -> None: ...
+
+    @abstractmethod
+    def get_gke_credentials(self, project: str, location: str, cluster: str) -> str:
+        """Populate local kubeconfig for the cluster; return the context name."""
+        ...
 
 
 class GcloudClient(GCPClient):
@@ -232,6 +221,15 @@ class GcloudClient(GCPClient):
             "artifacts", "repositories", "create", repo,
             "--repository-format=docker", f"--location={location}", f"--project={project}",
         )
+
+    # --- gke -----------------------------------------------------------------
+
+    def get_gke_credentials(self, project: str, location: str, cluster: str) -> str:
+        self._exec(
+            "container", "clusters", "get-credentials", cluster,
+            f"--location={location}", f"--project={project}",
+        )
+        return f"gke_{project}_{location}_{cluster}"
 
 
 def _policy_has(policy_json: str, member: str, role: str) -> bool:

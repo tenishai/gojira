@@ -10,14 +10,17 @@ from sqlalchemy.orm import sessionmaker
 
 from gojira.config import Config
 from gojira.gcp import GCPClient
+from gojira.k8s import KubectlClient
 from gojira.models import App, AppStatus, Base, Cluster, ProvisionStep, StepStatus
 from gojira.provisioner import ProvisionContext, ProvisionEngine
 from gojira.steps import (
     DEPLOY_ROLES,
+    MANAGED_LABEL,
     REQUIRED_APIS,
     WIF_POOL,
     WIF_PROVIDER,
     BindWifRepo,
+    EnsureNamespace,
     GenerateArtifacts,
     GrantIamRoles,
     Names,
@@ -96,6 +99,25 @@ class FakeGCPClient(GCPClient):
         self.calls.append(f"create_ar:{location}/{repo}")
         self.artifact_repos.add((location, repo))
 
+    def get_gke_credentials(self, project, location, cluster):
+        self.calls.append(f"get_creds:{cluster}")
+        return f"gke_{project}_{location}_{cluster}"
+
+
+class FakeKubectlClient(KubectlClient):
+    """In-memory cluster namespaces."""
+
+    def __init__(self, existing=None):
+        self.namespaces = dict(existing or {})  # name -> labels
+        self.calls: list[str] = []
+
+    def namespace_exists(self, namespace):
+        return namespace in self.namespaces
+
+    def ensure_namespace(self, namespace, labels):
+        self.calls.append(f"ensure_ns:{namespace}")
+        self.namespaces[namespace] = labels
+
 
 @pytest.fixture
 def session():
@@ -127,8 +149,13 @@ def ctx(session):
     session.add(app)
     session.commit()
 
-    def _ctx(gcp):
-        return ProvisionContext(app=app, cluster=cluster, config=Config(), clients={"gcp": gcp})
+    def _ctx(gcp, kubectl=None, workdir=None):
+        clients = {"gcp": gcp}
+        if kubectl is not None:
+            clients["kubectl"] = kubectl
+        return ProvisionContext(
+            app=app, cluster=cluster, config=Config(), clients=clients, workdir=workdir
+        )
 
     return _ctx
 
@@ -285,15 +312,33 @@ def test_generate_artifacts_requires_workdir(session, ctx):
         GenerateArtifacts().apply(ctx(FakeGCPClient()))
 
 
+def test_ensure_namespace_creates_with_managed_label(ctx):
+    kube = FakeKubectlClient()
+    step = EnsureNamespace()
+    assert step.check(ctx(FakeGCPClient(), kubectl=kube)) is None
+    ref = step.apply(ctx(FakeGCPClient(), kubectl=kube))
+    assert ref == "clips"
+    assert kube.namespaces["clips"] == MANAGED_LABEL
+
+
+def test_ensure_namespace_skips_when_present(ctx):
+    kube = FakeKubectlClient(existing={"clips": {"existing": "label"}})
+    step = EnsureNamespace()
+    assert step.check(ctx(FakeGCPClient(), kubectl=kube)) == "clips"
+    assert kube.calls == []  # check short-circuits; apply never runs
+
+
 def test_full_default_sequence_provisions_and_generates(session, ctx, tmp_path):
     gcp = FakeGCPClient()
-    c = ctx(gcp)
-    c.workdir = tmp_path
+    kube = FakeKubectlClient()
+    c = ctx(gcp, kubectl=kube, workdir=tmp_path)
     result = ProvisionEngine(default_steps()).run(session, c)
 
     assert result.completed
+    assert "ensure_namespace" in result.steps_run
     assert "generate_artifacts" in result.steps_run
     assert (tmp_path / "gojira.yaml").exists()
-    # GCP resources created AND files written — the full phase-1 chain
+    # GCP resources + namespace created AND files written — the full phase-1 chain
     assert gcp.service_accounts
+    assert kube.namespaces["clips"] == MANAGED_LABEL
     assert (tmp_path / "k8s/base/service.yaml").exists()
