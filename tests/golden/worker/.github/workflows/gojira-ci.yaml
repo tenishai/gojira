@@ -47,5 +47,14 @@ jobs:
           TAG="${GITHUB_SHA::12}"
           cd k8s/overlays/dev
           kustomize edit set image gojira-app="$IMAGE:$TAG"
-          kubectl apply -k .
-          kubectl -n clips rollout status deployment/clips-worker --timeout=180s
+          # Retry: a cold cluster may have no nodes yet, so operator admission
+          # webhooks (e.g. GMP, which validates the Rules resource) can be
+          # briefly unavailable. A genuine error still fails after the retries.
+          ok=false
+          for attempt in $(seq 1 10); do
+            if kubectl apply -k .; then ok=true; break; fi
+            echo "apply attempt $attempt failed; waiting for cluster to settle..."
+            sleep 30
+          done
+          [ "$ok" = true ] || { echo "deploy failed after retries"; exit 1; }
+          kubectl -n clips rollout status deployment/clips-worker --timeout=300s

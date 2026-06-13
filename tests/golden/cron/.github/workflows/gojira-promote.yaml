@@ -59,7 +59,15 @@ jobs:
         run: |
           cd k8s/overlays/qa
           kustomize edit set image gojira-app="$IMAGE:$GITHUB_REF_NAME"
-          kubectl apply -k .
+          # Retry: operator admission webhooks can be briefly unavailable on a
+          # cold cluster. A genuine error still fails after the retries.
+          ok=false
+          for attempt in $(seq 1 10); do
+            if kubectl apply -k .; then ok=true; break; fi
+            echo "apply attempt $attempt failed; waiting for cluster to settle..."
+            sleep 30
+          done
+          [ "$ok" = true ] || { echo "deploy failed after retries"; exit 1; }
 
   deploy-prod:
     needs: deploy-qa
@@ -86,4 +94,12 @@ jobs:
         run: |
           cd k8s/overlays/prod
           kustomize edit set image gojira-app="$IMAGE:$GITHUB_REF_NAME"
-          kubectl apply -k .
+          # Retry: operator admission webhooks can be briefly unavailable on a
+          # cold cluster. A genuine error still fails after the retries.
+          ok=false
+          for attempt in $(seq 1 10); do
+            if kubectl apply -k .; then ok=true; break; fi
+            echo "apply attempt $attempt failed; waiting for cluster to settle..."
+            sleep 30
+          done
+          [ "$ok" = true ] || { echo "deploy failed after retries"; exit 1; }
