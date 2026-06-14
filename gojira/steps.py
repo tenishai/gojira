@@ -1,17 +1,25 @@
-"""The GCP-side provision steps and the default sequence.
+"""Provision steps, organized by scope, plus multi-env spec assembly.
 
-Each step derives its concrete parameters from the ProvisionContext
-(app + cluster) and calls the GCPClient. Steps are thin: naming and
-derivation live here, the actual cloud operations live in GCPClient.
+Steps are thin: naming and derivation live here, the cloud operations live in
+the clients. Each step reads only the part of the ProvisionContext its scope
+sets — `ctx.project` for per-project identity, `ctx.environment` for per-env
+cluster work, `ctx.environments` for per-app generation.
+
+Promotion model (revised from the design doc): the CI workflow builds and
+deploys the first env (dev). Each later env builds from scratch too, EXCEPT
+the last (prod), which crane-copies the exact image its predecessor (qa) built
+and tested — prod runs the bytes qa validated, no rebuild. The last env is the
+gated production target.
 """
 
 import logging
 from dataclasses import dataclass
 
 from gojira.gcp import GCPClient
-from gojira.generator import GeneratorSpec, render
+from gojira.generator import EnvSpec, GeneratorSpec, render
 from gojira.github import SETUP_BRANCH, GitHubClient
 from gojira.k8s import KubectlClient
+from gojira.models import App, Environment
 from gojira.provisioner import ProvisionContext, Step
 
 log = logging.getLogger(__name__)
@@ -35,10 +43,14 @@ DEPLOY_ROLES = (
     "roles/container.developer",
 )
 
+# Role a copy-target env's deploy GSA needs on the SOURCE project's registry
+# so its promote job can read the image it crane-copies (cross-project only).
+PROMOTE_READER_ROLE = "roles/artifactregistry.reader"
+
 
 @dataclass(frozen=True)
 class Names:
-    """Concrete resource identifiers derived from an app + cluster."""
+    """Concrete resource identifiers for an app within one GCP project."""
 
     project: str
     gsa_account_id: str
@@ -49,23 +61,28 @@ class Names:
     ar_repo: str
 
     @classmethod
-    def derive(cls, ctx: ProvisionContext) -> "Names":
-        project = ctx.cluster.gcp_project
-        account_id = f"{ctx.app.name}-deploy"
-        owner, _, _ = ctx.app.repo_full_name.partition("/")
-        # cluster.ar_repo is "<location>-docker.pkg.dev/<project>/<repo>"
-        host, _, path = ctx.cluster.ar_repo.partition("/")
+    def for_project(cls, app: App, project: str, ar_repo: str) -> "Names":
+        account_id = f"{app.name}-deploy"
+        owner, _, _ = app.repo_full_name.partition("/")
+        # ar_repo is "<location>-docker.pkg.dev/<project>/<repo>"
+        host, _, path = ar_repo.partition("/")
         ar_location = host.removesuffix("-docker.pkg.dev")
-        ar_repo = path.rsplit("/", 1)[-1]
         return cls(
             project=project,
             gsa_account_id=account_id,
             gsa_email=f"{account_id}@{project}.iam.gserviceaccount.com",
             repo_owner=owner,
-            repo_full_name=ctx.app.repo_full_name,
+            repo_full_name=app.repo_full_name,
             ar_location=ar_location,
-            ar_repo=ar_repo,
+            ar_repo=path.rsplit("/", 1)[-1],
         )
+
+    @classmethod
+    def derive(cls, ctx: ProvisionContext) -> "Names":
+        """Derive from the per-project scope target set on the context."""
+        if ctx.project is None:
+            raise ValueError("Names.derive needs ctx.project (per-project scope)")
+        return cls.for_project(ctx.app, ctx.project.project, ctx.project.ar_repo)
 
     def principal_set(self, project_number: str) -> str:
         return (
@@ -98,22 +115,23 @@ def _github(ctx: ProvisionContext) -> GitHubClient:
     return ctx.clients["github"]
 
 
+# --- per-project scope: identity (SA, WIF, IAM, Artifact Registry) -----------
+
+
 class EnsureApisEnabled:
     name = "ensure_apis_enabled"
 
     def check(self, ctx: ProvisionContext) -> str | None:
-        gcp = _gcp(ctx)
-        project = ctx.cluster.gcp_project
-        if all(gcp.api_enabled(project, api) for api in REQUIRED_APIS):
+        gcp, n = _gcp(ctx), Names.derive(ctx)
+        if all(gcp.api_enabled(n.project, api) for api in REQUIRED_APIS):
             return ",".join(REQUIRED_APIS)
         return None
 
     def apply(self, ctx: ProvisionContext) -> str:
-        gcp = _gcp(ctx)
-        project = ctx.cluster.gcp_project
+        gcp, n = _gcp(ctx), Names.derive(ctx)
         for api in REQUIRED_APIS:
-            if not gcp.api_enabled(project, api):
-                gcp.enable_api(project, api)
+            if not gcp.api_enabled(n.project, api):
+                gcp.enable_api(n.project, api)
         return ",".join(REQUIRED_APIS)
 
 
@@ -168,14 +186,12 @@ class BindWifRepo:
     role = "roles/iam.workloadIdentityUser"
 
     def check(self, ctx: ProvisionContext) -> str | None:
-        n = Names.derive(ctx)
-        gcp = _gcp(ctx)
+        n, gcp = Names.derive(ctx), _gcp(ctx)
         member = n.principal_set(gcp.project_number(n.project))
         return member if gcp.sa_has_binding(n.project, n.gsa_email, member, self.role) else None
 
     def apply(self, ctx: ProvisionContext) -> str:
-        n = Names.derive(ctx)
-        gcp = _gcp(ctx)
+        n, gcp = Names.derive(ctx), _gcp(ctx)
         member = n.principal_set(gcp.project_number(n.project))
         gcp.add_sa_binding(n.project, n.gsa_email, member, self.role)
         return member
@@ -187,15 +203,13 @@ class GrantIamRoles:
     name = "grant_iam_roles"
 
     def check(self, ctx: ProvisionContext) -> str | None:
-        n = Names.derive(ctx)
-        gcp = _gcp(ctx)
+        n, gcp = Names.derive(ctx), _gcp(ctx)
         if all(gcp.project_has_binding(n.project, n.gsa_member, r) for r in DEPLOY_ROLES):
             return ",".join(DEPLOY_ROLES)
         return None
 
     def apply(self, ctx: ProvisionContext) -> str:
-        n = Names.derive(ctx)
-        gcp = _gcp(ctx)
+        n, gcp = Names.derive(ctx), _gcp(ctx)
         for role in DEPLOY_ROLES:
             if not gcp.project_has_binding(n.project, n.gsa_member, role):
                 gcp.add_project_binding(n.project, n.gsa_member, role)
@@ -219,27 +233,70 @@ class EnsureArtifactRepo:
         return n.ar_repo
 
 
+# --- per-environment scope: cluster setup ------------------------------------
+
+
 class EnsureNamespace:
-    """Create the app's namespace on the target cluster, labeled as managed."""
+    """Create the env's namespace on its cluster, labeled as managed.
+
+    The kubectl client is bound to this env's cluster by the orchestrator.
+    """
 
     name = "ensure_namespace"
 
     def check(self, ctx: ProvisionContext) -> str | None:
-        ns = ctx.app.namespace
+        ns = _env(ctx).namespace
         return ns if _kubectl(ctx).namespace_exists(ns) else None
 
     def apply(self, ctx: ProvisionContext) -> str:
-        ns = ctx.app.namespace
+        ns = _env(ctx).namespace
         _kubectl(ctx).ensure_namespace(ns, MANAGED_LABEL)
         return ns
 
 
-class PrepareWorkdir:
-    """Clone the repo into the working tree and switch to the setup branch.
+class GrantPromoteSourceReader:
+    """Let a copy-target env's GSA read the source env's registry (cross-project).
 
-    Runs before generate_artifacts so the rendered files land on top of the
-    real repo, ready to commit.
+    Only the last (prod) env crane-copies, and only when its project differs
+    from the source (qa) env's project does it need a grant. Same-project — the
+    common case and the v1 validation milestone — is a clean no-op.
     """
+
+    name = "grant_promote_source_reader"
+
+    def _source(self, ctx: ProvisionContext) -> Environment | None:
+        plan = promotion_plan(ctx.environments)
+        return plan[_env(ctx).id].copy_from
+
+    def check(self, ctx: ProvisionContext) -> str | None:
+        env = _env(ctx)
+        source = self._source(ctx)
+        if source is None or source.cluster.gcp_project == env.cluster.gcp_project:
+            return "n/a"  # not a cross-project copy target — nothing to grant
+        n = Names.for_project(ctx.app, env.cluster.gcp_project, env.cluster.ar_repo)
+        return (
+            f"{source.cluster.gcp_project}:{PROMOTE_READER_ROLE}"
+            if _gcp(ctx).project_has_binding(
+                source.cluster.gcp_project, n.gsa_member, PROMOTE_READER_ROLE
+            )
+            else None
+        )
+
+    def apply(self, ctx: ProvisionContext) -> str:
+        env = _env(ctx)
+        source = self._source(ctx)
+        n = Names.for_project(ctx.app, env.cluster.gcp_project, env.cluster.ar_repo)
+        _gcp(ctx).add_project_binding(
+            source.cluster.gcp_project, n.gsa_member, PROMOTE_READER_ROLE
+        )
+        return f"{source.cluster.gcp_project}:{PROMOTE_READER_ROLE}"
+
+
+# --- per-app scope: repo working tree + setup PR -----------------------------
+
+
+class PrepareWorkdir:
+    """Clone the repo into the working tree and switch to the setup branch."""
 
     name = "prepare_workdir"
 
@@ -257,12 +314,28 @@ class PrepareWorkdir:
         return str(ctx.workdir)
 
 
-class OpenSetupPr:
-    """Commit the generated tree, push the setup branch, open the setup PR.
+class GenerateArtifacts:
+    """Render workflows + manifests into the repo working tree (idempotent overwrite)."""
 
-    Idempotent on the durable outcome: if a setup PR is already open, record
-    and skip rather than opening a duplicate.
-    """
+    name = "generate_artifacts"
+
+    def check(self, ctx: ProvisionContext) -> str | None:
+        return None
+
+    def apply(self, ctx: ProvisionContext) -> str:
+        if ctx.workdir is None:
+            raise ValueError("generate_artifacts requires ctx.workdir (the repo working tree)")
+        files = render(build_spec(ctx, _gcp(ctx)))
+        for relpath, content in files.items():
+            target = ctx.workdir / relpath
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
+        log.info("generated %d artifacts into %s", len(files), ctx.workdir)
+        return f"{len(files)} files"
+
+
+class OpenSetupPr:
+    """Commit the generated tree, push the setup branch, open the setup PR."""
 
     name = "open_setup_pr"
 
@@ -282,6 +355,9 @@ class OpenSetupPr:
             raise ValueError("nothing to commit — did generate_artifacts run?")
         gh.push(ctx.workdir, SETUP_BRANCH)
         base = gh.default_branch(repo)
+        envs = ", ".join(
+            f"`{e.name}`→`{e.cluster.name}`" for e in order_by_promotion(ctx.environments)
+        )
         url = gh.open_pr(
             repo,
             head=SETUP_BRANCH,
@@ -289,8 +365,8 @@ class OpenSetupPr:
             title="Add Gojira deploy config",
             body=(
                 f"Gojira provisioned deploy config for **{ctx.app.name}** "
-                f"(`{ctx.app.workload_class}`) targeting cluster "
-                f"`{ctx.cluster.name}`.\n\n"
+                f"(`{ctx.app.workload_class}`).\n\n"
+                f"Environments: {envs}.\n\n"
                 "Merge to enable push-to-deploy: merge to main → dev, "
                 "tag → qa, manual approval → prod."
             ),
@@ -299,56 +375,88 @@ class OpenSetupPr:
         return url
 
 
-def build_spec(ctx: ProvisionContext, gcp: GCPClient) -> GeneratorSpec:
-    """Assemble the GeneratorSpec from app + cluster + provisioned identity.
+# --- promotion topology + spec assembly --------------------------------------
 
-    Called after the GCP steps run, so the GSA and WIF provider the
-    generated workflows reference actually exist.
+
+@dataclass(frozen=True)
+class EnvPlan:
+    """An env's role in the promotion path."""
+
+    copy_from: Environment | None  # crane-copy source, or None to build from scratch
+    gated: bool                    # behind the production environment gate
+    is_ci: bool                    # the env CI builds + deploys (the first)
+
+
+def order_by_promotion(envs: list[Environment]) -> list[Environment]:
+    """Stable promotion order without needing config: dev, qa, prod, then rest."""
+    rank = {"dev": 0, "qa": 1, "prod": 2}
+    return sorted(envs, key=lambda e: (rank.get(e.name, 99), e.id))
+
+
+def promotion_plan(envs: list[Environment]) -> dict[int, EnvPlan]:
+    """Map each env id to its promotion role.
+
+    First env is the CI target (builds + deploys on push). Middle envs build
+    from scratch on promote. The last env crane-copies from its predecessor
+    and is the gated production target. A single-env app has only the CI target.
     """
-    n = Names.derive(ctx)
-    num = gcp.project_number(n.project)
+    ordered = order_by_promotion(envs)
+    plan: dict[int, EnvPlan] = {}
+    for i, env in enumerate(ordered):
+        is_ci = i == 0
+        is_last = i == len(ordered) - 1
+        copy_from = ordered[i - 1] if (is_last and not is_ci) else None
+        plan[env.id] = EnvPlan(copy_from=copy_from, gated=is_last and not is_ci, is_ci=is_ci)
+    return plan
+
+
+def build_spec(ctx: ProvisionContext, gcp: GCPClient) -> GeneratorSpec:
+    """Assemble the multi-env GeneratorSpec from app + environments + identity.
+
+    Called after the GCP steps run, so each env's GSA and WIF provider exist.
+    One EnvSpec per environment, each carrying its own project-scoped identity.
+    """
+    ordered = order_by_promotion(ctx.environments)
+    plan = promotion_plan(ordered)
+    env_specs: list[EnvSpec] = []
+    for env in ordered:
+        cluster = env.cluster
+        n = Names.for_project(ctx.app, cluster.gcp_project, cluster.ar_repo)
+        p = plan[env.id]
+        env_specs.append(
+            EnvSpec(
+                name=env.name,
+                namespace=env.namespace,
+                project=cluster.gcp_project,
+                cluster_name=cluster.name,
+                location=cluster.location,
+                gke_cluster=cluster.gke_cluster,
+                ar_repo=cluster.ar_repo,
+                wif_provider=n.wif_provider_name(gcp.project_number(cluster.gcp_project)),
+                gsa_email=n.gsa_email,
+                copy_from=p.copy_from.name if p.copy_from else None,
+                gated=p.gated,
+            )
+        )
     return GeneratorSpec(
         app=ctx.app.name,
         repo_full_name=ctx.app.repo_full_name,
-        namespace=ctx.app.namespace,
         workload_class=ctx.app.workload_class,
-        cluster_name=ctx.cluster.name,
-        gcp_project=ctx.cluster.gcp_project,
-        location=ctx.cluster.location,
-        gke_cluster=ctx.cluster.gke_cluster,
-        ar_repo=ctx.cluster.ar_repo,
-        wif_provider=n.wif_provider_name(num),
-        gsa_email=n.gsa_email,
-        environments=ctx.config.defaults.environments,
+        environments=env_specs,
     )
 
 
-class GenerateArtifacts:
-    """Render workflows + manifests into the repo working tree.
-
-    Idempotent by overwrite: re-rendering the same spec produces identical
-    files, so there's nothing to 'check' — apply() always regenerates.
-    """
-
-    name = "generate_artifacts"
-
-    def check(self, ctx: ProvisionContext) -> str | None:
-        return None
-
-    def apply(self, ctx: ProvisionContext) -> str:
-        if ctx.workdir is None:
-            raise ValueError("generate_artifacts requires ctx.workdir (the repo working tree)")
-        files = render(build_spec(ctx, _gcp(ctx)))
-        for relpath, content in files.items():
-            target = ctx.workdir / relpath
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content)
-        log.info("generated %d artifacts into %s", len(files), ctx.workdir)
-        return f"{len(files)} files"
+def _env(ctx: ProvisionContext) -> Environment:
+    if ctx.environment is None:
+        raise ValueError("step requires ctx.environment (per-env scope)")
+    return ctx.environment
 
 
-def default_gcp_steps() -> list[Step]:
-    """The GCP-side provision sequence. GitHub + kubectl steps append later."""
+# --- scope sequences ---------------------------------------------------------
+
+
+def per_project_steps() -> list[Step]:
+    """Identity: SA, WIF pool/provider, repo binding, IAM roles, Artifact Registry."""
     return [
         EnsureApisEnabled(),
         EnsureServiceAccount(),
@@ -360,17 +468,11 @@ def default_gcp_steps() -> list[Step]:
     ]
 
 
-def default_steps() -> list[Step]:
-    """The full phase-1 provision sequence.
+def per_env_steps() -> list[Step]:
+    """Per-environment cluster setup: namespace + any cross-project promote grant."""
+    return [EnsureNamespace(), GrantPromoteSourceReader()]
 
-    GCP identity + Artifact Registry, the cluster namespace, then the repo
-    flow: clone the working tree, render artifacts into it, open the setup
-    PR. Requires ctx.clients['gcp'|'kubectl'|'github'] and ctx.workdir.
-    """
-    return [
-        *default_gcp_steps(),
-        EnsureNamespace(),
-        PrepareWorkdir(),
-        GenerateArtifacts(),
-        OpenSetupPr(),
-    ]
+
+def per_app_steps() -> list[Step]:
+    """The repo flow: clone the working tree, render artifacts, open the setup PR."""
+    return [PrepareWorkdir(), GenerateArtifacts(), OpenSetupPr()]

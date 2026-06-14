@@ -1,12 +1,21 @@
-"""Engine semantics: ordering, skip, halt-on-failure, resume, ledger truth."""
+"""Engine semantics: ordering, skip, halt, resume, scoping, ledger truth.
+
+The engine is scope-agnostic and does not touch app status or emit run
+lifecycle events — those are the orchestrator's job (covered in test_steps.py).
+"""
 
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from gojira.config import Config
-from gojira.models import App, AppStatus, Base, Cluster, Event, ProvisionStep, StepStatus
-from gojira.provisioner import ProvisionContext, ProvisionEngine
+from gojira.models import App, Base, Cluster, Environment, Event, ProvisionStep, StepStatus
+from gojira.provisioner import (
+    ProvisionContext,
+    ProvisionEngine,
+    distinct_projects,
+    order_environments,
+)
 
 
 class FakeStep:
@@ -39,26 +48,15 @@ def session():
 
 @pytest.fixture
 def ctx(session):
-    cluster = Cluster(
-        name="dev",
-        gcp_project="example-project",
-        location="us-central1",
-        gke_cluster="dev-gke",
-        ar_repo="us-central1-docker.pkg.dev/example-project/apps",
-    )
-    session.add(cluster)
-    session.commit()
     app = App(
         name="clips-api",
         repo_full_name="example/clips-api",
         installation_id=1,
-        cluster_id=cluster.id,
-        namespace="clips",
         workload_class="web",
     )
     session.add(app)
     session.commit()
-    return ProvisionContext(app=app, cluster=cluster, config=Config())
+    return ProvisionContext(app=app, config=Config())
 
 
 def ledger(session, app, name) -> ProvisionStep:
@@ -77,7 +75,6 @@ def test_happy_path(session, ctx):
     assert result.completed
     assert result.steps_run == ["a", "b"]
     assert calls == ["check:a", "apply:a", "check:b", "apply:b"]
-    assert ctx.app.status == AppStatus.AWAITING_PR
     for name in ("a", "b"):
         row = ledger(session, ctx.app, name)
         assert row.status == StepStatus.DONE
@@ -93,7 +90,7 @@ def test_existing_resource_skipped(session, ctx):
     assert result.completed
     assert result.steps_skipped == ["a"]
     assert result.steps_run == ["b"]
-    assert "apply:a" not in calls  # check short-circuits apply
+    assert "apply:a" not in calls
     assert ledger(session, ctx.app, "a").status == StepStatus.SKIPPED
     assert ledger(session, ctx.app, "a").resource_ref == "ref:a"
 
@@ -108,30 +105,27 @@ def test_failure_halts_run(session, ctx):
     assert not result.completed
     assert result.failed_step == "b"
     assert "exploded" in result.error
-    assert ctx.app.status == AppStatus.FAILED
-    assert "check:c" not in calls  # c never ran
+    assert "check:c" not in calls
     assert ledger(session, ctx.app, "b").status == StepStatus.FAILED
     assert "exploded" in ledger(session, ctx.app, "b").error
-    assert ledger(session, ctx.app, "c") is None  # no ledger row for unreached step
+    assert ledger(session, ctx.app, "c") is None
 
 
 def test_resume_after_failure(session, ctx):
     calls = []
     flaky = FakeStep("b", calls, fail=True)
-    steps = [FakeStep("a", calls), flaky, FakeStep("c", calls)]
-    engine = ProvisionEngine(steps)
+    engine = ProvisionEngine([FakeStep("a", calls), flaky, FakeStep("c", calls)])
 
     assert not engine.run(session, ctx).completed
 
-    flaky.fail = False  # operator fixed the underlying issue
+    flaky.fail = False
     calls.clear()
     result = engine.run(session, ctx)
 
     assert result.completed
     assert calls == ["check:b", "apply:b", "check:c", "apply:c"]  # a not re-run
     assert result.steps_run == ["b", "c"]
-    assert ctx.app.status == AppStatus.AWAITING_PR
-    assert ledger(session, ctx.app, "b").error is None  # cleared on retry
+    assert ledger(session, ctx.app, "b").error is None
 
 
 def test_rerun_completed_is_noop(session, ctx):
@@ -142,21 +136,67 @@ def test_rerun_completed_is_noop(session, ctx):
 
     result = engine.run(session, ctx)
     assert result.completed
-    assert calls == []  # nothing re-executed
+    assert calls == []
     assert result.steps_run == []
 
 
-def test_events_emitted(session, ctx):
-    engine = ProvisionEngine([FakeStep("a", [], fail=True)])
-    engine.run(session, ctx)
+def test_scope_key_scopes_ledger_rows(session, ctx):
+    """The same step run under two scopes keeps two independent ledger rows."""
+    engine = ProvisionEngine([FakeStep("ensure_sa", [])])
+    engine.run(session, ctx, scope_key="proj-a")
+    engine.run(session, ctx, scope_key="proj-b")
 
+    assert ledger(session, ctx.app, "ensure_sa@proj-a").status == StepStatus.DONE
+    assert ledger(session, ctx.app, "ensure_sa@proj-b").status == StepStatus.DONE
+    assert ledger(session, ctx.app, "ensure_sa") is None  # unscoped row never created
+
+
+def test_engine_emits_step_failed_only(session, ctx):
+    """The engine emits the granular failure event but no run lifecycle events."""
+    ProvisionEngine([FakeStep("a", [], fail=True)]).run(session, ctx)
     types = [e.type for e in session.scalars(select(Event)).all()]
-    assert "provision.run_started" in types
-    assert "provision.step_failed" in types
-    assert "provision.run_completed" not in types
+    assert types == ["provision.step_failed"]
 
 
 def test_duplicate_step_names_rejected():
-    calls = []
     with pytest.raises(ValueError, match="duplicate"):
-        ProvisionEngine([FakeStep("a", calls), FakeStep("a", calls)])
+        ProvisionEngine([FakeStep("a", []), FakeStep("a", [])])
+
+
+# --- scope derivation helpers ------------------------------------------------
+
+
+def _app_with_envs(session, env_specs):
+    """env_specs: list of (name, project). Returns the app with environments."""
+    app = App(name="clips-api", repo_full_name="x/clips-api", installation_id=1, workload_class="web")
+    session.add(app)
+    session.commit()
+    for name, project in env_specs:
+        cluster = Cluster(
+            name=f"{name}-cluster",
+            gcp_project=project,
+            location="us-central1",
+            gke_cluster=f"{name}-gke",
+            ar_repo=f"us-central1-docker.pkg.dev/{project}/apps",
+        )
+        session.add(cluster)
+        session.commit()
+        session.add(
+            Environment(app_id=app.id, name=name, cluster_id=cluster.id, namespace="clips")
+        )
+        session.commit()
+    return app
+
+
+def test_order_environments_follows_config(session):
+    # insert out of order; expect dev, qa, prod
+    app = _app_with_envs(session, [("prod", "p3"), ("dev", "p1"), ("qa", "p2")])
+    ordered = order_environments(app.environments, Config())
+    assert [e.name for e in ordered] == ["dev", "qa", "prod"]
+
+
+def test_distinct_projects_dedupes_same_project(session):
+    # dev + qa share a project, prod separate -> two distinct project scopes
+    app = _app_with_envs(session, [("dev", "shared"), ("qa", "shared"), ("prod", "prod-proj")])
+    scopes = distinct_projects(order_environments(app.environments, Config()))
+    assert [s.project for s in scopes] == ["shared", "prod-proj"]

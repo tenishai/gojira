@@ -5,7 +5,16 @@ from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from gojira.models import App, AppStatus, Base, Cluster, Event, ProvisionStep, StepStatus
+from gojira.models import (
+    App,
+    AppStatus,
+    Base,
+    Cluster,
+    Environment,
+    Event,
+    ProvisionStep,
+    StepStatus,
+)
 
 
 @pytest.fixture
@@ -31,59 +40,78 @@ def cluster(session: Session) -> Cluster:
     return c
 
 
-def make_app(cluster: Cluster, repo: str = "example/clips-api") -> App:
+def make_app(repo: str = "example/clips-api") -> App:
     return App(
         name="clips-api",
         repo_full_name=repo,
         installation_id=12345,
-        cluster_id=cluster.id,
-        namespace="clips",
         workload_class="web",
     )
 
 
-def test_app_defaults_to_pending(session, cluster):
-    app = make_app(cluster)
+def add_env(session, app, cluster, name="dev", namespace="clips") -> Environment:
+    env = Environment(app_id=app.id, name=name, cluster_id=cluster.id, namespace=namespace)
+    session.add(env)
+    session.commit()
+    return env
+
+
+def test_app_defaults_to_pending(session):
+    app = make_app()
     session.add(app)
     session.commit()
     assert app.status == AppStatus.PENDING
     assert app.created_at is not None
 
 
-def test_repo_can_only_be_connected_once(session, cluster):
-    session.add(make_app(cluster))
+def test_repo_can_only_be_connected_once(session):
+    session.add(make_app())
     session.commit()
-    session.add(make_app(cluster))
+    session.add(make_app())
     with pytest.raises(IntegrityError):
         session.commit()
 
 
-def test_step_ledger_unique_per_app(session, cluster):
-    app = make_app(cluster)
+def test_step_ledger_unique_per_app(session):
+    app = make_app()
     session.add(app)
     session.commit()
-    session.add(ProvisionStep(app_id=app.id, step_name="ensure_gsa"))
+    session.add(ProvisionStep(app_id=app.id, step_name="ensure_gsa@p"))
     session.commit()
-    session.add(ProvisionStep(app_id=app.id, step_name="ensure_gsa"))
+    session.add(ProvisionStep(app_id=app.id, step_name="ensure_gsa@p"))
     with pytest.raises(IntegrityError):
         session.commit()
 
 
-def test_same_step_name_allowed_across_apps(session, cluster):
-    a1, a2 = make_app(cluster), make_app(cluster, repo="example/other")
+def test_same_step_name_allowed_across_apps(session):
+    a1, a2 = make_app(), make_app(repo="example/other")
     session.add_all([a1, a2])
     session.commit()
     session.add_all(
         [
-            ProvisionStep(app_id=a1.id, step_name="ensure_gsa"),
-            ProvisionStep(app_id=a2.id, step_name="ensure_gsa"),
+            ProvisionStep(app_id=a1.id, step_name="ensure_gsa@p"),
+            ProvisionStep(app_id=a2.id, step_name="ensure_gsa@p"),
         ]
     )
     session.commit()  # no conflict
 
 
-def test_steps_ordered_by_id(session, cluster):
-    app = make_app(cluster)
+def test_scoped_step_names_coexist_for_one_app(session):
+    """The same step run for two projects keeps two ledger rows."""
+    app = make_app()
+    session.add(app)
+    session.commit()
+    session.add_all(
+        [
+            ProvisionStep(app_id=app.id, step_name="ensure_service_account@proj-a"),
+            ProvisionStep(app_id=app.id, step_name="ensure_service_account@proj-b"),
+        ]
+    )
+    session.commit()  # distinct scope keys -> distinct rows, no conflict
+
+
+def test_steps_ordered_by_id(session):
+    app = make_app()
     session.add(app)
     session.commit()
     for name in ["ensure_gsa", "bind_wif_repo", "open_setup_pr"]:
@@ -93,17 +121,18 @@ def test_steps_ordered_by_id(session, cluster):
     assert [s.step_name for s in app.steps] == ["ensure_gsa", "bind_wif_repo", "open_setup_pr"]
 
 
-def test_step_records_resource_ref(session, cluster):
-    app = make_app(cluster)
+def test_step_records_resource_ref(session):
+    app = make_app()
     session.add(app)
     session.commit()
-    step = ProvisionStep(
-        app_id=app.id,
-        step_name="ensure_gsa",
-        status=StepStatus.DONE,
-        resource_ref="clips-api-deploy@example-project.iam.gserviceaccount.com",
+    session.add(
+        ProvisionStep(
+            app_id=app.id,
+            step_name="ensure_gsa",
+            status=StepStatus.DONE,
+            resource_ref="clips-api-deploy@example-project.iam.gserviceaccount.com",
+        )
     )
-    session.add(step)
     session.commit()
     assert "clips-api-deploy@" in app.steps[0].resource_ref
 
@@ -113,9 +142,32 @@ def test_event_without_app(session):
     session.commit()
 
 
-def test_cluster_relationship(session, cluster):
-    app = make_app(cluster)
+def test_environment_relationships(session, cluster):
+    app = make_app()
     session.add(app)
     session.commit()
-    assert app.cluster.name == "dev-cluster"
-    assert cluster.apps[0].name == "clips-api"
+    env = add_env(session, app, cluster, name="dev")
+    assert app.environments[0].name == "dev"
+    assert env.cluster.name == "dev-cluster"
+    assert env.app.name == "clips-api"
+    assert cluster.environments[0].namespace == "clips"
+
+
+def test_environment_name_unique_per_app(session, cluster):
+    app = make_app()
+    session.add(app)
+    session.commit()
+    add_env(session, app, cluster, name="dev")
+    session.add(Environment(app_id=app.id, name="dev", cluster_id=cluster.id, namespace="other"))
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_deleting_app_cascades_environments(session, cluster):
+    app = make_app()
+    session.add(app)
+    session.commit()
+    add_env(session, app, cluster, name="dev")
+    session.delete(app)
+    session.commit()
+    assert session.query(Environment).count() == 0

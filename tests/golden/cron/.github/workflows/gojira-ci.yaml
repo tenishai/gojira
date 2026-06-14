@@ -23,7 +23,7 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/gojira/providers/github
-          service_account: clips-api-deploy@example-project.iam.gserviceaccount.com
+          service_account: clips-sweeper-deploy@example-project.iam.gserviceaccount.com
 
       - uses: google-github-actions/setup-gcloud@v2
 
@@ -38,7 +38,7 @@ jobs:
 
       - uses: google-github-actions/get-gke-credentials@v2
         with:
-          cluster_name: example-gke
+          cluster_name: dev-gke
           location: us-central1
           project_id: example-project
 

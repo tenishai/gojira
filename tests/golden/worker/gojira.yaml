@@ -3,9 +3,16 @@
 # when this file changes.
 app: clips-worker
 class: worker
-cluster: dev-cluster
-namespace: clips
-environments: [dev, qa, prod]
+environments:
+  - name: dev
+    cluster: dev-cluster
+    namespace: clips
+  - name: qa
+    cluster: qa-cluster
+    namespace: clips
+  - name: prod
+    cluster: prod-cluster
+    namespace: clips
 # overrides:                  # needs a justification — see docs
 #   requests: { cpu: "1", memory: 1Gi }
 #   justification: "measured p99 over 14 days"
