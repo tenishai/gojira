@@ -1,0 +1,33 @@
+{# Self-replacing status panel: re-fetches itself every 2s until terminal. #}
+<div id="status"
+     {% if not v.terminal %}hx-get="/apps/{{ v.app.id }}/status" hx-trigger="load delay:2s" hx-swap="outerHTML"{% endif %}>
+  <div class="card">
+    <p>
+      <span class="badge b-{{ v.app.status }}">{{ v.app.status }}</span>
+      <span class="muted">
+        {{ v.counts.get('done', 0) + v.counts.get('skipped', 0) }} done ·
+        {{ v.counts.get('running', 0) }} running · {{ v.counts.get('failed', 0) }} failed
+      </span>
+      {% if v.app.setup_pr_url %} · <a href="{{ v.app.setup_pr_url }}">Setup PR ↗</a>{% endif %}
+      {% if v.app.status == 'failed' %}
+      <form method="post" action="/apps/{{ v.app.id }}/provision" style="display:inline">
+        <button type="submit" style="margin:0 0 0 8px;padding:4px 12px">Retry</button>
+      </form>
+      {% endif %}
+    </p>
+    {% if v.steps %}
+    <div>
+      {% for s in v.steps %}
+      <div class="step">
+        <span class="badge b-{{ s.status }}">{{ s.status }}</span>
+        <span class="name">{{ s.name }}{% if s.scope %} <span class="scope">@{{ s.scope }}</span>{% endif %}</span>
+        {% if s.error %}<span class="err">{{ s.error }}</span>
+        {% elif s.resource_ref %}<span class="mono muted">{{ s.resource_ref }}</span>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">Waiting for the first step…</p>
+    {% endif %}
+  </div>
+</div>

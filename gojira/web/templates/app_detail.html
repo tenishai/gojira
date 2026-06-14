@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ v.app.name }} · Gojira{% endblock %}
+{% block content %}
+  <h1>{{ v.app.name }} <span class="badge b-{{ v.app.status }}">{{ v.app.status }}</span></h1>
+  <p class="muted mono">{{ v.app.repo_full_name }} · {{ v.app.workload_class }}</p>
+
+  <h2>Environments</h2>
+  <table>
+    <thead><tr><th>Env</th><th>Cluster</th><th>Project</th><th>Namespace</th></tr></thead>
+    <tbody>
+      {% for e in v.environments %}
+      <tr><td>{{ e.name }}</td><td>{{ e.cluster.name }}</td><td class="mono">{{ e.cluster.gcp_project }}</td><td class="mono">{{ e.namespace }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Provisioning</h2>
+  {% include "_status.html" %}
+{% endblock %}
