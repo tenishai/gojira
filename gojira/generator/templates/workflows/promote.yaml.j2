@@ -7,6 +7,7 @@
 # then deploys. Prod waits on the "production" GitHub environment's protection
 # rule (required reviewers) — approve in the Actions run.
 name: Gojira Promote
+{% import 'workflows/_deploy.j2' as d %}
 
 on:
   push:
@@ -76,20 +77,5 @@ jobs:
           location: {{ env.location }}
           project_id: {{ env.project }}
 
-      - name: Deploy to {{ env.name }}
-        run: |
-          cd k8s/overlays/{{ env.name }}
-          kustomize edit set image gojira-app="$IMAGE:$GITHUB_REF_NAME"
-          # Retry: operator admission webhooks can be briefly unavailable on a
-          # cold cluster. A genuine error still fails after the retries.
-          ok=false
-          for attempt in $(seq 1 10); do
-            if kubectl apply -k .; then ok=true; break; fi
-            echo "apply attempt $attempt failed; waiting for cluster to settle..."
-            sleep 30
-          done
-          [ "$ok" = true ] || { echo "deploy failed after retries"; exit 1; }
-          {% if not is_cron %}
-          kubectl -n {{ env.namespace }} rollout status deployment/{{ spec.app }} --timeout=300s
-          {% endif %}
+{{ d.deploy_step(env.name, env.namespace, spec.app, '$GITHUB_REF_NAME', is_cron) }}
 {% endfor %}

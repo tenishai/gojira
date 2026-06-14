@@ -44,16 +44,18 @@ jobs:
 
       - name: Deploy to dev
         run: |
-          TAG="${GITHUB_SHA::12}"
           cd k8s/overlays/dev
-          kustomize edit set image gojira-app="$IMAGE:$TAG"
-          # Retry: a cold cluster may have no nodes yet, so operator admission
-          # webhooks (e.g. GMP, which validates the Rules resource) can be
-          # briefly unavailable. A genuine error still fails after the retries.
+          kustomize edit set image gojira-app="$IMAGE:${GITHUB_SHA::12}"
+
+          # Retry the apply: a cold cluster may have no nodes yet. A genuine
+          # error still fails after the retries.
           ok=false
-          for attempt in $(seq 1 10); do
-            if kubectl apply -k .; then ok=true; break; fi
+          for attempt in $(seq 1 20); do
+            out=$(kubectl apply -k . 2>&1); rc=$?
+            echo "$out"
+            [ "$rc" -eq 0 ] && { ok=true; break; }
             echo "apply attempt $attempt failed; waiting for cluster to settle..."
             sleep 30
           done
           [ "$ok" = true ] || { echo "deploy failed after retries"; exit 1; }
+

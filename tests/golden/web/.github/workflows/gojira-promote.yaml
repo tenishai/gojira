@@ -50,16 +50,38 @@ jobs:
         run: |
           cd k8s/overlays/qa
           kustomize edit set image gojira-app="$IMAGE:$GITHUB_REF_NAME"
-          # Retry: operator admission webhooks can be briefly unavailable on a
-          # cold cluster. A genuine error still fails after the retries.
+
+          # Two-phase apply so the workload is not blocked by GMP's admission
+          # webhook, which can be unavailable for several minutes on a cold
+          # cluster (the GMP operator needs a node provisioned first).
+          #
+          # Phase 1 — bring the workload up. A GMP Rules rejection while the
+          # operator is still cold is tolerated here and reconciled in phase 2;
+          # any other error still fails the deploy after the retries.
           ok=false
-          for attempt in $(seq 1 10); do
-            if kubectl apply -k .; then ok=true; break; fi
+          for attempt in $(seq 1 20); do
+            out=$(kubectl apply -k . 2>&1); rc=$?
+            echo "$out"
+            [ "$rc" -eq 0 ] && { ok=true; break; }
+            if echo "$out" | grep -q 'gmp-operator'; then
+              echo "GMP operator still cold — workload applied, will reconcile Rules"
+              ok=true; break
+            fi
             echo "apply attempt $attempt failed; waiting for cluster to settle..."
             sleep 30
           done
           [ "$ok" = true ] || { echo "deploy failed after retries"; exit 1; }
-          kubectl -n clips rollout status deployment/clips-api --timeout=300s
+          kubectl -n clips rollout status deployment/clips-api --timeout=600s
+
+          # Phase 2 — reconcile the GMP Rules CR now the operator's webhook is up.
+          ok=false
+          for attempt in $(seq 1 20); do
+            if kubectl apply -k .; then ok=true; break; fi
+            echo "Rules apply attempt $attempt failed; waiting for gmp-operator..."
+            sleep 30
+          done
+          [ "$ok" = true ] || { echo "GMP Rules failed to apply after retries"; exit 1; }
+
   deploy-prod:
     needs: deploy-qa
     runs-on: ubuntu-latest
@@ -90,13 +112,35 @@ jobs:
         run: |
           cd k8s/overlays/prod
           kustomize edit set image gojira-app="$IMAGE:$GITHUB_REF_NAME"
-          # Retry: operator admission webhooks can be briefly unavailable on a
-          # cold cluster. A genuine error still fails after the retries.
+
+          # Two-phase apply so the workload is not blocked by GMP's admission
+          # webhook, which can be unavailable for several minutes on a cold
+          # cluster (the GMP operator needs a node provisioned first).
+          #
+          # Phase 1 — bring the workload up. A GMP Rules rejection while the
+          # operator is still cold is tolerated here and reconciled in phase 2;
+          # any other error still fails the deploy after the retries.
           ok=false
-          for attempt in $(seq 1 10); do
-            if kubectl apply -k .; then ok=true; break; fi
+          for attempt in $(seq 1 20); do
+            out=$(kubectl apply -k . 2>&1); rc=$?
+            echo "$out"
+            [ "$rc" -eq 0 ] && { ok=true; break; }
+            if echo "$out" | grep -q 'gmp-operator'; then
+              echo "GMP operator still cold — workload applied, will reconcile Rules"
+              ok=true; break
+            fi
             echo "apply attempt $attempt failed; waiting for cluster to settle..."
             sleep 30
           done
           [ "$ok" = true ] || { echo "deploy failed after retries"; exit 1; }
-          kubectl -n clips rollout status deployment/clips-api --timeout=300s
+          kubectl -n clips rollout status deployment/clips-api --timeout=600s
+
+          # Phase 2 — reconcile the GMP Rules CR now the operator's webhook is up.
+          ok=false
+          for attempt in $(seq 1 20); do
+            if kubectl apply -k .; then ok=true; break; fi
+            echo "Rules apply attempt $attempt failed; waiting for gmp-operator..."
+            sleep 30
+          done
+          [ "$ok" = true ] || { echo "GMP Rules failed to apply after retries"; exit 1; }
+
