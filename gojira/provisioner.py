@@ -202,13 +202,15 @@ def provision_app(
     """
     from gojira.steps import per_app_steps, per_env_steps, per_project_steps
 
-    app.status = AppStatus.PROVISIONING
-    _emit(session, app, "provision.run_started")
-    session.commit()
-
+    # Validate before mutating state — an app with no environments should never
+    # be marked PROVISIONING or emit a run_started event.
     envs = order_environments(app.environments, config)
     if not envs:
         raise ValueError(f"app {app.name} has no environments to provision")
+
+    app.status = AppStatus.PROVISIONING
+    _emit(session, app, "provision.run_started")
+    session.commit()
 
     aggregate = RunResult(completed=False)
 

@@ -285,6 +285,8 @@ class GrantPromoteSourceReader:
     def apply(self, ctx: ProvisionContext) -> str:
         env = _env(ctx)
         source = self._source(ctx)
+        if source is None or source.cluster.gcp_project == env.cluster.gcp_project:
+            return "n/a"  # self-safe: nothing to grant if not a cross-project copy
         n = Names.for_project(ctx.app, env.cluster.gcp_project, env.cluster.ar_repo)
         _gcp(ctx).add_project_binding(
             source.cluster.gcp_project, n.gsa_member, PROMOTE_READER_ROLE
