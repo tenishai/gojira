@@ -3,9 +3,16 @@
 # when this file changes.
 app: clips-sweeper
 class: cron
-cluster: dev-cluster
-namespace: clips
-environments: [dev, qa, prod]
+environments:
+  - name: dev
+    cluster: dev-cluster
+    namespace: clips
+  - name: qa
+    cluster: qa-cluster
+    namespace: clips
+  - name: prod
+    cluster: prod-cluster
+    namespace: clips
 schedule: "0 3 * * *"
 # overrides:                  # needs a justification — see docs
 #   requests: { cpu: "1", memory: 1Gi }

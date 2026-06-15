@@ -37,7 +37,12 @@ class StepStatus(enum.StrEnum):
 
 
 class Cluster(Base):
-    """A registered deploy target. Connectivity is validated at registration."""
+    """A registered deploy target. Connectivity is validated at registration.
+
+    A cluster carries its own project + Artifact Registry, so the set of
+    projects an app touches is derived from the clusters its environments
+    bind to. Clusters in the same project share one AR repo.
+    """
 
     __tablename__ = "clusters"
 
@@ -49,11 +54,15 @@ class Cluster(Base):
     ar_repo: Mapped[str] = mapped_column(String(255))  # shared AR repo for this project
     created_at: Mapped[datetime] = mapped_column(default=utcnow, server_default=func.now())
 
-    apps: Mapped[list["App"]] = relationship(back_populates="cluster")
+    environments: Mapped[list["Environment"]] = relationship(back_populates="cluster")
 
 
 class App(Base):
-    """A connected GitHub repo deployed through Gojira."""
+    """A connected GitHub repo deployed through Gojira.
+
+    An App holds only what's environment-independent (repo, workload class).
+    Where it deploys — cluster + namespace per env — lives on Environment.
+    """
 
     __tablename__ = "apps"
     __table_args__ = (UniqueConstraint("repo_full_name", name="uq_apps_repo"),)
@@ -62,18 +71,40 @@ class App(Base):
     name: Mapped[str] = mapped_column(String(63))
     repo_full_name: Mapped[str] = mapped_column(String(255))  # owner/repo
     installation_id: Mapped[int]                              # GitHub App installation
-    cluster_id: Mapped[int] = mapped_column(ForeignKey("clusters.id"))
-    namespace: Mapped[str] = mapped_column(String(63))
     workload_class: Mapped[str] = mapped_column(String(16))
     status: Mapped[AppStatus] = mapped_column(String(16), default=AppStatus.PENDING)
     setup_pr_url: Mapped[str | None] = mapped_column(String(512))
     created_at: Mapped[datetime] = mapped_column(default=utcnow, server_default=func.now())
 
-    cluster: Mapped[Cluster] = relationship(back_populates="apps")
+    environments: Mapped[list["Environment"]] = relationship(
+        back_populates="app", order_by="Environment.id", cascade="all, delete-orphan"
+    )
     steps: Mapped[list["ProvisionStep"]] = relationship(
         back_populates="app", order_by="ProvisionStep.id"
     )
     events: Mapped[list["Event"]] = relationship(back_populates="app")
+
+
+class Environment(Base):
+    """One stage in an app's promotion path: a name bound to (cluster, namespace).
+
+    An environment is always a distinct cluster + namespace — never just a
+    namespace in a shared cluster. Environments may live in the same project
+    or in different projects; the cluster carries the project, so multi-project
+    is just the case where the distinct-project count is greater than one.
+    """
+
+    __tablename__ = "environments"
+    __table_args__ = (UniqueConstraint("app_id", "name", name="uq_env_app_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    app_id: Mapped[int] = mapped_column(ForeignKey("apps.id"))
+    name: Mapped[str] = mapped_column(String(16))  # dev | qa | prod
+    cluster_id: Mapped[int] = mapped_column(ForeignKey("clusters.id"))
+    namespace: Mapped[str] = mapped_column(String(63))
+
+    app: Mapped[App] = relationship(back_populates="environments")
+    cluster: Mapped[Cluster] = relationship(back_populates="environments")
 
 
 class ProvisionStep(Base):

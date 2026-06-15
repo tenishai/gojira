@@ -63,22 +63,30 @@ costs nothing in the common case.
 
 ---
 
-## Images across projects — build once, copy on promote
+## Images across projects — build through qa, copy qa→prod on promote
 
-This is the ripple multi-project forces, and it's why the original design's
-`crane copy` promotion exists:
+> **Revised (2026-06-14):** dev and qa each **build from scratch**; only prod
+> is a crane-copy. Prod runs the exact bytes qa built and validated — you never
+> promote an untested dev artifact straight to prod. (The earlier "build once
+> in dev, copy to qa and prod" is superseded.)
 
-- **CI (dev):** build the image once, push to the **dev project's** Artifact
-  Registry. Deploy dev.
-- **Promote (qa, then prod behind the gate):** `crane copy` (or
-  `gcloud artifacts docker tags add` within a project) the *exact* dev image
-  into the **target env project's** Artifact Registry — no rebuild — then
-  deploy. Each cluster pulls from its **own** project's registry.
+- **CI (dev):** build the image, push to the **dev project's** Artifact
+  Registry, deploy dev. (push to main)
+- **Promote — qa:** build from scratch, push to **qa's** Artifact Registry,
+  deploy qa. (on `v*` tag) qa exercises a real build of the tagged commit.
+- **Promote — prod (gated):** `crane copy` the *exact* qa image into **prod's**
+  Artifact Registry — no rebuild — then deploy. When prod shares qa's project
+  (same registry) the image is already present, so the copy is skipped and prod
+  deploys it as-is. Each cluster pulls from its **own** project's registry.
 
 This keeps prod independent of dev's registry at deploy time (the point of
-project isolation). For same-project apps, the copy is a tag within one
-registry — cheap and uniform. The artifact promoted is identical bytes across
-environments: build once, verify once, ship the same image everywhere.
+project isolation) and guarantees prod ships the artifact qa verified.
+
+Generalized in code as a per-env `copy_from`: the first env (dev) is the CI
+target, middle envs build from scratch, and the **last** env crane-copies from
+its predecessor and is the gated production target. The cross-project
+`artifactregistry.reader` grant the copy needs is provisioned only when the
+prod and qa projects differ — a no-op for same-project apps.
 
 ---
 
@@ -115,11 +123,12 @@ gsa_email, namespace}`. Then:
 
 ## Open sub-decisions
 
-1. **Cross-project AR reader vs crane-copy.** Recommended: **crane-copy per
-   project** (above) — full isolation, matches the original promote design.
-   The alternative (one shared AR, grant each cluster's pull identity
-   `artifactregistry.reader` cross-project) is fewer moving parts but couples
-   prod to the registry project. Lean: crane-copy.
+1. ~~**Cross-project AR reader vs crane-copy.**~~ **Resolved (2026-06-14):**
+   crane-copy qa→prod. dev and qa build from scratch (no shared pull between
+   them); prod crane-copies the qa-tested image. The only cross-project grant
+   is the prod GSA reading qa's registry to perform the copy, provisioned
+   per-env and dormant when both live in one project. Deploy-time pulls stay
+   fully isolated — each cluster pulls its own project's registry.
 2. **Same GSA name across projects?** Yes — `<app>-deploy@<each-project>`.
    Uniform, derivable, no central registry of names.
 3. **Who registers the env→cluster map?** The connect flow (UI/API). For v1,

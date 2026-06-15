@@ -1,12 +1,17 @@
 """Artifact generator: renders workflows, manifests, and gojira.yaml.
 
-Pure function: GeneratorSpec in, {path: content} out. No I/O beyond
-reading templates. The service layer assembles the spec (from app,
-cluster, and provisioned resource refs) and commits the output via PR.
+Pure function: GeneratorSpec in, {path: content} out. No I/O beyond reading
+templates. The service layer assembles the spec (from app, environments, and
+provisioned resource refs) and commits the output via PR.
+
+A spec carries a list of environments. The first is the CI target (build +
+deploy on push). Later envs are promote targets: each builds from scratch
+except the last, which crane-copies the image its predecessor built and tested.
+Each env carries its own project-scoped identity, so envs may span projects.
 
 Opinion: every Gojira app listens on port 8080 and serves /health and
-/metrics. This uniformity is what makes generated probes and scrape
-configs work without per-app configuration.
+/metrics. This uniformity is what makes generated probes and scrape configs
+work without per-app configuration.
 """
 
 import logging
@@ -29,24 +34,36 @@ _env = Environment(
 )
 
 
-class GeneratorSpec(BaseModel):
-    app: str
-    repo_full_name: str
+class EnvSpec(BaseModel):
+    """One environment's deploy target + project-scoped identity."""
+
+    name: str                # dev | qa | prod
     namespace: str
-    workload_class: str
+    project: str
     cluster_name: str
-    gcp_project: str
     location: str            # GKE cluster location
     gke_cluster: str
     ar_repo: str             # e.g. us-central1-docker.pkg.dev/<project>/apps
     wif_provider: str        # full resource name of the WIF provider
     gsa_email: str
-    environments: list[str] = ["dev", "qa", "prod"]
+    copy_from: str | None = None  # env name to crane-copy from; None = build
+    gated: bool = False           # behind the "production" environment gate
+
+    @property
+    def ar_host(self) -> str:
+        return self.ar_repo.split("/")[0]
+
+
+class GeneratorSpec(BaseModel):
+    app: str
+    repo_full_name: str
+    workload_class: str
+    environments: list[EnvSpec]
     default_branch: str = "main"
     schedule: str | None = None  # cron class only
 
     @model_validator(mode="after")
-    def validate_class(self):
+    def validate_spec(self):
         if self.workload_class not in WORKLOAD_CLASSES:
             raise ValueError(
                 f"unknown workload class {self.workload_class!r}, "
@@ -54,15 +71,22 @@ class GeneratorSpec(BaseModel):
             )
         if self.workload_class == "cron" and not self.schedule:
             raise ValueError("cron workload class requires a schedule")
+        if not self.environments:
+            raise ValueError("spec needs at least one environment")
         return self
 
     @property
-    def image(self) -> str:
-        return f"{self.ar_repo}/{self.app}"
+    def ci_env(self) -> EnvSpec:
+        """The environment CI builds and deploys on push."""
+        return self.environments[0]
 
     @property
-    def ar_host(self) -> str:
-        return self.ar_repo.split("/")[0]
+    def promote_envs(self) -> list[EnvSpec]:
+        """The downstream environments the promote workflow walks, in order."""
+        return self.environments[1:]
+
+    def image(self, env: EnvSpec) -> str:
+        return f"{env.ar_repo}/{self.app}"
 
 
 def render(spec: GeneratorSpec) -> dict[str, str]:
@@ -80,7 +104,8 @@ def render(spec: GeneratorSpec) -> dict[str, str]:
 
     files: dict[str, str] = {}
     files[".github/workflows/gojira-ci.yaml"] = _t("workflows/ci.yaml.j2", ctx)
-    files[".github/workflows/gojira-promote.yaml"] = _t("workflows/promote.yaml.j2", ctx)
+    if spec.promote_envs:
+        files[".github/workflows/gojira-promote.yaml"] = _t("workflows/promote.yaml.j2", ctx)
     files["gojira.yaml"] = _t("gojira.yaml.j2", ctx)
 
     base = "k8s/base"
@@ -102,9 +127,9 @@ def render(spec: GeneratorSpec) -> dict[str, str]:
         )},
     )
 
-    for env_name in spec.environments:
-        files[f"k8s/overlays/{env_name}/kustomization.yaml"] = _t(
-            "k8s/kustomization-overlay.yaml.j2", {**ctx, "env": env_name}
+    for env in spec.environments:
+        files[f"k8s/overlays/{env.name}/kustomization.yaml"] = _t(
+            "k8s/kustomization-overlay.yaml.j2", {**ctx, "env": env}
         )
 
     log.debug("rendered %d artifacts for %s (%s)", len(files), spec.app, spec.workload_class)

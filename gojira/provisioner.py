@@ -1,38 +1,75 @@
-"""Provisioner step engine: ordered, idempotent, resumable.
+"""Provisioner: a scope-aware step engine plus an orchestrator over scopes.
 
-Each step implements check() -> existing resource ref (skip) or None,
-and apply() -> created resource ref. The engine walks the sequence,
-recording every outcome in the ProvisionStep ledger. Re-running an app
-skips done/skipped steps and retries failed ones — resume-from-failure
-comes for free from the ledger.
+The engine walks an ordered, idempotent, resumable step sequence for one
+*scope* — a project, an environment, or the app itself — recording every
+outcome in the ProvisionStep ledger. Re-running skips done/skipped steps and
+retries failed ones; resume-from-failure comes for free from the ledger.
+
+The orchestrator (`provision_app`) derives the distinct projects and the
+environments from the app and drives the engine across the three scopes:
+
+  per-project (identity)  -> once per distinct GCP project   ledger: step@<project>
+  per-environment (cluster) -> once per environment          ledger: step@<env>
+  per-app (repo)          -> once                            ledger: step
+
+Ledger step names are scoped so they stay unique under (app_id, step_name).
+The orchestrator owns app status and run-level events; the engine owns the
+per-step ledger and emits the granular step-failed event.
 """
 
 import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gojira.config import Config
-from gojira.models import App, AppStatus, Cluster, Event, ProvisionStep, StepStatus, utcnow
+from gojira.k8s import KubectlClient
+from gojira.models import (
+    App,
+    AppStatus,
+    Cluster,
+    Environment,
+    Event,
+    ProvisionStep,
+    StepStatus,
+    utcnow,
+)
 
 log = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class ProjectScope:
+    """The per-project identity target: a GCP project and its AR repo.
+
+    AR is per-project, so any cluster in the project supplies the repo.
+    """
+
+    project: str
+    ar_repo: str
+
+
 @dataclass
 class ProvisionContext:
-    """Everything a step needs. Clients (GCP, GitHub) attach here as they exist."""
+    """Everything a step needs, narrowed to the scope it runs in.
+
+    Exactly one scope target is set per sub-run: `project` for per-project
+    identity steps, `environment` for per-env steps. `environments` (the full
+    ordered list) is always available for per-app generation. Clients are
+    scoped too — the kubectl client points at the env's cluster.
+    """
 
     app: App
-    cluster: Cluster
     config: Config
     clients: dict = field(default_factory=dict)
-    # The repo working tree: generate_artifacts writes here, open_setup_pr
-    # commits and pushes it. Set by the service layer after cloning the repo.
     workdir: Path | None = None
+    project: ProjectScope | None = None
+    environment: Environment | None = None
+    environments: list[Environment] = field(default_factory=list)
 
 
 class Step(Protocol):
@@ -52,14 +89,19 @@ class Step(Protocol):
 @dataclass
 class RunResult:
     completed: bool
-    steps_run: list[str]
-    steps_skipped: list[str]
+    steps_run: list[str] = field(default_factory=list)
+    steps_skipped: list[str] = field(default_factory=list)
     failed_step: str | None = None
     error: str | None = None
 
 
 class ProvisionEngine:
-    """Walks a step sequence for an app, recording outcomes in the ledger."""
+    """Walks a step sequence for one scope, recording outcomes in the ledger.
+
+    Stateless w.r.t. app status and run lifecycle — the orchestrator owns
+    those. A scope_key disambiguates ledger rows when the same step runs for
+    several projects or environments.
+    """
 
     def __init__(self, steps: list[Step]):
         names = [s.name for s in steps]
@@ -67,22 +109,18 @@ class ProvisionEngine:
             raise ValueError(f"duplicate step names in sequence: {names}")
         self.steps = steps
 
-    def run(self, session: Session, ctx: ProvisionContext) -> RunResult:
+    def run(self, session: Session, ctx: ProvisionContext, scope_key: str | None = None) -> RunResult:
         app = ctx.app
-        app.status = AppStatus.PROVISIONING
-        self._emit(session, app, "provision.run_started")
-        session.commit()
-
-        result = RunResult(completed=False, steps_run=[], steps_skipped=[])
+        result = RunResult(completed=False)
 
         for step in self.steps:
-            ledger = self._ledger_row(session, app, step.name)
+            ledger_name = f"{step.name}@{scope_key}" if scope_key else step.name
+            ledger = self._ledger_row(session, app, ledger_name)
 
             if ledger.status in (StepStatus.DONE, StepStatus.SKIPPED):
-                log.debug("step %s already %s, skipping", step.name, ledger.status)
+                log.debug("step %s already %s, skipping", ledger_name, ledger.status)
                 continue
 
-            # PENDING or FAILED (retry): run it
             ledger.status = StepStatus.RUNNING
             ledger.started_at = utcnow()
             ledger.error = None
@@ -93,34 +131,27 @@ class ProvisionEngine:
                 if existing is not None:
                     ledger.status = StepStatus.SKIPPED
                     ledger.resource_ref = existing
-                    result.steps_skipped.append(step.name)
-                    log.info("step %s: exists (%s)", step.name, existing)
+                    result.steps_skipped.append(ledger_name)
+                    log.info("step %s: exists (%s)", ledger_name, existing)
                 else:
                     ledger.resource_ref = step.apply(ctx)
                     ledger.status = StepStatus.DONE
-                    result.steps_run.append(step.name)
-                    log.info("step %s: created (%s)", step.name, ledger.resource_ref)
+                    result.steps_run.append(ledger_name)
+                    log.info("step %s: created (%s)", ledger_name, ledger.resource_ref)
                 ledger.finished_at = utcnow()
                 session.commit()
             except Exception as exc:
                 ledger.status = StepStatus.FAILED
                 ledger.error = str(exc)
                 ledger.finished_at = utcnow()
-                app.status = AppStatus.FAILED
-                self._emit(
-                    session, app, "provision.step_failed",
-                    {"step": step.name, "error": str(exc)},
-                )
+                _emit(session, app, "provision.step_failed",
+                      {"step": ledger_name, "error": str(exc)})
                 session.commit()
-                log.error("step %s failed: %s", step.name, exc)
-                result.failed_step = step.name
+                log.error("step %s failed: %s", ledger_name, exc)
+                result.failed_step = ledger_name
                 result.error = str(exc)
                 return result
 
-        # The final step opens the setup PR, so a completed run awaits its merge.
-        app.status = AppStatus.AWAITING_PR
-        self._emit(session, app, "provision.run_completed")
-        session.commit()
         result.completed = True
         return result
 
@@ -136,12 +167,102 @@ class ProvisionEngine:
             session.commit()
         return row
 
-    @staticmethod
-    def _emit(session: Session, app: App, event_type: str, payload: dict | None = None):
-        session.add(
-            Event(
-                app_id=app.id,
-                type=event_type,
-                payload_json=json.dumps(payload) if payload else None,
-            )
+
+def order_environments(envs: list[Environment], config: Config) -> list[Environment]:
+    """Deterministic promotion order: config's env order first, then by id."""
+    rank = {name: i for i, name in enumerate(config.defaults.environments)}
+    return sorted(envs, key=lambda e: (rank.get(e.name, len(rank)), e.id))
+
+
+def distinct_projects(envs: list[Environment]) -> list[ProjectScope]:
+    """One ProjectScope per distinct project, in first-seen (promotion) order."""
+    seen: dict[str, ProjectScope] = {}
+    for env in envs:
+        project = env.cluster.gcp_project
+        if project not in seen:
+            seen[project] = ProjectScope(project=project, ar_repo=env.cluster.ar_repo)
+    return list(seen.values())
+
+
+def provision_app(
+    session: Session,
+    app: App,
+    *,
+    gcp,
+    github,
+    kubectl_for: Callable[[Cluster], KubectlClient],
+    config: Config,
+    workdir: Path,
+) -> RunResult:
+    """Drive the full provision across per-project, per-env, and per-app scopes.
+
+    Imports the step sequences lazily to avoid a provisioner<->steps import
+    cycle. Halts on the first failed scope, leaving the app FAILED and the
+    ledger marking exactly where to resume; a re-run continues from there.
+    """
+    from gojira.steps import per_app_steps, per_env_steps, per_project_steps
+
+    # Validate before mutating state — an app with no environments should never
+    # be marked PROVISIONING or emit a run_started event.
+    envs = order_environments(app.environments, config)
+    if not envs:
+        raise ValueError(f"app {app.name} has no environments to provision")
+
+    app.status = AppStatus.PROVISIONING
+    _emit(session, app, "provision.run_started")
+    session.commit()
+
+    aggregate = RunResult(completed=False)
+
+    def absorb(res: RunResult) -> bool:
+        aggregate.steps_run.extend(res.steps_run)
+        aggregate.steps_skipped.extend(res.steps_skipped)
+        if not res.completed:
+            aggregate.failed_step = res.failed_step
+            aggregate.error = res.error
+            app.status = AppStatus.FAILED
+            session.commit()
+        return res.completed
+
+    # per-project identity — once per distinct project
+    for scope in distinct_projects(envs):
+        ctx = ProvisionContext(
+            app=app, config=config, clients={"gcp": gcp},
+            project=scope, environments=envs,
         )
+        if not absorb(ProvisionEngine(per_project_steps()).run(session, ctx, scope.project)):
+            return aggregate
+
+    # per-environment cluster setup — once per env
+    for env in envs:
+        ctx = ProvisionContext(
+            app=app, config=config,
+            clients={"kubectl": kubectl_for(env.cluster), "gcp": gcp},
+            environment=env, environments=envs,
+        )
+        if not absorb(ProvisionEngine(per_env_steps()).run(session, ctx, env.name)):
+            return aggregate
+
+    # per-app repo flow — once, unscoped
+    ctx = ProvisionContext(
+        app=app, config=config, clients={"gcp": gcp, "github": github},
+        environments=envs, workdir=workdir,
+    )
+    if not absorb(ProvisionEngine(per_app_steps()).run(session, ctx)):
+        return aggregate
+
+    app.status = AppStatus.AWAITING_PR
+    _emit(session, app, "provision.run_completed")
+    session.commit()
+    aggregate.completed = True
+    return aggregate
+
+
+def _emit(session: Session, app: App, event_type: str, payload: dict | None = None):
+    session.add(
+        Event(
+            app_id=app.id,
+            type=event_type,
+            payload_json=json.dumps(payload) if payload else None,
+        )
+    )

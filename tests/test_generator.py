@@ -14,35 +14,55 @@ from pathlib import Path
 import pytest
 import yaml
 
-from gojira.generator import GeneratorSpec, render
+from gojira.generator import EnvSpec, GeneratorSpec, render
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
 
 
-def make_spec(**kw) -> GeneratorSpec:
-    defaults = dict(
-        app="clips-api",
-        repo_full_name="example/clips-api",
+def _env(app: str, name: str, project: str, copy_from=None, gated=False) -> EnvSpec:
+    num = "123456789" if project == "example-project" else "987654321"
+    return EnvSpec(
+        name=name,
         namespace="clips",
-        workload_class="web",
-        cluster_name="dev-cluster",
-        gcp_project="example-project",
+        project=project,
+        cluster_name=f"{name}-cluster",
         location="us-central1",
-        gke_cluster="example-gke",
-        ar_repo="us-central1-docker.pkg.dev/example-project/apps",
+        gke_cluster=f"{name}-gke",
+        ar_repo=f"us-central1-docker.pkg.dev/{project}/apps",
         wif_provider=(
-            "projects/123456789/locations/global/"
+            f"projects/{num}/locations/global/"
             "workloadIdentityPools/gojira/providers/github"
         ),
-        gsa_email="clips-api-deploy@example-project.iam.gserviceaccount.com",
+        gsa_email=f"{app}-deploy@{project}.iam.gserviceaccount.com",
+        copy_from=copy_from,
+        gated=gated,
     )
-    return GeneratorSpec(**{**defaults, **kw})
+
+
+def _envs(app: str, multiproject: bool = False) -> list[EnvSpec]:
+    prod_project = "prod-project" if multiproject else "example-project"
+    return [
+        _env(app, "dev", "example-project"),
+        _env(app, "qa", "example-project"),
+        _env(app, "prod", prod_project, copy_from="qa", gated=True),
+    ]
+
+
+def make_spec(app="clips-api", multiproject=False, environments=None, **kw) -> GeneratorSpec:
+    return GeneratorSpec(
+        app=app,
+        repo_full_name=f"example/{app}",
+        workload_class=kw.pop("workload_class", "web"),
+        environments=environments if environments is not None else _envs(app, multiproject),
+        **kw,
+    )
 
 
 GOLDEN_CASES = {
     "web": make_spec(),
-    "worker": make_spec(workload_class="worker", app="clips-worker"),
-    "cron": make_spec(workload_class="cron", app="clips-sweeper", schedule="0 3 * * *"),
+    "worker": make_spec(app="clips-worker", workload_class="worker"),
+    "cron": make_spec(app="clips-sweeper", workload_class="cron", schedule="0 3 * * *"),
+    "multiproject": make_spec(multiproject=True),
 }
 
 
@@ -94,7 +114,7 @@ def test_web_gets_full_artifact_set():
 
 
 def test_worker_has_no_service_or_hpa():
-    files = render(make_spec(workload_class="worker"))
+    files = render(make_spec(app="clips-worker", workload_class="worker"))
     assert "k8s/base/service.yaml" not in files
     assert "k8s/base/hpa.yaml" not in files
     assert "k8s/base/pdb.yaml" not in files
@@ -103,7 +123,7 @@ def test_worker_has_no_service_or_hpa():
 
 
 def test_cron_renders_cronjob_not_deployment():
-    files = render(make_spec(workload_class="cron", schedule="0 3 * * *"))
+    files = render(make_spec(app="clips-sweeper", workload_class="cron", schedule="0 3 * * *"))
     assert "k8s/base/cronjob.yaml" in files
     assert "k8s/base/deployment.yaml" not in files
     cronjob = yaml.safe_load(files["k8s/base/cronjob.yaml"])
@@ -112,12 +132,17 @@ def test_cron_renders_cronjob_not_deployment():
 
 def test_cron_without_schedule_rejected():
     with pytest.raises(ValueError, match="schedule"):
-        make_spec(workload_class="cron")
+        make_spec(app="clips-sweeper", workload_class="cron")
 
 
 def test_unknown_class_rejected():
     with pytest.raises(ValueError, match="workload class"):
         make_spec(workload_class="mega")
+
+
+def test_empty_environments_rejected():
+    with pytest.raises(ValueError, match="environment"):
+        make_spec(environments=[])
 
 
 def test_base_kustomization_lists_exactly_its_files():
@@ -138,7 +163,6 @@ def test_deployment_encodes_sizing_opinion():
     assert container["resources"]["requests"]["cpu"] == "250m"
     assert container["resources"]["limits"]["cpu"] == "500m"
     assert container["resources"]["requests"]["ephemeral-storage"] == "4Gi"
-    # HPA owns replicas for web class — Deployment must not set them
     assert "replicas" not in deployment["spec"]
 
 
@@ -150,7 +174,34 @@ def test_workflows_use_wif_not_keys():
 
 
 def test_prod_deploy_behind_environment_gate():
-    files = render(make_spec())
-    promote = yaml.safe_load(files[".github/workflows/gojira-promote.yaml"])
+    promote = yaml.safe_load(render(make_spec())[".github/workflows/gojira-promote.yaml"])
     assert promote["jobs"]["deploy-prod"]["environment"] == "production"
     assert promote["jobs"]["deploy-prod"]["needs"] == "deploy-qa"
+
+
+def test_ci_targets_first_env():
+    ci = yaml.safe_load(render(make_spec())[".github/workflows/gojira-ci.yaml"])
+    assert "build-and-deploy-dev" in ci["jobs"]
+
+
+def test_sameproject_promote_deploys_without_crane_copy():
+    """prod shares qa's registry, so the tested image is already present."""
+    promote = render(make_spec())[".github/workflows/gojira-promote.yaml"]
+    assert "crane copy" not in promote
+    # qa builds from scratch; prod neither builds nor copies — it deploys as-is
+    assert promote.count("docker build") == 1
+
+
+def test_multiproject_promote_crane_copies_into_prod():
+    promote = render(make_spec(multiproject=True))[".github/workflows/gojira-promote.yaml"]
+    assert "crane copy" in promote
+    assert "imjasonh/setup-crane" in promote
+    # qa still builds; prod copies instead of building
+    assert promote.count("docker build") == 1
+
+
+def test_single_env_has_no_promote_workflow():
+    spec = make_spec(environments=[_env("clips-api", "dev", "example-project")])
+    files = render(spec)
+    assert ".github/workflows/gojira-promote.yaml" not in files
+    assert ".github/workflows/gojira-ci.yaml" in files

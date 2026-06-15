@@ -3,9 +3,12 @@
 # when this file changes.
 app: {{ spec.app }}
 class: {{ spec.workload_class }}
-cluster: {{ spec.cluster_name }}
-namespace: {{ spec.namespace }}
-environments: [{{ spec.environments | join(", ") }}]
+environments:
+{% for env in spec.environments %}
+  - name: {{ env.name }}
+    cluster: {{ env.cluster_name }}
+    namespace: {{ env.namespace }}
+{% endfor %}
 {% if spec.schedule %}
 schedule: "{{ spec.schedule }}"
 {% endif %}
