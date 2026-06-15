@@ -78,21 +78,26 @@ def create_app(
         return RedirectResponse("/clusters", status_code=303)
 
     @app.get("/connect", response_class=HTMLResponse)
-    def connect_form(request: Request, session: Session = Depends(get_session)):
+    def connect_form(request: Request, session: Session = Depends(get_session), error: str = ""):
         return TEMPLATES.TemplateResponse(
             request,
             "connect.html",
             {
                 "clusters": service.list_clusters(session),
                 "repos": service.list_repos(request.app.state.clients.github),
-                "classes": sorted(WORKLOAD_CLASSES),
+                "classes": list(WORKLOAD_CLASSES),  # canonical order: web first
                 "env_names": request.app.state.config.defaults.environments,
+                "error": error,
             },
         )
 
     @app.post("/connect")
     async def connect(request: Request, session: Session = Depends(get_session)):
         form = await request.form()
+        # repo: dropdown choice, overridden by a manual entry if the operator typed one
+        repo = (form.get("repo_manual") or "").strip() or (form.get("repo_select") or "").strip()
+        if not repo:
+            return RedirectResponse("/connect?error=pick+a+repo", status_code=303)
         env_names = request.app.state.config.defaults.environments
         env_map: dict[str, tuple[int, str]] = {}
         for env in env_names:
@@ -100,10 +105,12 @@ def create_app(
             namespace = (form.get(f"namespace_{env}") or "").strip()
             if cluster_id and namespace:
                 env_map[env] = (int(cluster_id), namespace)
+        if not env_map:
+            return RedirectResponse("/connect?error=map+at+least+one+environment", status_code=303)
         app_obj = service.connect_app(
             session,
             name=form["name"],
-            repo_full_name=form["repo_full_name"],
+            repo_full_name=repo,
             workload_class=form["workload_class"],
             env_map=env_map,
         )

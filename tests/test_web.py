@@ -77,7 +77,7 @@ def test_connect_requires_cluster(client):
 def test_connect_lists_repos_from_github(client, session_factory):
     _register_three(session_factory)
     html = client.get("/connect").text
-    assert "<datalist id=\"repos\">" in html
+    assert 'name="repo_select"' in html
     assert "shaz/gojira-demo" in html  # from the fake's repo list
 
 
@@ -90,7 +90,7 @@ def test_connect_provisions_and_status_reaches_terminal(client, session_factory)
         "/connect",
         data={
             "name": "clips-api",
-            "repo_full_name": "acme/clips-api",
+            "repo_select": "acme/clips-api",
             "workload_class": "web",
             "cluster_dev": ids["dev"], "namespace_dev": "clips",
             "cluster_qa": ids["qa"], "namespace_qa": "clips",
@@ -128,7 +128,7 @@ def test_connect_skips_unmapped_env(client, session_factory):
     r = client.post(
         "/connect",
         data={
-            "name": "solo", "repo_full_name": "acme/solo", "workload_class": "web",
+            "name": "solo", "repo_select": "acme/solo", "workload_class": "web",
             "cluster_dev": dev_id, "namespace_dev": "solo",
             "cluster_qa": "", "namespace_qa": "",
             "cluster_prod": "", "namespace_prod": "",

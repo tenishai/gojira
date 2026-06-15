@@ -2,20 +2,23 @@
 {% block title %}Connect repo · Gojira{% endblock %}
 {% block content %}
   <h1>Connect a repo</h1>
+  {% if error %}<div class="card err">{{ error }}</div>{% endif %}
   {% if not clusters %}
   <div class="card muted">Register at least one <a href="/clusters">cluster</a> first.</div>
   {% else %}
   <div class="card">
     <form class="stack" method="post" action="/connect">
-      <div class="row">
-        <div><label>App name</label><input name="name" placeholder="clips-api" required></div>
-        <div>
-          <label>Repo (owner/repo)</label>
-          <input name="repo_full_name" list="repos" placeholder="start typing…" autocomplete="off" required>
-          <datalist id="repos">
-            {% for r in repos %}<option value="{{ r }}">{% endfor %}</datalist>
-        </div>
-      </div>
+      <label>App name</label>
+      <input name="name" placeholder="clips-api" required>
+
+      <label>Repo</label>
+      <select name="repo_select">
+        <option value="">— choose one of your repos —</option>
+        {% for r in repos %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+      </select>
+      <label class="muted">…or enter manually (e.g. an org repo not listed above)</label>
+      <input name="repo_manual" placeholder="owner/repo" autocomplete="off">
+
       <label>Workload class</label>
       <select name="workload_class">
         {% for c in classes %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
