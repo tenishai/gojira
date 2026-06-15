@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from gojira.config import Config
@@ -190,6 +190,36 @@ def list_repos(github: GitHubClient, limit: int = 200) -> list[str]:
 
 def app_by_repo(session: Session, repo_full_name: str) -> App | None:
     return session.scalar(select(App).where(App.repo_full_name == repo_full_name))
+
+
+def delete_app(
+    session: Session,
+    app_id: int,
+    kubectl_for: Callable[[Cluster], KubectlClient],
+    delete_namespaces: bool = True,
+) -> None:
+    """Remove an app from Gojira (app + envs + ledger + events).
+
+    Optionally best-effort deletes each environment's namespace on its cluster.
+    Per-project identity (deploy GSA, WIF, Artifact Registry) is intentionally
+    left in place — it is shared across apps in the project.
+    """
+    app = session.get(App, app_id)
+    if app is None:
+        return
+    if delete_namespaces:
+        for env in app.environments:
+            try:
+                kubectl_for(env.cluster).delete_namespace(env.namespace)
+            except Exception as exc:  # cluster unreachable etc — don't block the delete
+                log.warning(
+                    "could not delete ns %s on %s: %s", env.namespace, env.cluster.name, exc
+                )
+    session.execute(delete(ProvisionStep).where(ProvisionStep.app_id == app_id))
+    session.execute(delete(Event).where(Event.app_id == app_id))
+    session.delete(app)  # environments cascade via App.environments delete-orphan
+    session.commit()
+    log.info("deleted app %s (namespaces removed=%s)", app.name, delete_namespaces)
 
 
 def sync_app(session: Session, app_id: int, github: GitHubClient) -> bool:

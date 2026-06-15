@@ -154,6 +154,43 @@ def test_start_provision_runs_in_thread(session_factory):
         assert view.app.status == AppStatus.AWAITING_PR
 
 
+def test_delete_app_removes_rows_and_namespaces(session):
+    clusters = _three_clusters(session)
+    app = service.connect_app(
+        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        env_map={n: (c.id, "clips") for n, c in clusters.items()},
+    )
+    kube = KubectlFactory()
+    # seed the namespaces so the fakes have something to delete
+    for n, c in clusters.items():
+        kube(c).namespaces["clips"] = {"managed": "true"}
+    service.run_provision(session, app, _clients(), Config())
+    app_id = app.id
+
+    service.delete_app(session, app_id, kube, delete_namespaces=True)
+
+    assert service.app_by_repo(session, "shaz/clips-api") is None
+    from gojira.models import Environment, Event, ProvisionStep
+    assert session.query(Environment).filter_by(app_id=app_id).count() == 0
+    assert session.query(ProvisionStep).filter_by(app_id=app_id).count() == 0
+    assert session.query(Event).filter_by(app_id=app_id).count() == 0
+    # each env's namespace was deleted on its own cluster
+    assert "delete_ns:clips" in kube.by_cluster["dev"].calls
+    assert "delete_ns:clips" in kube.by_cluster["prod"].calls
+
+
+def test_delete_app_can_keep_namespaces(session):
+    clusters = _three_clusters(session)
+    app = service.connect_app(
+        session, name="a", repo_full_name="o/a", workload_class="web",
+        env_map={"dev": (clusters["dev"].id, "ns")},
+    )
+    kube = KubectlFactory()
+    service.delete_app(session, app.id, kube, delete_namespaces=False)
+    assert service.app_by_repo(session, "o/a") is None
+    assert kube.by_cluster == {}  # no kubectl touched
+
+
 def test_list_apps_and_clusters(session):
     _three_clusters(session)
     service.connect_app(

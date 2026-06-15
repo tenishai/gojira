@@ -146,6 +146,21 @@ def create_app(
         view = service.app_status(session, app_id)
         return TEMPLATES.TemplateResponse(request, "_status.html", {"v": view})
 
+    @app.post("/apps/{app_id}/delete")
+    def delete_app_route(
+        app_id: int,
+        request: Request,
+        session: Session = Depends(get_session),
+        delete_namespaces: str | None = Form(None),
+    ):
+        service.delete_app(
+            session,
+            app_id,
+            request.app.state.clients.kubectl_for,
+            delete_namespaces=bool(delete_namespaces),
+        )
+        return RedirectResponse("/", status_code=303)
+
     @app.post("/apps/{app_id}/sync")
     def sync(app_id: int, request: Request, session: Session = Depends(get_session)):
         service.sync_app(session, app_id, request.app.state.clients.github)

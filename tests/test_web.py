@@ -225,6 +225,25 @@ def test_connect_blank_namespace_defaults_to_app_name(client, session_factory):
     assert [(e.name, e.namespace) for e in view.environments] == [("dev", "myapp")]
 
 
+def test_delete_app_removes_it_from_dashboard(client, clients, session_factory):
+    _register_three(session_factory)
+    with session_factory() as s:
+        dev_id = next(c.id for c in service.list_clusters(s) if c.name == "dev")
+        app = service.connect_app(
+            s, name="goner", repo_full_name="acme/goner", workload_class="web",
+            env_map={"dev": (dev_id, "goner")},
+        )
+        app_id = app.id
+
+    r = client.post(
+        f"/apps/{app_id}/delete", data={"delete_namespaces": "1"}, follow_redirects=False
+    )
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    with session_factory() as s:
+        assert service.app_by_repo(s, "acme/goner") is None
+    assert "delete_ns:goner" in clients.kubectl_for.by_cluster["dev"].calls
+
+
 def test_connect_skips_unmapped_env(client, session_factory):
     _register_three(session_factory)
     with session_factory() as s:

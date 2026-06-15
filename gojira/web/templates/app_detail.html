@@ -16,4 +16,16 @@
 
   <h2>Provisioning</h2>
   {% include "_status.html" %}
+
+  <h2>Danger zone</h2>
+  <div class="card">
+    <form method="post" action="/apps/{{ v.app.id }}/delete"
+          onsubmit="return confirm('Delete {{ v.app.name }} from Gojira? Identity (service accounts, WIF, Artifact Registry) is left in place.')">
+      <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
+        <input type="checkbox" name="delete_namespaces" value="1" checked style="width:auto">
+        Also delete the Kubernetes namespaces on each environment
+      </label>
+      <button type="submit" style="background:#dc2626">Delete app</button>
+    </form>
+  </div>
 {% endblock %}
