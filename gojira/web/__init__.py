@@ -104,18 +104,24 @@ def create_app(
         if not service.repo_has_dockerfile(request.app.state.clients.github, repo):
             msg = f"{repo} has no Dockerfile — Gojira needs a containerizable app at the repo root"
             return RedirectResponse(f"/connect?error={msg}", status_code=303)
+        name = (form.get("name") or "").strip()
+        if not name:
+            return RedirectResponse("/connect?error=app+name+is+required", status_code=303)
         env_names = request.app.state.config.defaults.environments
         env_map: dict[str, tuple[int, str]] = {}
         for env in env_names:
             cluster_id = form.get(f"cluster_{env}")
-            namespace = (form.get(f"namespace_{env}") or "").strip()
-            if cluster_id and namespace:
-                env_map[env] = (int(cluster_id), namespace)
+            if not cluster_id:
+                continue  # no cluster picked → skip this environment
+            # blank namespace defaults to the app name, so a picked cluster is
+            # never silently dropped just because the namespace was left empty
+            namespace = (form.get(f"namespace_{env}") or "").strip() or name
+            env_map[env] = (int(cluster_id), namespace)
         if not env_map:
             return RedirectResponse("/connect?error=map+at+least+one+environment", status_code=303)
         app_obj = service.connect_app(
             session,
-            name=form["name"],
+            name=name,
             repo_full_name=repo,
             workload_class=form["workload_class"],
             env_map=env_map,

@@ -35,7 +35,7 @@
             {% for c in clusters %}<option value="{{ c.id }}">{{ c.name }} ({{ c.gcp_project }})</option>{% endfor %}
           </select>
         </div>
-        <div><label>{{ env }} — namespace</label><input name="namespace_{{ env }}" placeholder="clips"></div>
+        <div><label>{{ env }} — namespace</label><input name="namespace_{{ env }}" placeholder="defaults to app name"></div>
       </div>
       {% endfor %}
       <button type="submit">Connect & provision</button>

@@ -168,6 +168,25 @@ def test_connect_blocks_repo_without_dockerfile(session_factory):
         assert service.app_by_repo(s, "acme/web") is None  # not connected
 
 
+def test_connect_blank_namespace_defaults_to_app_name(client, session_factory):
+    _register_three(session_factory)
+    with session_factory() as s:
+        dev_id = next(c.id for c in service.list_clusters(s) if c.name == "dev")
+
+    r = client.post(
+        "/connect",
+        data={
+            "name": "myapp", "repo_select": "acme/web", "workload_class": "web",
+            "cluster_dev": dev_id, "namespace_dev": "",  # blank → defaults to app name
+        },
+        follow_redirects=False,
+    )
+    app_id = int(r.headers["location"].rsplit("/", 1)[-1])
+    with session_factory() as s:
+        view = service.app_status(s, app_id)
+    assert [(e.name, e.namespace) for e in view.environments] == [("dev", "myapp")]
+
+
 def test_connect_skips_unmapped_env(client, session_factory):
     _register_three(session_factory)
     with session_factory() as s:
