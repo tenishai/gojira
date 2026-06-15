@@ -98,6 +98,9 @@ def create_app(
         repo = (form.get("repo_manual") or "").strip() or (form.get("repo_select") or "").strip()
         if not repo:
             return RedirectResponse("/connect?error=pick+a+repo", status_code=303)
+        existing = service.app_by_repo(session, repo)
+        if existing:  # already connected — take them to it rather than 500 on the unique constraint
+            return RedirectResponse(f"/apps/{existing.id}", status_code=303)
         env_names = request.app.state.config.defaults.environments
         env_map: dict[str, tuple[int, str]] = {}
         for env in env_names:

@@ -188,6 +188,10 @@ def list_repos(github: GitHubClient, limit: int = 200) -> list[str]:
         return []
 
 
+def app_by_repo(session: Session, repo_full_name: str) -> App | None:
+    return session.scalar(select(App).where(App.repo_full_name == repo_full_name))
+
+
 def list_apps(session: Session) -> list[App]:
     return list(session.scalars(select(App).order_by(App.id.desc())))
 

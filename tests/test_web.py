@@ -120,6 +120,28 @@ def test_connect_provisions_and_status_reaches_terminal(client, session_factory)
     assert "@proj-a" in detail.text or "@proj-b" in detail.text
 
 
+def test_connect_existing_repo_redirects_to_app(client, session_factory):
+    _register_three(session_factory)
+    with session_factory() as s:
+        dev_id = next(c.id for c in service.list_clusters(s) if c.name == "dev")
+        existing = service.connect_app(
+            s, name="clips-api", repo_full_name="acme/clips-api", workload_class="web",
+            env_map={"dev": (dev_id, "clips")},
+        )
+        existing_id = existing.id
+
+    r = client.post(
+        "/connect",
+        data={
+            "name": "dupe", "repo_select": "acme/clips-api", "workload_class": "web",
+            "cluster_dev": dev_id, "namespace_dev": "clips",
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == f"/apps/{existing_id}"  # no 500, no duplicate
+
+
 def test_connect_skips_unmapped_env(client, session_factory):
     _register_three(session_factory)
     with session_factory() as s:
