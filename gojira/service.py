@@ -192,6 +192,24 @@ def app_by_repo(session: Session, repo_full_name: str) -> App | None:
     return session.scalar(select(App).where(App.repo_full_name == repo_full_name))
 
 
+def sync_app(session: Session, app_id: int, github: GitHubClient) -> bool:
+    """Advance an awaiting-PR app to active if its setup PR has merged.
+
+    Interim stand-in for the GitHub webhook: a pull, not a push. Returns True
+    if the status changed.
+    """
+    app = session.get(App, app_id)
+    if app is None or app.status != AppStatus.AWAITING_PR:
+        return False
+    if not github.setup_pr_merged(app.repo_full_name):
+        return False
+    app.status = AppStatus.ACTIVE
+    session.add(Event(app_id=app.id, type="app.activated"))
+    session.commit()
+    log.info("app %s activated (setup PR merged)", app.name)
+    return True
+
+
 def repo_has_dockerfile(github: GitHubClient, repo: str) -> bool:
     """Pre-flight: Gojira can only build a repo that ships a Dockerfile. On a
     transient gh error, don't block — let provisioning proceed."""

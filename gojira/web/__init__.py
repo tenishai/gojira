@@ -146,6 +146,11 @@ def create_app(
         view = service.app_status(session, app_id)
         return TEMPLATES.TemplateResponse(request, "_status.html", {"v": view})
 
+    @app.post("/apps/{app_id}/sync")
+    def sync(app_id: int, request: Request, session: Session = Depends(get_session)):
+        service.sync_app(session, app_id, request.app.state.clients.github)
+        return RedirectResponse(f"/apps/{app_id}", status_code=303)
+
     @app.post("/apps/{app_id}/provision")
     def reprovision(app_id: int, request: Request):
         service.start_provision(

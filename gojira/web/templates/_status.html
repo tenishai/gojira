@@ -9,6 +9,12 @@
         {{ v.counts.get('running', 0) }} running · {{ v.counts.get('failed', 0) }} failed
       </span>
       {% if v.app.setup_pr_url %} · <a href="{{ v.app.setup_pr_url }}">Setup PR ↗</a>{% endif %}
+      {% if v.app.status == 'awaiting_pr' %}
+      <form method="post" action="/apps/{{ v.app.id }}/sync" style="display:inline">
+        <button type="submit" style="margin:0 0 0 8px;padding:4px 12px">I merged the PR — check</button>
+      </form>
+      <span class="muted">(auto-detection via webhook is coming)</span>
+      {% endif %}
       {% if v.app.status == 'failed' %}
       <form method="post" action="/apps/{{ v.app.id }}/provision" style="display:inline">
         <button type="submit" style="margin:0 0 0 8px;padding:4px 12px">Retry</button>

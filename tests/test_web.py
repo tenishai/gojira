@@ -168,6 +168,44 @@ def test_connect_blocks_repo_without_dockerfile(session_factory):
         assert service.app_by_repo(s, "acme/web") is None  # not connected
 
 
+def test_sync_activates_when_setup_pr_merged(session_factory):
+    gh = FakeGitHubClient(pr_merged=False)
+    clients = service.ProvisionClients(
+        gcp=FakeGCPClient(), github=gh, kubectl_for=KubectlFactory()
+    )
+    client = TestClient(create_app(session_factory, clients=clients))
+    _register_three(session_factory)
+    with session_factory() as s:
+        dev_id = next(c.id for c in service.list_clusters(s) if c.name == "dev")
+    app_id = int(
+        client.post(
+            "/connect",
+            data={"name": "hello", "repo_select": "acme/web", "workload_class": "web",
+                  "cluster_dev": dev_id, "namespace_dev": "hello"},
+            follow_redirects=False,
+        ).headers["location"].rsplit("/", 1)[-1]
+    )
+
+    # wait for the background provision to reach awaiting_pr
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        with session_factory() as s:
+            if service.app_status(s, app_id).app.status == "awaiting_pr":
+                break
+        time.sleep(0.1)
+
+    # PR not merged yet → sync is a no-op, still awaiting
+    client.post(f"/apps/{app_id}/sync", follow_redirects=False)
+    with session_factory() as s:
+        assert service.app_status(s, app_id).app.status == "awaiting_pr"
+
+    # operator merges the PR → sync flips to active
+    gh.pr_merged = True
+    client.post(f"/apps/{app_id}/sync", follow_redirects=False)
+    with session_factory() as s:
+        assert service.app_status(s, app_id).app.status == "active"
+
+
 def test_connect_blank_namespace_defaults_to_app_name(client, session_factory):
     _register_three(session_factory)
     with session_factory() as s:

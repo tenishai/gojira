@@ -37,6 +37,11 @@ class GitHubClient(ABC):
         ...
 
     @abstractmethod
+    def setup_pr_merged(self, repo: str) -> bool:
+        """Whether the gojira/setup PR has been merged."""
+        ...
+
+    @abstractmethod
     def default_branch(self, repo: str) -> str: ...
 
     @abstractmethod
@@ -92,6 +97,13 @@ class GhCLI(GitHubClient):
         # gh api returns 0 on 200 (exists), non-zero on 404; don't raise on 404.
         result = self._runner.run([self._gh, "api", f"repos/{repo}/contents/{path}", "--silent"])
         return result.returncode == 0
+
+    def setup_pr_merged(self, repo: str) -> bool:
+        out = self._exec(
+            [self._gh, "pr", "list", "--repo", repo, "--head", SETUP_BRANCH,
+             "--state", "merged", "--json", "number", "--jq", "length"]
+        )
+        return out.strip() not in ("", "0")
 
     def default_branch(self, repo: str) -> str:
         return self._exec(
