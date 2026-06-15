@@ -142,6 +142,32 @@ def test_connect_existing_repo_redirects_to_app(client, session_factory):
     assert r.headers["location"] == f"/apps/{existing_id}"  # no 500, no duplicate
 
 
+def test_connect_blocks_repo_without_dockerfile(session_factory):
+    clients = service.ProvisionClients(
+        gcp=FakeGCPClient(),
+        github=FakeGitHubClient(dockerfile=False),
+        kubectl_for=KubectlFactory(),
+    )
+    client = TestClient(create_app(session_factory, clients=clients))
+    _register_three(session_factory)
+    with session_factory() as s:
+        dev_id = next(c.id for c in service.list_clusters(s) if c.name == "dev")
+
+    r = client.post(
+        "/connect",
+        data={
+            "name": "nodock", "repo_select": "acme/web", "workload_class": "web",
+            "cluster_dev": dev_id, "namespace_dev": "x",
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert r.headers["location"].startswith("/connect?error=")
+    assert "Dockerfile" in r.headers["location"]
+    with session_factory() as s:
+        assert service.app_by_repo(s, "acme/web") is None  # not connected
+
+
 def test_connect_skips_unmapped_env(client, session_factory):
     _register_three(session_factory)
     with session_factory() as s:

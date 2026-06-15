@@ -192,6 +192,16 @@ def app_by_repo(session: Session, repo_full_name: str) -> App | None:
     return session.scalar(select(App).where(App.repo_full_name == repo_full_name))
 
 
+def repo_has_dockerfile(github: GitHubClient, repo: str) -> bool:
+    """Pre-flight: Gojira can only build a repo that ships a Dockerfile. On a
+    transient gh error, don't block — let provisioning proceed."""
+    try:
+        return github.file_exists(repo, "Dockerfile")
+    except Exception as exc:
+        log.warning("Dockerfile pre-flight failed for %s: %s", repo, exc)
+        return True
+
+
 def list_apps(session: Session) -> list[App]:
     return list(session.scalars(select(App).order_by(App.id.desc())))
 

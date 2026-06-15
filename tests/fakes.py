@@ -111,8 +111,9 @@ class KubectlFactory:
 class FakeGitHubClient(GitHubClient):
     """In-memory git/GitHub. Tracks the repo flow; preset an existing PR."""
 
-    def __init__(self, *, default_branch="main", existing_pr=None, repos=None):
+    def __init__(self, *, default_branch="main", existing_pr=None, repos=None, dockerfile=True):
         self._default_branch = default_branch
+        self.dockerfile = dockerfile
         self.repos = repos or ["shaz/clips-api", "shaz/gojira-demo", "acme/web"]
         self.prs = {}
         if existing_pr:
@@ -125,6 +126,9 @@ class FakeGitHubClient(GitHubClient):
 
     def list_repos(self, limit=200):
         return self.repos[:limit]
+
+    def file_exists(self, repo, path):
+        return self.dockerfile if path == "Dockerfile" else True
 
     def default_branch(self, repo):
         return self._default_branch

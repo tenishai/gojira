@@ -32,6 +32,11 @@ class GitHubClient(ABC):
         ...
 
     @abstractmethod
+    def file_exists(self, repo: str, path: str) -> bool:
+        """Whether path exists at the repo's default branch."""
+        ...
+
+    @abstractmethod
     def default_branch(self, repo: str) -> str: ...
 
     @abstractmethod
@@ -82,6 +87,11 @@ class GhCLI(GitHubClient):
              "--json", "nameWithOwner", "--jq", ".[].nameWithOwner"]
         )
         return [line.strip() for line in out.splitlines() if line.strip()]
+
+    def file_exists(self, repo: str, path: str) -> bool:
+        # gh api returns 0 on 200 (exists), non-zero on 404; don't raise on 404.
+        result = self._runner.run([self._gh, "api", f"repos/{repo}/contents/{path}", "--silent"])
+        return result.returncode == 0
 
     def default_branch(self, repo: str) -> str:
         return self._exec(
