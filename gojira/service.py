@@ -240,6 +240,22 @@ def sync_app(session: Session, app_id: int, github: GitHubClient) -> bool:
     return True
 
 
+def cut_release(github: GitHubClient, repo: str, version: str) -> str:
+    """Tag the default branch's HEAD as version, triggering the promote workflow.
+
+    Normalizes to a 'v*' tag (what the promote workflow listens for). Returns the
+    tag actually created.
+    """
+    tag = version.strip()
+    if not tag:
+        raise ValueError("a version is required")
+    if not tag.startswith("v"):
+        tag = f"v{tag}"
+    github.create_tag(repo, tag, github.head_sha(repo))
+    log.info("cut release %s for %s", tag, repo)
+    return tag
+
+
 def repo_has_dockerfile(github: GitHubClient, repo: str) -> bool:
     """Pre-flight: Gojira can only build a repo that ships a Dockerfile. On a
     transient gh error, don't block — let provisioning proceed."""

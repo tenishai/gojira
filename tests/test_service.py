@@ -191,6 +191,21 @@ def test_delete_app_can_keep_namespaces(session):
     assert kube.by_cluster == {}  # no kubectl touched
 
 
+def test_cut_release_tags_head_and_normalizes_v():
+    gh = FakeGitHubClient()
+    tag = service.cut_release(gh, "acme/web", "1.2.3")
+    assert tag == "v1.2.3"  # normalized to v*
+    assert gh.tags == [("acme/web", "v1.2.3", "abc123def456")]
+
+    service.cut_release(gh, "acme/web", "v2.0.0")  # already prefixed
+    assert gh.tags[-1] == ("acme/web", "v2.0.0", "abc123def456")
+
+
+def test_cut_release_rejects_empty_version():
+    with pytest.raises(ValueError, match="version"):
+        service.cut_release(FakeGitHubClient(), "acme/web", "  ")
+
+
 def test_list_apps_and_clusters(session):
     _three_clusters(session)
     service.connect_app(

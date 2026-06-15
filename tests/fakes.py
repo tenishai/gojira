@@ -128,6 +128,7 @@ class FakeGitHubClient(GitHubClient):
         self.branch = None
         self.committed = False
         self.pushed = None
+        self.tags: list[tuple[str, str, str]] = []  # (repo, tag, sha)
         self.calls: list[str] = []
 
     def list_repos(self, limit=200):
@@ -138,6 +139,13 @@ class FakeGitHubClient(GitHubClient):
 
     def setup_pr_merged(self, repo):
         return self.pr_merged
+
+    def head_sha(self, repo):
+        return "abc123def456"
+
+    def create_tag(self, repo, tag, sha):
+        self.calls.append(f"tag:{tag}")
+        self.tags.append((repo, tag, sha))
 
     def default_branch(self, repo):
         return self._default_branch

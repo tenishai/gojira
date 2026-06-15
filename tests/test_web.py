@@ -225,6 +225,24 @@ def test_connect_blank_namespace_defaults_to_app_name(client, session_factory):
     assert [(e.name, e.namespace) for e in view.environments] == [("dev", "myapp")]
 
 
+def test_promote_cuts_tag_and_redirects_to_actions(client, clients, session_factory):
+    _register_three(session_factory)
+    with session_factory() as s:
+        dev_id = next(c.id for c in service.list_clusters(s) if c.name == "dev")
+        app = service.connect_app(
+            s, name="rel", repo_full_name="acme/rel", workload_class="web",
+            env_map={"dev": (dev_id, "rel")},
+        )
+        app_id = app.id
+
+    r = client.post(
+        f"/apps/{app_id}/promote", data={"version": "0.3.0"}, follow_redirects=False
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == "https://github.com/acme/rel/actions"
+    assert clients.github.tags == [("acme/rel", "v0.3.0", "abc123def456")]
+
+
 def test_delete_app_removes_it_from_dashboard(client, clients, session_factory):
     _register_three(session_factory)
     with session_factory() as s:

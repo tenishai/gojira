@@ -166,6 +166,23 @@ def create_app(
         service.sync_app(session, app_id, request.app.state.clients.github)
         return RedirectResponse(f"/apps/{app_id}", status_code=303)
 
+    @app.post("/apps/{app_id}/promote")
+    def promote(
+        app_id: int,
+        request: Request,
+        session: Session = Depends(get_session),
+        version: str = Form(...),
+    ):
+        view = service.app_status(session, app_id)
+        repo = view.app.repo_full_name
+        try:
+            service.cut_release(request.app.state.clients.github, repo, version)
+        except Exception as exc:
+            log.warning("promote failed for %s: %s", repo, exc)
+            return RedirectResponse(f"/apps/{app_id}", status_code=303)
+        # send them to the Actions run that the tag just triggered
+        return RedirectResponse(f"https://github.com/{repo}/actions", status_code=303)
+
     @app.post("/apps/{app_id}/provision")
     def reprovision(app_id: int, request: Request):
         service.start_provision(

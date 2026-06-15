@@ -42,6 +42,16 @@ class GitHubClient(ABC):
         ...
 
     @abstractmethod
+    def head_sha(self, repo: str) -> str:
+        """The commit SHA at the tip of the repo's default branch."""
+        ...
+
+    @abstractmethod
+    def create_tag(self, repo: str, tag: str, sha: str) -> None:
+        """Create a lightweight tag ref pointing at sha."""
+        ...
+
+    @abstractmethod
     def default_branch(self, repo: str) -> str: ...
 
     @abstractmethod
@@ -109,6 +119,18 @@ class GhCLI(GitHubClient):
         return self._exec(
             [self._gh, "repo", "view", repo, "--json", "defaultBranchRef",
              "--jq", ".defaultBranchRef.name"]
+        )
+
+    def head_sha(self, repo: str) -> str:
+        branch = self.default_branch(repo)
+        return self._exec(
+            [self._gh, "api", f"repos/{repo}/commits/{branch}", "--jq", ".sha"]
+        ).strip()
+
+    def create_tag(self, repo: str, tag: str, sha: str) -> None:
+        self._exec(
+            [self._gh, "api", "-X", "POST", f"repos/{repo}/git/refs",
+             "-f", f"ref=refs/tags/{tag}", "-f", f"sha={sha}"]
         )
 
     def clone(self, repo: str, workdir: Path) -> None:
