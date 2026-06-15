@@ -84,6 +84,7 @@ def create_app(
             "connect.html",
             {
                 "clusters": service.list_clusters(session),
+                "repos": service.list_repos(request.app.state.clients.github),
                 "classes": sorted(WORKLOAD_CLASSES),
                 "env_names": request.app.state.config.defaults.environments,
             },

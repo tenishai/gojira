@@ -111,8 +111,9 @@ class KubectlFactory:
 class FakeGitHubClient(GitHubClient):
     """In-memory git/GitHub. Tracks the repo flow; preset an existing PR."""
 
-    def __init__(self, *, default_branch="main", existing_pr=None):
+    def __init__(self, *, default_branch="main", existing_pr=None, repos=None):
         self._default_branch = default_branch
+        self.repos = repos or ["shaz/clips-api", "shaz/gojira-demo", "acme/web"]
         self.prs = {}
         if existing_pr:
             self.prs[SETUP_BRANCH] = existing_pr
@@ -121,6 +122,9 @@ class FakeGitHubClient(GitHubClient):
         self.committed = False
         self.pushed = None
         self.calls: list[str] = []
+
+    def list_repos(self, limit=200):
+        return self.repos[:limit]
 
     def default_branch(self, repo):
         return self._default_branch

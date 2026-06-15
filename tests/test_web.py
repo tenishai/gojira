@@ -74,6 +74,13 @@ def test_connect_requires_cluster(client):
     assert "Register at least one" in client.get("/connect").text
 
 
+def test_connect_lists_repos_from_github(client, session_factory):
+    _register_three(session_factory)
+    html = client.get("/connect").text
+    assert "<datalist id=\"repos\">" in html
+    assert "shaz/gojira-demo" in html  # from the fake's repo list
+
+
 def test_connect_provisions_and_status_reaches_terminal(client, session_factory):
     _register_three(session_factory)
     with session_factory() as s:

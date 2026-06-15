@@ -27,6 +27,11 @@ class GitHubClient(ABC):
     """The GitHub/git operations the provisioner needs."""
 
     @abstractmethod
+    def list_repos(self, limit: int = 200) -> list[str]:
+        """owner/repo names the operator can deploy, most-recently-pushed first."""
+        ...
+
+    @abstractmethod
     def default_branch(self, repo: str) -> str: ...
 
     @abstractmethod
@@ -70,6 +75,13 @@ class GhCLI(GitHubClient):
 
     def _git_in(self, workdir: Path, *args: str) -> str:
         return self._exec([self._git, "-C", str(workdir), *args])
+
+    def list_repos(self, limit: int = 200) -> list[str]:
+        out = self._exec(
+            [self._gh, "repo", "list", "--no-archived", "--limit", str(limit),
+             "--json", "nameWithOwner", "--jq", ".[].nameWithOwner"]
+        )
+        return [line.strip() for line in out.splitlines() if line.strip()]
 
     def default_branch(self, repo: str) -> str:
         return self._exec(

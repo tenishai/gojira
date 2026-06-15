@@ -179,6 +179,15 @@ class AppStatusView:
     counts: dict[str, int] = field(default_factory=dict)
 
 
+def list_repos(github: GitHubClient, limit: int = 200) -> list[str]:
+    """The operator's GitHub repos for the connect picker; [] if gh is unhappy."""
+    try:
+        return github.list_repos(limit)
+    except Exception as exc:
+        log.warning("failed to list repos: %s", exc)
+        return []
+
+
 def list_apps(session: Session) -> list[App]:
     return list(session.scalars(select(App).order_by(App.id.desc())))
 

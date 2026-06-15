@@ -9,7 +9,12 @@
     <form class="stack" method="post" action="/connect">
       <div class="row">
         <div><label>App name</label><input name="name" placeholder="clips-api" required></div>
-        <div><label>Repo (owner/repo)</label><input name="repo_full_name" placeholder="acme/clips-api" required></div>
+        <div>
+          <label>Repo (owner/repo)</label>
+          <input name="repo_full_name" list="repos" placeholder="start typing…" autocomplete="off" required>
+          <datalist id="repos">
+            {% for r in repos %}<option value="{{ r }}">{% endfor %}</datalist>
+        </div>
       </div>
       <label>Workload class</label>
       <select name="workload_class">
