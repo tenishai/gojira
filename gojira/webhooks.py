@@ -14,11 +14,12 @@ import hmac
 import json
 import logging
 
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from gojira import service
 from gojira.github import SETUP_BRANCH
-from gojira.models import Event
+from gojira.models import Event, InstallationRepo
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +50,8 @@ def handle_event(session: Session, event_type: str, payload: dict) -> str | None
     handler = {
         "pull_request": _handle_pull_request,
         "workflow_run": _handle_workflow_run,
+        "installation": _handle_installation,
+        "installation_repositories": _handle_installation_repositories,
     }.get(event_type)
     if handler is None:
         return None
@@ -108,3 +111,51 @@ def _handle_workflow_run(session: Session, payload: dict) -> str | None:
     )
     session.commit()
     return f"{event_type} for {app.name}"
+
+
+def _upsert_repos(session: Session, installation_id: int, repos: list[str]) -> None:
+    """Point each repo at this installation in the cache table (insert or update)."""
+    for full_name in repos:
+        row = session.scalar(
+            select(InstallationRepo).where(InstallationRepo.repo_full_name == full_name)
+        )
+        if row is None:
+            session.add(
+                InstallationRepo(repo_full_name=full_name, installation_id=installation_id)
+            )
+        else:
+            row.installation_id = installation_id
+
+
+def _handle_installation(session: Session, payload: dict) -> str | None:
+    """App installed / uninstalled / repos changed at the installation level —
+    keep the repo→installation cache in step with it."""
+    inst = payload.get("installation") or {}
+    iid = inst.get("id")
+    if iid is None:
+        return None
+    action = payload.get("action")
+    if action == "deleted":
+        session.execute(delete(InstallationRepo).where(InstallationRepo.installation_id == iid))
+        session.commit()
+        return f"installation {iid} removed from cache"
+    repos = [r["full_name"] for r in payload.get("repositories") or []]
+    _upsert_repos(session, iid, repos)
+    session.commit()
+    return f"installation {iid}: cached {len(repos)} repos"
+
+
+def _handle_installation_repositories(session: Session, payload: dict) -> str | None:
+    """Repos added to / removed from an existing installation."""
+    iid = (payload.get("installation") or {}).get("id")
+    if iid is None:
+        return None
+    added = [r["full_name"] for r in payload.get("repositories_added") or []]
+    removed = [r["full_name"] for r in payload.get("repositories_removed") or []]
+    _upsert_repos(session, iid, added)
+    if removed:
+        session.execute(
+            delete(InstallationRepo).where(InstallationRepo.repo_full_name.in_(removed))
+        )
+    session.commit()
+    return f"installation {iid}: +{len(added)} -{len(removed)} repos"

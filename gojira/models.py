@@ -125,6 +125,26 @@ class ProvisionStep(Base):
     app: Mapped[App] = relationship(back_populates="steps")
 
 
+class InstallationRepo(Base):
+    """Which GitHub App installation covers a repo — a persisted cache.
+
+    The source of truth is the GitHub API (GET /repos/{repo}/installation);
+    rows are refreshed on a cache miss and kept current by the installation*
+    webhooks. Lets the App backend mint an installation token for a repo
+    without an API round-trip on the hot path, and backs the connect picker's
+    repo list when running App-backed.
+    """
+
+    __tablename__ = "installation_repos"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    repo_full_name: Mapped[str] = mapped_column(String(255), unique=True)
+    installation_id: Mapped[int]
+    updated_at: Mapped[datetime] = mapped_column(
+        default=utcnow, server_default=func.now(), onupdate=utcnow
+    )
+
+
 class Event(Base):
     """Append-only log: webhooks received, deploys observed, operator actions."""
 

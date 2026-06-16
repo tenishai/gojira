@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from gojira.config import Config
 from gojira.gcp import GCPClient, GcloudClient
-from gojira.github import GhCLI, GitHubClient
+from gojira.github import GhCLI, GitHubAppClient, GitHubClient
+from gojira.installations import DbInstallationResolver
 from gojira.k8s import KubectlCLI, KubectlClient
 from gojira.models import App, AppStatus, Cluster, Environment, Event, ProvisionStep
 from gojira.provisioner import provision_app
@@ -32,6 +33,23 @@ def default_ar_repo(gcp_project: str, location: str) -> str:
     return f"{location}-docker.pkg.dev/{gcp_project}/apps"
 
 
+def build_github_client(
+    config: Config, session_factory: sessionmaker[Session] | None = None
+) -> GitHubClient:
+    """The App backend when a GitHub App is configured, else the gh-CLI backend.
+
+    The App backend needs a durable resolver, so it requires a session factory;
+    without one (or without App config) we fall back to GhCLI's operator session.
+    """
+    gh = config.github
+    if gh.app_id and gh.private_key_path and session_factory is not None:
+        private_key = Path(gh.private_key_path).read_text()
+        log.info("using GitHub App backend (app_id=%s)", gh.app_id)
+        return GitHubAppClient(gh.app_id, private_key, DbInstallationResolver(session_factory))
+    log.info("using gh-CLI GitHub backend")
+    return GhCLI()
+
+
 @dataclass
 class ProvisionClients:
     """The three clients provision_app needs. Swap fakes in for tests."""
@@ -41,7 +59,11 @@ class ProvisionClients:
     kubectl_for: Callable[[Cluster], KubectlClient]
 
     @classmethod
-    def real(cls) -> "ProvisionClients":
+    def real(
+        cls,
+        config: Config | None = None,
+        session_factory: sessionmaker[Session] | None = None,
+    ) -> "ProvisionClients":
         gcp = GcloudClient()
 
         def kubectl_for(cluster: Cluster) -> KubectlClient:
@@ -50,7 +72,8 @@ class ProvisionClients:
             )
             return KubectlCLI(context=ctx)
 
-        return cls(gcp=gcp, github=GhCLI(), kubectl_for=kubectl_for)
+        github = build_github_client(config or Config(), session_factory)
+        return cls(gcp=gcp, github=github, kubectl_for=kubectl_for)
 
 
 # --- writes ------------------------------------------------------------------

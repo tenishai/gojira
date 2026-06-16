@@ -17,6 +17,7 @@ from sqlalchemy.orm import sessionmaker
 from gojira import service, webhooks
 from gojira.config import Config, GitHubConfig
 from gojira.github import SETUP_BRANCH
+from gojira.installations import DbInstallationResolver
 from gojira.models import AppStatus, Base
 from gojira.web import create_app
 
@@ -82,6 +83,23 @@ def wr_payload(repo, name, *, conclusion="success", action="completed", ref="v1.
             "html_url": "https://github.com/acme/web/actions/runs/1",
         },
         "repository": {"full_name": repo},
+    }
+
+
+def installation_payload(iid, repos, *, action="created"):
+    return {
+        "action": action,
+        "installation": {"id": iid},
+        "repositories": [{"full_name": r} for r in repos],
+    }
+
+
+def installation_repos_payload(iid, *, added=(), removed=(), action="added"):
+    return {
+        "action": action,
+        "installation": {"id": iid},
+        "repositories_added": [{"full_name": r} for r in added],
+        "repositories_removed": [{"full_name": r} for r in removed],
     }
 
 
@@ -176,6 +194,36 @@ def test_unrelated_workflow_ignored(session_factory):
 def test_unknown_event_type_ignored(session_factory):
     with session_factory() as s:
         assert webhooks.handle_event(s, "star", {"repository": {"full_name": "acme/web"}}) is None
+
+
+# --- installation handlers (repo→installation cache) -------------------------
+
+
+def test_installation_created_caches_repos(session_factory):
+    with session_factory() as s:
+        webhooks.handle_event(s, "installation", installation_payload(100, ["acme/web", "acme/api"]))
+    resolver = DbInstallationResolver(session_factory)
+    assert resolver.resolve("acme/web") == 100
+    assert resolver.resolve("acme/api") == 100
+
+
+def test_installation_deleted_clears_cache(session_factory):
+    with session_factory() as s:
+        webhooks.handle_event(s, "installation", installation_payload(100, ["acme/web"]))
+        webhooks.handle_event(s, "installation", installation_payload(100, [], action="deleted"))
+    assert DbInstallationResolver(session_factory).resolve("acme/web") is None
+
+
+def test_installation_repositories_added_and_removed(session_factory):
+    resolver = DbInstallationResolver(session_factory)
+    with session_factory() as s:
+        webhooks.handle_event(s, "installation", installation_payload(100, ["acme/web"]))
+        webhooks.handle_event(
+            s, "installation_repositories",
+            installation_repos_payload(100, added=["acme/api"], removed=["acme/web"]),
+        )
+    assert resolver.resolve("acme/api") == 100
+    assert resolver.resolve("acme/web") is None
 
 
 # --- route -------------------------------------------------------------------
