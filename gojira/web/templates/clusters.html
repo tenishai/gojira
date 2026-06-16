@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Clusters · Gojira{% endblock %}
+{% block content %}
+  <h1>Clusters</h1>
+  {% if error %}<div class="card err">Registration failed: {{ error }}</div>{% endif %}
+  {% if clusters %}
+  <table>
+    <thead><tr><th>Name</th><th>Project</th><th>Location</th><th>GKE cluster</th><th>Artifact Registry</th></tr></thead>
+    <tbody>
+      {% for c in clusters %}
+      <tr>
+        <td>{{ c.name }}</td><td class="mono">{{ c.gcp_project }}</td><td>{{ c.location }}</td>
+        <td class="mono">{{ c.gke_cluster }}</td><td class="mono">{{ c.ar_repo }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="card muted">No clusters registered yet.</div>
+  {% endif %}
+
+  <h2>Register a cluster</h2>
+  <div class="card">
+    <form class="stack" method="post" action="/clusters">
+      <div class="row">
+        <div><label>Name</label><input name="name" placeholder="dev" required></div>
+        <div><label>GCP project</label><input name="gcp_project" placeholder="my-project" required></div>
+      </div>
+      <div class="row">
+        <div><label>Location</label><input name="location" placeholder="us-central1" required></div>
+        <div><label>GKE cluster</label><input name="gke_cluster" placeholder="dev-gke" required></div>
+      </div>
+      <label>Artifact Registry repo <span class="muted">(optional — defaults to &lt;location&gt;-docker.pkg.dev/&lt;project&gt;/apps)</span></label>
+      <input name="ar_repo" placeholder="us-central1-docker.pkg.dev/my-project/apps">
+      <button type="submit">Register & validate</button>
+    </form>
+  </div>
+{% endblock %}

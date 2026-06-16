@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Connect repo · Gojira{% endblock %}
+{% block content %}
+  <h1>Connect a repo</h1>
+  {% if error %}<div class="card err">{{ error }}</div>{% endif %}
+  {% if not clusters %}
+  <div class="card muted">Register at least one <a href="/clusters">cluster</a> first.</div>
+  {% else %}
+  <div class="card">
+    <form class="stack" method="post" action="/connect">
+      <label>App name</label>
+      <input name="name" placeholder="clips-api" required>
+
+      <label>Repo</label>
+      <select name="repo_select">
+        <option value="">— choose one of your repos —</option>
+        {% for r in repos %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+      </select>
+      <label class="muted">…or enter manually (e.g. an org repo not listed above)</label>
+      <input name="repo_manual" placeholder="owner/repo" autocomplete="off">
+
+      <label>Workload class</label>
+      <select name="workload_class">
+        {% for c in classes %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+      </select>
+
+      <h2>Environments</h2>
+      <p class="muted">Map each environment to a cluster + namespace. Leave a cluster unset to skip that environment.</p>
+      {% for env in env_names %}
+      <div class="row">
+        <div>
+          <label>{{ env }} — cluster</label>
+          <select name="cluster_{{ env }}">
+            <option value="">— skip —</option>
+            {% for c in clusters %}<option value="{{ c.id }}">{{ c.name }} ({{ c.gcp_project }})</option>{% endfor %}
+          </select>
+        </div>
+        <div><label>{{ env }} — namespace</label><input name="namespace_{{ env }}" placeholder="defaults to app name"></div>
+      </div>
+      {% endfor %}
+      <button type="submit">Connect & provision</button>
+    </form>
+  </div>
+  {% endif %}
+{% endblock %}

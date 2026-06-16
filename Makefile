@@ -21,7 +21,7 @@ build:
 	docker build -t gojira:dev .
 
 run:
-	$(PY) -m uvicorn gojira.app:app --reload --port 8080
+	$(PY) -m gojira.web
 
 clean:
 	rm -rf $(VENV) *.egg-info .pytest_cache .ruff_cache

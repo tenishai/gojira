@@ -27,6 +27,9 @@ class KubectlClient(ABC):
     @abstractmethod
     def ensure_namespace(self, namespace: str, labels: dict[str, str]) -> None: ...
 
+    @abstractmethod
+    def delete_namespace(self, namespace: str) -> None: ...
+
 
 class KubectlCLI(KubectlClient):
     """kubectl-backed client, pinned to one kubeconfig context."""
@@ -62,3 +65,9 @@ class KubectlCLI(KubectlClient):
         result = self._run("apply", "-f", "-", stdin=manifest)
         if result.returncode != 0:
             raise K8sError(f"kubectl apply namespace {namespace} failed: {result.stderr}")
+
+    def delete_namespace(self, namespace: str) -> None:
+        # --wait=false: return immediately; termination runs async on the cluster.
+        result = self._run("delete", "namespace", namespace, "--ignore-not-found", "--wait=false")
+        if result.returncode != 0:
+            raise K8sError(f"kubectl delete namespace {namespace} failed: {result.stderr}")
