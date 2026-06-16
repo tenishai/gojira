@@ -27,6 +27,31 @@ class GitHubClient(ABC):
     """The GitHub/git operations the provisioner needs."""
 
     @abstractmethod
+    def list_repos(self, limit: int = 200) -> list[str]:
+        """owner/repo names the operator can deploy, most-recently-pushed first."""
+        ...
+
+    @abstractmethod
+    def file_exists(self, repo: str, path: str) -> bool:
+        """Whether path exists at the repo's default branch."""
+        ...
+
+    @abstractmethod
+    def setup_pr_merged(self, repo: str) -> bool:
+        """Whether the gojira/setup PR has been merged."""
+        ...
+
+    @abstractmethod
+    def head_sha(self, repo: str) -> str:
+        """The commit SHA at the tip of the repo's default branch."""
+        ...
+
+    @abstractmethod
+    def create_tag(self, repo: str, tag: str, sha: str) -> None:
+        """Create a lightweight tag ref pointing at sha."""
+        ...
+
+    @abstractmethod
     def default_branch(self, repo: str) -> str: ...
 
     @abstractmethod
@@ -71,10 +96,41 @@ class GhCLI(GitHubClient):
     def _git_in(self, workdir: Path, *args: str) -> str:
         return self._exec([self._git, "-C", str(workdir), *args])
 
+    def list_repos(self, limit: int = 200) -> list[str]:
+        out = self._exec(
+            [self._gh, "repo", "list", "--no-archived", "--limit", str(limit),
+             "--json", "nameWithOwner", "--jq", ".[].nameWithOwner"]
+        )
+        return [line.strip() for line in out.splitlines() if line.strip()]
+
+    def file_exists(self, repo: str, path: str) -> bool:
+        # gh api returns 0 on 200 (exists), non-zero on 404; don't raise on 404.
+        result = self._runner.run([self._gh, "api", f"repos/{repo}/contents/{path}", "--silent"])
+        return result.returncode == 0
+
+    def setup_pr_merged(self, repo: str) -> bool:
+        out = self._exec(
+            [self._gh, "pr", "list", "--repo", repo, "--head", SETUP_BRANCH,
+             "--state", "merged", "--json", "number", "--jq", "length"]
+        )
+        return out.strip() not in ("", "0")
+
     def default_branch(self, repo: str) -> str:
         return self._exec(
             [self._gh, "repo", "view", repo, "--json", "defaultBranchRef",
              "--jq", ".defaultBranchRef.name"]
+        )
+
+    def head_sha(self, repo: str) -> str:
+        branch = self.default_branch(repo)
+        return self._exec(
+            [self._gh, "api", f"repos/{repo}/commits/{branch}", "--jq", ".sha"]
+        ).strip()
+
+    def create_tag(self, repo: str, tag: str, sha: str) -> None:
+        self._exec(
+            [self._gh, "api", "-X", "POST", f"repos/{repo}/git/refs",
+             "-f", f"ref=refs/tags/{tag}", "-f", f"sha={sha}"]
         )
 
     def clone(self, repo: str, workdir: Path) -> None:

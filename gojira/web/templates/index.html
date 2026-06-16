@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Apps · Gojira{% endblock %}
+{% block content %}
+  <h1>Apps</h1>
+  {% if apps %}
+  <table>
+    <thead><tr><th>App</th><th>Repo</th><th>Class</th><th>Status</th><th>Setup PR</th></tr></thead>
+    <tbody>
+      {% for a in apps %}
+      <tr>
+        <td><a href="/apps/{{ a.id }}">{{ a.name }}</a></td>
+        <td class="mono">{{ a.repo_full_name }}</td>
+        <td>{{ a.workload_class }}</td>
+        <td><span class="badge b-{{ a.status }}">{{ a.status }}</span></td>
+        <td>{% if a.setup_pr_url %}<a href="{{ a.setup_pr_url }}">PR ↗</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="card muted">No apps yet. <a href="/connect">Connect a repo</a> to get started.</div>
+  {% endif %}
+{% endblock %}

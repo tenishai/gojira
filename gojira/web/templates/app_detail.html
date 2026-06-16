@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ v.app.name }} · Gojira{% endblock %}
+{% block content %}
+  <h1>{{ v.app.name }} <span class="badge b-{{ v.app.status }}">{{ v.app.status }}</span></h1>
+  <p class="muted mono">{{ v.app.repo_full_name }} · {{ v.app.workload_class }}</p>
+
+  <h2>Environments</h2>
+  <table>
+    <thead><tr><th>Env</th><th>Cluster</th><th>Project</th><th>Namespace</th></tr></thead>
+    <tbody>
+      {% for e in v.environments %}
+      <tr><td>{{ e.name }}</td><td>{{ e.cluster.name }}</td><td class="mono">{{ e.cluster.gcp_project }}</td><td class="mono">{{ e.namespace }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Provisioning</h2>
+  {% include "_status.html" %}
+
+  {% if v.environments | length > 1 %}
+  <h2>Release</h2>
+  <div class="card">
+    <p class="muted">Tag the default branch to promote: builds {{ v.environments[1].name }}, then
+      deploys the rest (prod behind its gate). Opens the Actions run.</p>
+    <form method="post" action="/apps/{{ v.app.id }}/promote" class="row" style="align-items:flex-end">
+      <div><label>Version</label><input name="version" placeholder="v0.1.0" required></div>
+      <div style="flex:0 0 auto"><button type="submit" style="margin:0">Cut release</button></div>
+    </form>
+  </div>
+  {% endif %}
+
+  <h2>Danger zone</h2>
+  <div class="card">
+    <form method="post" action="/apps/{{ v.app.id }}/delete"
+          onsubmit="return confirm('Delete {{ v.app.name }} from Gojira? Identity (service accounts, WIF, Artifact Registry) is left in place.')">
+      <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
+        <input type="checkbox" name="delete_namespaces" value="1" checked style="width:auto">
+        Also delete the Kubernetes namespaces on each environment
+      </label>
+      <button type="submit" style="background:#dc2626">Delete app</button>
+    </form>
+  </div>
+{% endblock %}
