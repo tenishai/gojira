@@ -6,15 +6,16 @@ service.start_provision); the app-detail page htmx-polls /apps/{id}/status until
 the run reaches a terminal state.
 """
 
+import json
 import logging
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session, sessionmaker
 
-from gojira import service
+from gojira import service, webhooks
 from gojira.config import Config, load_config
 from gojira.opinions import WORKLOAD_CLASSES
 from gojira.service import ProvisionClients
@@ -192,6 +193,21 @@ def create_app(
             config=request.app.state.config,
         )
         return RedirectResponse(f"/apps/{app_id}", status_code=303)
+
+    @app.post("/webhook/github")
+    async def github_webhook(request: Request, session: Session = Depends(get_session)):
+        body = await request.body()
+        secret = request.app.state.config.github.webhook_secret
+        if not webhooks.verify_signature(secret, body, request.headers.get("X-Hub-Signature-256")):
+            return JSONResponse({"error": "invalid signature"}, status_code=401)
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            return JSONResponse({"error": "invalid payload"}, status_code=400)
+        event_type = request.headers.get("X-GitHub-Event", "")
+        result = webhooks.handle_event(session, event_type, payload)
+        log.info("webhook %s: %s", event_type, result or "ignored")
+        return JSONResponse({"ok": True, "result": result}, status_code=202)
 
     return app
 
