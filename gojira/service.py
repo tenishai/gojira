@@ -222,22 +222,34 @@ def delete_app(
     log.info("deleted app %s (namespaces removed=%s)", app.name, delete_namespaces)
 
 
-def sync_app(session: Session, app_id: int, github: GitHubClient) -> bool:
-    """Advance an awaiting-PR app to active if its setup PR has merged.
+def activate_app(session: Session, app: App) -> bool:
+    """Flip an awaiting-PR app to active and log the event. Idempotent: returns
+    False without changing anything if the app isn't awaiting its setup PR.
 
-    Interim stand-in for the GitHub webhook: a pull, not a push. Returns True
-    if the status changed.
+    Shared by the sync poll (sync_app) and the pull_request webhook, so both
+    paths converge on one state transition.
     """
-    app = session.get(App, app_id)
-    if app is None or app.status != AppStatus.AWAITING_PR:
-        return False
-    if not github.setup_pr_merged(app.repo_full_name):
+    if app.status != AppStatus.AWAITING_PR:
         return False
     app.status = AppStatus.ACTIVE
     session.add(Event(app_id=app.id, type="app.activated"))
     session.commit()
     log.info("app %s activated (setup PR merged)", app.name)
     return True
+
+
+def sync_app(session: Session, app_id: int, github: GitHubClient) -> bool:
+    """Advance an awaiting-PR app to active if its setup PR has merged.
+
+    A pull, not a push: the manual fallback for when the webhook isn't wired
+    (local single-tenant runs). Returns True if the status changed.
+    """
+    app = session.get(App, app_id)
+    if app is None or app.status != AppStatus.AWAITING_PR:
+        return False
+    if not github.setup_pr_merged(app.repo_full_name):
+        return False
+    return activate_app(session, app)
 
 
 def cut_release(github: GitHubClient, repo: str, version: str) -> str:
