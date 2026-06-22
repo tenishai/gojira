@@ -1,6 +1,10 @@
 # Gojira configuration. Copy to config.yaml and fill in.
 # All values support ${ENV_VAR} and ${ENV_VAR:-default} interpolation.
 
+# GitHub App backend (hosted, webhook-driven). When app_id AND private_key_path
+# are set, Gojira authenticates as the App installation for each repo; otherwise
+# it falls back to the operator's local `gh auth` session (the single-tenant
+# laptop story). webhook_secret signs POSTs to /webhook/github.
 github:
   app_id: ${GOJIRA_GITHUB_APP_ID}
   private_key_path: /secrets/github-app.pem

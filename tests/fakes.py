@@ -6,7 +6,9 @@ flow is exercised without touching gcloud, kubectl, or git.
 
 from gojira.gcp import GCPClient
 from gojira.github import SETUP_BRANCH, GitHubClient
+from gojira.installations import InstallationResolver
 from gojira.k8s import KubectlClient
+from gojira.shell import CommandResult
 
 
 class FakeGCPClient(GCPClient):
@@ -116,10 +118,11 @@ class FakeGitHubClient(GitHubClient):
     """In-memory git/GitHub. Tracks the repo flow; preset an existing PR."""
 
     def __init__(self, *, default_branch="main", existing_pr=None, repos=None,
-                 dockerfile=True, pr_merged=False):
+                 dockerfile=True, pr_merged=False, installation_id=0):
         self._default_branch = default_branch
         self.dockerfile = dockerfile
         self.pr_merged = pr_merged
+        self.installation_id = installation_id
         self.repos = repos or ["shaz/clips-api", "shaz/gojira-demo", "acme/web"]
         self.prs = {}
         if existing_pr:
@@ -133,6 +136,9 @@ class FakeGitHubClient(GitHubClient):
 
     def list_repos(self, limit=200):
         return self.repos[:limit]
+
+    def installation_id_for(self, repo):
+        return self.installation_id
 
     def file_exists(self, repo, path):
         return self.dockerfile if path == "Dockerfile" else True
@@ -176,3 +182,40 @@ class FakeGitHubClient(GitHubClient):
         url = f"https://github.com/{repo}/pull/1"
         self.prs[head] = url
         return url
+
+
+class MemoryInstallationResolver(InstallationResolver):
+    """Dict-backed resolver for tests — records what gets cached."""
+
+    def __init__(self, seed=None):
+        self.map: dict[str, int] = dict(seed or {})
+
+    def resolve(self, repo):
+        return self.map.get(repo)
+
+    def remember(self, repo, installation_id):
+        self.map[repo] = installation_id
+
+    def forget(self, repo):
+        self.map.pop(repo, None)
+
+
+class RecordingRunner:
+    """A CommandRunner that records argv lists and returns canned results.
+
+    Match a result by a substring of the joined command; the first match wins,
+    else a 0/empty result. Lets the App-backend git tests assert what `git` was
+    invoked with (including the token-authed clone URL) without running it.
+    """
+
+    def __init__(self, results=None):
+        self.results = results or {}  # substring → CommandResult
+        self.calls: list[list[str]] = []
+
+    def run(self, args, stdin=None):
+        self.calls.append(args)
+        joined = " ".join(args)
+        for needle, result in self.results.items():
+            if needle in joined:
+                return result
+        return CommandResult(0, "", "")

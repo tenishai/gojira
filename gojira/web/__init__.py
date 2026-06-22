@@ -32,8 +32,10 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(title="Gojira")
     app.state.session_factory = session_factory
-    app.state.clients = clients or ProvisionClients.real()
     app.state.config = config or Config()
+    app.state.clients = clients or ProvisionClients.real(
+        config=app.state.config, session_factory=session_factory
+    )
 
     def get_session():
         with session_factory() as s:
@@ -120,12 +122,20 @@ def create_app(
             env_map[env] = (int(cluster_id), namespace)
         if not env_map:
             return RedirectResponse("/connect?error=map+at+least+one+environment", status_code=303)
+        # Resolve the App installation now so it's recorded on the app; harmless
+        # 0 under the gh-CLI backend. A transient lookup failure shouldn't block.
+        try:
+            installation_id = request.app.state.clients.github.installation_id_for(repo)
+        except Exception as exc:
+            log.warning("could not resolve installation for %s: %s", repo, exc)
+            installation_id = 0
         app_obj = service.connect_app(
             session,
             name=name,
             repo_full_name=repo,
             workload_class=form["workload_class"],
             env_map=env_map,
+            installation_id=installation_id,
         )
         service.start_provision(
             request.app.state.session_factory,
