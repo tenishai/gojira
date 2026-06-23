@@ -88,8 +88,10 @@ class FakeGCPClient(GCPClient):
 class FakeKubectlClient(KubectlClient):
     """In-memory cluster namespaces (one instance per cluster)."""
 
-    def __init__(self, existing=None):
+    def __init__(self, existing=None, resources=None):
         self.namespaces = dict(existing or {})
+        # live objects keyed by (namespace, kind.lower(), name)
+        self.resources = dict(resources or {})
         self.calls: list[str] = []
 
     def namespace_exists(self, namespace):
@@ -102,6 +104,10 @@ class FakeKubectlClient(KubectlClient):
     def delete_namespace(self, namespace):
         self.calls.append(f"delete_ns:{namespace}")
         self.namespaces.pop(namespace, None)
+
+    def get_resource(self, namespace, kind, name):
+        self.calls.append(f"get:{kind}/{name}")
+        return self.resources.get((namespace, kind.lower(), name))
 
 
 class KubectlFactory:
