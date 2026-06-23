@@ -37,6 +37,21 @@ def create_app(
         config=app.state.config, session_factory=session_factory
     )
 
+    if app.state.config.drift.enabled:
+        @app.on_event("startup")
+        def _start_drift_scanner():
+            _, stop = service.start_drift_scanner(
+                session_factory, app.state.clients, app.state.config
+            )
+            app.state.drift_stop = stop
+            log.info("drift scanner started (every %ss)", app.state.config.drift.interval_seconds)
+
+        @app.on_event("shutdown")
+        def _stop_drift_scanner():
+            stop = getattr(app.state, "drift_stop", None)
+            if stop is not None:
+                stop.set()
+
     def get_session():
         with session_factory() as s:
             yield s
@@ -175,6 +190,11 @@ def create_app(
     @app.post("/apps/{app_id}/sync")
     def sync(app_id: int, request: Request, session: Session = Depends(get_session)):
         service.sync_app(session, app_id, request.app.state.clients.github)
+        return RedirectResponse(f"/apps/{app_id}", status_code=303)
+
+    @app.post("/apps/{app_id}/scan-drift")
+    def scan_drift(app_id: int, request: Request, session: Session = Depends(get_session)):
+        service.scan_app_drift(session, app_id, request.app.state.clients)
         return RedirectResponse(f"/apps/{app_id}", status_code=303)
 
     @app.post("/apps/{app_id}/promote")
