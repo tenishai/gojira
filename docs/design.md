@@ -235,10 +235,17 @@ they're data, not deployment configuration.
 | Phase | Ships | Definition of done |
 |---|---|---|
 | **1 — Connect** | GitHub App, web UI, provisioner, generator, setup PR, SQLite/Postgres | Empty repo → deployed on dev in < 10 min, no hand-written YAML |
-| **2 — Capture** | Drift detector (CronJob per cluster): live spec vs `kustomize build`, semantic diff, PR on drift. Deploy tracking in UI via webhook + cluster watch | SRE `kubectl patch` becomes a PR within 15 min, never reverted |
+| **2 — Capture** | Drift detector (central, scheduled in Gojira): live spec vs `kustomize build`, semantic diff on the managed-field projection, PR on drift. Deploy tracking in UI via webhook | SRE `kubectl patch` becomes a PR within 15 min, never reverted |
 | **3 — Guard** | Kyverno policy pack (hard bounds enforce, soft recommendations audit), `gojira adopt` for existing services | Rogue 8-CPU pod rejected at admission; existing service adopted without spec changes |
 | **4 — Adapt** | Adaptation engine v1: per-service thermostat (replica scaling + rightsizing from Prometheus), default HTTP synthetic probes, rate-of-change guardrails | Engine produces correct rightsizing PRs against real workloads |
 | **Later** | Dependency-aware adaptation via pluggable topology providers, custom synthetic probes, predictive scaling, multi-cluster | — |
+
+Phase 2's drift detector runs **centrally** in Gojira, not as a per-cluster
+CronJob: drift's only data dependency is the K8s API, which Gojira already
+reaches for every registered cluster (one kubectl context per cluster). A
+central scheduler keeps the GitHub App credential in one place and reuses the
+existing client seams. (Phase 4's sizing agent is the opposite case — it needs
+in-cluster Prometheus, so it runs in-cluster and reports back.)
 
 The adaptation engine's "nervous system" design (topology-graph bottleneck
 tracing) depends on a topology source. Internally that's Cartographer; the

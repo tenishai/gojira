@@ -5,7 +5,9 @@ the real clients, creates working trees, drives provision_app in a background
 thread, and exposes read models over the ledger/events for the UI to poll.
 """
 
+import json
 import logging
+import shutil
 import tempfile
 import threading
 from dataclasses import dataclass, field
@@ -15,12 +17,21 @@ from typing import Callable
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from gojira import drift_scan
 from gojira.config import Config
 from gojira.gcp import GCPClient, GcloudClient
 from gojira.github import GhCLI, GitHubAppClient, GitHubClient
 from gojira.installations import DbInstallationResolver
 from gojira.k8s import KubectlCLI, KubectlClient
-from gojira.models import App, AppStatus, Cluster, Environment, Event, ProvisionStep
+from gojira.models import (
+    App,
+    AppStatus,
+    Cluster,
+    DriftFinding,
+    Environment,
+    Event,
+    ProvisionStep,
+)
 from gojira.provisioner import provision_app
 
 log = logging.getLogger(__name__)
@@ -180,6 +191,58 @@ def start_provision(
     return t
 
 
+# --- drift detection ---------------------------------------------------------
+
+
+def scan_all_apps(session: Session, clients: ProvisionClients, config: Config | None = None) -> None:
+    """One drift sweep over every active app/env.
+
+    Per-env failures are logged, not fatal — one unreachable repo or cluster
+    can't halt the sweep. Each (app, env) gets a fresh working tree, removed
+    when done.
+    """
+    config = config or Config()
+    apps = session.scalars(select(App).where(App.status == AppStatus.ACTIVE)).all()
+    for app in apps:
+        for env in app.environments:
+            workdir = Path(tempfile.mkdtemp(prefix=f"gojira-drift-{app.name}-{env.name}-"))
+            try:
+                kubectl = clients.kubectl_for(env.cluster)
+                drift_scan.scan_env(session, app, env, clients.github, kubectl, workdir)
+            except Exception:
+                log.exception("drift scan failed for %s/%s", app.name, env.name)
+            finally:
+                shutil.rmtree(workdir, ignore_errors=True)
+
+
+def start_drift_scanner(
+    session_factory: sessionmaker[Session],
+    clients: ProvisionClients | None = None,
+    config: Config | None = None,
+) -> tuple[threading.Thread, threading.Event]:
+    """Run drift sweeps on an interval in a daemon thread.
+
+    Returns (thread, stop_event); set the event to end the loop cleanly. The
+    first sweep runs immediately, then every `config.drift.interval_seconds`.
+    """
+    config = config or Config()
+    clients = clients or ProvisionClients.real(config, session_factory)
+    stop = threading.Event()
+
+    def loop():
+        while not stop.is_set():
+            try:
+                with session_factory() as s:
+                    scan_all_apps(s, clients, config)
+            except Exception:
+                log.exception("drift sweep crashed")
+            stop.wait(config.drift.interval_seconds)
+
+    t = threading.Thread(target=loop, name="drift-scanner", daemon=True)
+    t.start()
+    return t, stop
+
+
 # --- read models for the UI --------------------------------------------------
 
 
@@ -193,6 +256,16 @@ class StepView:
 
 
 @dataclass
+class DriftView:
+    """One environment's drift state for the app page."""
+
+    environment: str
+    status: str
+    pr_url: str | None
+    fields: list[tuple[str, str, str]]  # (path, git/desired, cluster/live)
+
+
+@dataclass
 class AppStatusView:
     app: App
     environments: list[Environment]
@@ -200,6 +273,28 @@ class AppStatusView:
     events: list[Event]
     terminal: bool
     counts: dict[str, int] = field(default_factory=dict)
+    drift: list[DriftView] = field(default_factory=list)
+
+
+def _drift_views(session: Session, app_id: int) -> list[DriftView]:
+    rows = session.scalars(
+        select(DriftFinding)
+        .where(DriftFinding.app_id == app_id)
+        .order_by(DriftFinding.environment)
+    )
+    views: list[DriftView] = []
+    for r in rows:
+        fields: list[tuple[str, str, str]] = []
+        for d in json.loads(r.diff_json) if r.diff_json else []:
+            for f in d["fields"]:
+                label = f"{d['name']}.{f['path']}"
+                fields.append((label, _fmt(f["desired"]), _fmt(f["live"])))
+        views.append(DriftView(r.environment, str(r.status), r.pr_url, fields))
+    return views
+
+
+def _fmt(v) -> str:
+    return "absent" if v is None else str(v)
 
 
 def list_repos(github: GitHubClient, limit: int = 200) -> list[str]:
@@ -336,4 +431,5 @@ def app_status(session: Session, app_id: int) -> AppStatusView:
         events=events,
         terminal=app.status in TERMINAL_STATUSES,
         counts=counts,
+        drift=_drift_views(session, app_id),
     )

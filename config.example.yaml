@@ -17,3 +17,11 @@ database:
 defaults:
   ar_location: us-central1
   environments: [dev, qa, prod]
+
+# Central drift detector (Phase 2). When enabled, Gojira periodically diffs each
+# active app's live cluster spec against its git desired state (managed fields
+# only) and opens a capture PR when an operator's change has drifted from git.
+# Off by default — opt in once you're ready for Gojira to open drift PRs.
+drift:
+  enabled: false
+  interval_seconds: 900   # 15 min

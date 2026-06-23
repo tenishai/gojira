@@ -28,10 +28,18 @@ class DefaultsConfig(BaseModel):
     environments: list[str] = ["dev", "qa", "prod"]
 
 
+class DriftConfig(BaseModel):
+    """The central drift detector. Off by default — opt in per operator."""
+
+    enabled: bool = False
+    interval_seconds: int = 900  # 15 min — matches the Phase 2 DoD
+
+
 class Config(BaseModel):
     github: GitHubConfig = GitHubConfig()
     database: DatabaseConfig = DatabaseConfig()
     defaults: DefaultsConfig = DefaultsConfig()
+    drift: DriftConfig = DriftConfig()
 
 
 def _interpolate(value: str) -> str:
