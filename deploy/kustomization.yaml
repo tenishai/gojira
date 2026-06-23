@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - configmap.yaml
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+
+# Point this at the image you pushed (see the runbook). Example:
+#   images:
+#     - name: gojira
+#       newName: us-central1-docker.pkg.dev/your-sandbox-project/gojira/gojira
+#       newTag: dev
+images:
+  - name: gojira
+    newName: REPLACE_AR_PATH/gojira
+    newTag: dev
+
+# The gojira-github-app Secret (app_id, webhook_secret, private_key) is created
+# out-of-band so the private key never lands in git — see deploy/secret.example.yaml
+# and the runbook's `kubectl create secret` step.
