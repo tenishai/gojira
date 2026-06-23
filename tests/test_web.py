@@ -56,6 +56,35 @@ def test_dashboard_empty(client):
     assert "No apps yet" in r.text
 
 
+def test_app_detail_renders_drift_panel(client, session_factory):
+    from gojira.models import App, AppStatus, Cluster, DriftFinding, DriftStatus, Environment
+
+    with session_factory() as s:
+        c = Cluster(name="dev", gcp_project="proj-a", location="us-central1",
+                    gke_cluster="dev-gke", ar_repo="x")
+        s.add(c)
+        s.commit()
+        a = App(name="clips-api", repo_full_name="acme/clips-api", installation_id=1,
+                workload_class="web", status=AppStatus.ACTIVE)
+        s.add(a)
+        s.commit()
+        s.add(Environment(app_id=a.id, name="dev", cluster_id=c.id, namespace="clips"))
+        s.add(DriftFinding(
+            app_id=a.id, environment="dev", status=DriftStatus.PR_OPENED,
+            pr_url="https://github.com/acme/clips-api/pull/1",
+            diff_json='[{"kind":"Deployment","name":"clips-api","fields":'
+                      '[{"path":"containers.app.resources.requests.cpu","desired":250,"live":800}]}]',
+        ))
+        s.commit()
+        app_id = a.id
+
+    r = client.get(f"/apps/{app_id}")
+    assert r.status_code == 200
+    assert "Drift" in r.text
+    assert "containers.app.resources.requests.cpu" in r.text
+    assert "capture PR" in r.text and "/pull/1" in r.text
+
+
 def test_register_cluster_via_form(client):
     r = client.post(
         "/clusters",

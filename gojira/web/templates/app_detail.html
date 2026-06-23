@@ -17,6 +17,29 @@
   <h2>Provisioning</h2>
   {% include "_status.html" %}
 
+  {% if v.drift %}
+  <h2>Drift</h2>
+  {% for d in v.drift %}
+  <div class="card">
+    <p><strong>{{ d.environment }}</strong> <span class="badge b-{{ d.status }}">{{ d.status }}</span>
+      {% if d.pr_url %}· <a href="{{ d.pr_url }}">capture PR</a>{% endif %}</p>
+    {% if d.status == "resolved" %}
+      <p class="muted">Live cluster matches git.</p>
+    {% else %}
+      <table>
+        <thead><tr><th>Field</th><th>git</th><th>cluster</th></tr></thead>
+        <tbody>
+          {% for path, desired, live in d.fields %}
+          <tr><td class="mono">{{ path }}</td><td class="mono">{{ desired }}</td><td class="mono">{{ live }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted">The cluster is authoritative during operations — the capture PR catches git up, it doesn't revert.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+
   {% if v.environments | length > 1 %}
   <h2>Release</h2>
   <div class="card">

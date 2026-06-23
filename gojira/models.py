@@ -145,6 +145,39 @@ class InstallationRepo(Base):
     )
 
 
+class DriftStatus(enum.StrEnum):
+    OPEN = "open"            # drift detected, no PR yet
+    PR_OPENED = "pr_opened"  # capture PR open against the repo
+    RESOLVED = "resolved"    # last scan found no drift (live matches git)
+
+
+class DriftFinding(Base):
+    """A divergence between an env's live cluster spec and its git desired state.
+
+    One row per (app, environment): the detector upserts it each scan. The
+    cluster is authoritative during operations — a finding becomes a PR that
+    catches git up, never a re-apply that reverts the operator (design.md:26).
+    `diff_json` is the semantic diff over the managed-field projection only;
+    HPA-owned replicas and CI-owned image tags are excluded by construction.
+    """
+
+    __tablename__ = "drift_findings"
+    __table_args__ = (UniqueConstraint("app_id", "environment", name="uq_drift_app_env"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    app_id: Mapped[int] = mapped_column(ForeignKey("apps.id"))
+    environment: Mapped[str] = mapped_column(String(16))  # dev | qa | prod
+    status: Mapped[DriftStatus] = mapped_column(String(16), default=DriftStatus.OPEN)
+    diff_json: Mapped[str | None] = mapped_column(Text)   # null once resolved
+    pr_url: Mapped[str | None] = mapped_column(String(512))
+    detected_at: Mapped[datetime] = mapped_column(default=utcnow, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        default=utcnow, server_default=func.now(), onupdate=utcnow
+    )
+
+    app: Mapped["App"] = relationship()
+
+
 class Event(Base):
     """Append-only log: webhooks received, deploys observed, operator actions."""
 
