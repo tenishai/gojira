@@ -192,6 +192,11 @@ def create_app(
         service.sync_app(session, app_id, request.app.state.clients.github)
         return RedirectResponse(f"/apps/{app_id}", status_code=303)
 
+    @app.post("/apps/{app_id}/scan-drift")
+    def scan_drift(app_id: int, request: Request, session: Session = Depends(get_session)):
+        service.scan_app_drift(session, app_id, request.app.state.clients)
+        return RedirectResponse(f"/apps/{app_id}", status_code=303)
+
     @app.post("/apps/{app_id}/promote")
     def promote(
         app_id: int,

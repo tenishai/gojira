@@ -194,25 +194,34 @@ def start_provision(
 # --- drift detection ---------------------------------------------------------
 
 
-def scan_all_apps(session: Session, clients: ProvisionClients, config: Config | None = None) -> None:
-    """One drift sweep over every active app/env.
+def _scan_app(session: Session, app: App, clients: ProvisionClients) -> None:
+    """Scan every environment of one app. Per-env failures are logged, not fatal
+    — one unreachable repo or cluster can't halt the rest. Each env gets a fresh
+    working tree, removed when done."""
+    for env in app.environments:
+        workdir = Path(tempfile.mkdtemp(prefix=f"gojira-drift-{app.name}-{env.name}-"))
+        try:
+            kubectl = clients.kubectl_for(env.cluster)
+            drift_scan.scan_env(session, app, env, clients.github, kubectl, workdir)
+        except Exception:
+            log.exception("drift scan failed for %s/%s", app.name, env.name)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
 
-    Per-env failures are logged, not fatal — one unreachable repo or cluster
-    can't halt the sweep. Each (app, env) gets a fresh working tree, removed
-    when done.
-    """
-    config = config or Config()
+
+def scan_all_apps(session: Session, clients: ProvisionClients, config: Config | None = None) -> None:
+    """One drift sweep over every active app/env (the scheduler's unit of work)."""
     apps = session.scalars(select(App).where(App.status == AppStatus.ACTIVE)).all()
     for app in apps:
-        for env in app.environments:
-            workdir = Path(tempfile.mkdtemp(prefix=f"gojira-drift-{app.name}-{env.name}-"))
-            try:
-                kubectl = clients.kubectl_for(env.cluster)
-                drift_scan.scan_env(session, app, env, clients.github, kubectl, workdir)
-            except Exception:
-                log.exception("drift scan failed for %s/%s", app.name, env.name)
-            finally:
-                shutil.rmtree(workdir, ignore_errors=True)
+        _scan_app(session, app, clients)
+
+
+def scan_app_drift(session: Session, app_id: int, clients: ProvisionClients) -> None:
+    """Scan one app on demand (the UI's 'scan now' button). No-op unless active."""
+    app = session.get(App, app_id)
+    if app is None or app.status != AppStatus.ACTIVE:
+        return
+    _scan_app(session, app, clients)
 
 
 def start_drift_scanner(

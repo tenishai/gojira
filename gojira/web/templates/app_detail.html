@@ -17,8 +17,13 @@
   <h2>Provisioning</h2>
   {% include "_status.html" %}
 
-  {% if v.drift %}
-  <h2>Drift</h2>
+  {% if v.app.status == "active" %}
+  <h2>Drift
+    <form method="post" action="/apps/{{ v.app.id }}/scan-drift" style="display:inline">
+      <button type="submit" style="margin:0 0 0 8px;font-size:0.8em;padding:4px 10px">Scan now</button>
+    </form>
+  </h2>
+  {% if not v.drift %}<p class="muted">No drift scan yet — click “Scan now”.</p>{% endif %}
   {% for d in v.drift %}
   <div class="card">
     <p><strong>{{ d.environment }}</strong> <span class="badge b-{{ d.status }}">{{ d.status }}</span>
