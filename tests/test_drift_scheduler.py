@@ -79,6 +79,20 @@ def test_sweep_continues_past_a_failing_env():
         assert s.query(DriftFinding).count() == 0  # nothing recorded, no crash
 
 
+def test_scan_app_drift_targets_one_active_app():
+    factory = _factory()
+    with factory() as s:
+        _seed(s)
+        active = s.query(App).filter_by(name="alive").one().id
+        pending = s.query(App).filter_by(name="pending").one().id
+    clients = _clients()
+    with factory() as s:
+        service.scan_app_drift(s, active, clients)
+        service.scan_app_drift(s, pending, clients)  # no-op: not active
+        findings = s.query(DriftFinding).all()
+    assert len(findings) == 1 and findings[0].status == DriftStatus.RESOLVED
+
+
 def test_scanner_thread_starts_and_stops():
     factory = _factory()
     with factory() as s:
