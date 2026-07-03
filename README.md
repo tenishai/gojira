@@ -36,4 +36,4 @@ Jinja2 + htmx · GitHub App · GCP (ADC)
 
 ## License
 
-[Apache-2.0](LICENSE)
+[AGPL-3.0-or-later](LICENSE)
