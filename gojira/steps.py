@@ -301,6 +301,7 @@ class PrepareWorkdir:
     """Clone the repo into the working tree and switch to the setup branch."""
 
     name = "prepare_workdir"
+    ephemeral = True  # the workdir dies with the run; a past DONE means nothing
 
     def check(self, ctx: ProvisionContext) -> str | None:
         if ctx.workdir is None:
@@ -320,6 +321,7 @@ class GenerateArtifacts:
     """Render workflows + manifests into the repo working tree (idempotent overwrite)."""
 
     name = "generate_artifacts"
+    ephemeral = True  # renders into the per-run workdir
 
     def check(self, ctx: ProvisionContext) -> str | None:
         return None

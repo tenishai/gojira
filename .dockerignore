@@ -1,0 +1,15 @@
+venv/
+.venv/
+*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.git/
+gojira.db
+tests/
+docs/
+terraform/
+deploy/
+*.md
+!README.md
