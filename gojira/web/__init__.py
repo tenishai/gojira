@@ -17,6 +17,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from gojira import service, webhooks
 from gojira.config import Config, load_config
+from gojira.sizing import profile as sizing_profile
+from gojira.sizing import service as sizing_service
 from gojira.opinions import WORKLOAD_CLASSES
 from gojira.service import ProvisionClients
 
@@ -223,6 +225,21 @@ def create_app(
             config=request.app.state.config,
         )
         return RedirectResponse(f"/apps/{app_id}", status_code=303)
+
+    @app.post("/api/v1/usage")
+    async def ingest_usage(request: Request, session: Session = Depends(get_session)):
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return JSONResponse({"error": "bearer token required"}, status_code=401)
+        try:
+            profile = sizing_profile.UsageProfile.model_validate(await request.json())
+        except Exception as exc:
+            return JSONResponse({"error": f"invalid profile: {exc}"}, status_code=422)
+        try:
+            row = sizing_service.ingest_usage(session, profile, auth.removeprefix("Bearer "))
+        except sizing_service.IngestError as exc:
+            return JSONResponse({"error": exc.detail}, status_code=exc.status)
+        return JSONResponse({"ok": True, "profile_id": row.id}, status_code=201)
 
     @app.post("/webhook/github")
     async def github_webhook(request: Request, session: Session = Depends(get_session)):
