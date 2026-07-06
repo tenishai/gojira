@@ -200,3 +200,43 @@ def test_distinct_projects_dedupes_same_project(session):
     app = _app_with_envs(session, [("dev", "shared"), ("qa", "shared"), ("prod", "prod-proj")])
     scopes = distinct_projects(order_environments(app.environments, Config()))
     assert [s.project for s in scopes] == ["shared", "prod-proj"]
+
+
+def test_ephemeral_step_reruns_on_resume(session, ctx):
+    """A DONE ephemeral step re-runs on retry — its workdir died with the run.
+
+    Regression: first dogfood retry skipped prepare_workdir/generate_artifacts
+    (ledger DONE from run 1) and open_setup_pr ran `git add` in an empty fresh
+    workdir: 'fatal: not a git repository'.
+    """
+    calls = []
+    prepare = FakeStep("prepare_workdir", calls)
+    prepare.ephemeral = True
+    push = FakeStep("open_setup_pr", calls, fail=True)  # run 1 fails here
+
+    engine = ProvisionEngine([prepare, push])
+    r1 = engine.run(session, ctx)
+    assert not r1.completed and r1.failed_step == "open_setup_pr"
+    assert "apply:prepare_workdir" in calls
+
+    calls.clear()
+    push.fail = False
+    r2 = engine.run(session, ctx)
+    assert r2.completed
+    # The ephemeral step ran again (fresh workdir); the durable skip semantics
+    # for non-ephemeral steps are covered by the existing resume tests.
+    assert "check:prepare_workdir" in calls and "apply:prepare_workdir" in calls
+    assert "apply:open_setup_pr" in calls
+
+
+def test_ephemeral_step_can_still_skip_via_check(session, ctx):
+    """Ephemeral means 'don't trust the ledger' — check() still decides."""
+    calls = []
+    prepare = FakeStep("prepare_workdir", calls, exists=True)  # workdir intact
+    prepare.ephemeral = True
+    engine = ProvisionEngine([prepare])
+
+    assert engine.run(session, ctx).completed
+    calls.clear()
+    assert engine.run(session, ctx).completed
+    assert "check:prepare_workdir" in calls and "apply:prepare_workdir" not in calls

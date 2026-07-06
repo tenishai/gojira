@@ -73,7 +73,13 @@ class ProvisionContext:
 
 
 class Step(Protocol):
-    """A provisioner step. Implementations must be idempotent."""
+    """A provisioner step. Implementations must be idempotent.
+
+    Steps whose "resource" doesn't outlive the run (a temp working tree, files
+    rendered into it) set `ephemeral = True`: their ledger row records what the
+    last run did, but a DONE status never skips them — check() re-decides
+    against the real world each run. Cloud steps stay ledger-skipped.
+    """
 
     name: str
 
@@ -117,7 +123,9 @@ class ProvisionEngine:
             ledger_name = f"{step.name}@{scope_key}" if scope_key else step.name
             ledger = self._ledger_row(session, app, ledger_name)
 
-            if ledger.status in (StepStatus.DONE, StepStatus.SKIPPED):
+            if ledger.status in (StepStatus.DONE, StepStatus.SKIPPED) and not getattr(
+                step, "ephemeral", False
+            ):
                 log.debug("step %s already %s, skipping", ledger_name, ledger.status)
                 continue
 

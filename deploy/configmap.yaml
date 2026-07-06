@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gojira-config
+  namespace: gojira
+data:
+  config.yaml: |
+    # ${VAR} values are interpolated from the pod's env at load (see config.py).
+    github:
+      app_id: "${GOJIRA_GITHUB_APP_ID}"
+      private_key_path: /secrets/github-app.pem
+      webhook_secret: "${GOJIRA_WEBHOOK_SECRET}"
+    database:
+      url: sqlite:////data/gojira.db
+    drift:
+      enabled: true
+      interval_seconds: 900
+    defaults:
+      ar_location: us-central1
+      environments: [dev, qa, prod]

@@ -21,6 +21,7 @@ The minimum the backend needs:
 |---|---|---|
 | Contents | Read & write | clone, push the `gojira/setup` branch, create release tags |
 | Pull requests | Read & write | open the setup PR, detect merge |
+| Workflows | Read & write | the setup branch adds `.github/workflows/*.yaml` — GitHub rejects the push without this, separately from Contents |
 | Metadata | Read | repo info, default branch (mandatory) |
 | Actions | Read | required to subscribe to the `workflow_run` event |
 
