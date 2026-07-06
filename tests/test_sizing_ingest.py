@@ -62,6 +62,20 @@ def test_ingest_appends_to_ledger(session, seeded):
     assert json.loads(row.cpu_json)["p95"] == "760m"
 
 
+def test_ingest_triggers_recommendation(session, seeded):
+    """The A2->A4 hook: the golden fixture is under-provisioned on cpu, so a
+    single ingest should leave a live OVERRIDE recommendation behind."""
+    from gojira.models import SizingRecommendation
+
+    _, app, token = seeded
+    row = ingest_usage(session, _profile(), token)
+    rec = session.scalar(select(SizingRecommendation))
+    assert rec is not None and rec.app_id == app.id
+    assert rec.based_on_profile_id == row.id
+    assert json.loads(rec.proposed_json)["cpu"]["request"] == "800m"
+    assert "p95 760m" in rec.justification
+
+
 def test_unknown_token_401(session, seeded):
     with pytest.raises(IngestError) as e:
         ingest_usage(session, _profile(), "not-a-token")

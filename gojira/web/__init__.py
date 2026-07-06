@@ -236,7 +236,10 @@ def create_app(
         except Exception as exc:
             return JSONResponse({"error": f"invalid profile: {exc}"}, status_code=422)
         try:
-            row = sizing_service.ingest_usage(session, profile, auth.removeprefix("Bearer "))
+            row = sizing_service.ingest_usage(
+                session, profile, auth.removeprefix("Bearer "),
+                config=request.app.state.config.sizing,
+            )
         except sizing_service.IngestError as exc:
             return JSONResponse({"error": exc.detail}, status_code=exc.status)
         return JSONResponse({"ok": True, "profile_id": row.id}, status_code=201)

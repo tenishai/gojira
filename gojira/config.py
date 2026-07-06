@@ -35,11 +35,20 @@ class DriftConfig(BaseModel):
     interval_seconds: int = 900  # 15 min — matches the Phase 2 DoD
 
 
+class SizingConfig(BaseModel):
+    """The Phase 4 rightsizing loop's knobs (see docs/sizing-feedback-design.md)."""
+
+    materiality_pct: float = 30.0  # no proposal unless the request moves this much
+    limit_headroom: float = 1.5    # proposed limit = p99 * headroom
+    history_days: int = 30         # evidence window the recommender reads
+
+
 class Config(BaseModel):
     github: GitHubConfig = GitHubConfig()
     database: DatabaseConfig = DatabaseConfig()
     defaults: DefaultsConfig = DefaultsConfig()
     drift: DriftConfig = DriftConfig()
+    sizing: SizingConfig = SizingConfig()
 
 
 def _interpolate(value: str) -> str:

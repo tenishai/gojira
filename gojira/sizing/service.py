@@ -18,8 +18,11 @@ import secrets
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from gojira.config import SizingConfig
 from gojira.models import AgentToken, App, Cluster, Environment, UsageProfileRow
 from gojira.sizing.profile import UsageProfile
+from gojira.sizing.recommender import recompute_for_app
+from gojira.sizing.store import DbSizingStore
 
 log = logging.getLogger(__name__)
 
@@ -52,8 +55,13 @@ def mint_agent_token(session: Session, cluster: Cluster) -> str:
     return token
 
 
-def ingest_usage(session: Session, profile: UsageProfile, bearer_token: str) -> UsageProfileRow:
-    """Authenticate, resolve, append. Raises IngestError (401/403/404) on rejection."""
+def ingest_usage(
+    session: Session,
+    profile: UsageProfile,
+    bearer_token: str,
+    config: SizingConfig | None = None,
+) -> UsageProfileRow:
+    """Authenticate, resolve, append, recompute. Raises IngestError (401/403/404)."""
     token_row = session.scalar(
         select(AgentToken).where(AgentToken.token_sha256 == _sha256(bearer_token))
     )
@@ -79,22 +87,15 @@ def ingest_usage(session: Session, profile: UsageProfile, bearer_token: str) -> 
     if app is None or env is None:
         raise IngestError(404, "no such app/environment on this cluster")
 
-    row = UsageProfileRow(
-        app_id=app.id,
-        environment=profile.environment,
-        window_days=profile.window_days,
-        samples=profile.samples,
-        cpu_json=profile.cpu.model_dump_json(),
-        memory_json=profile.memory.model_dump_json(),
-        restarts=profile.restarts,
-        oom_kills=profile.oom_kills,
-        reported_by=profile.reported_by,
-        reported_at=profile.reported_at.replace(tzinfo=None),
-    )
-    session.add(row)
-    session.commit()
+    store = DbSizingStore(session)
+    row_id = store.record(app.id, profile)
     log.info(
         "usage profile ingested: %s/%s window=%dd samples=%d",
         profile.app, profile.environment, profile.window_days, profile.samples,
     )
-    return row
+    # Recompute on report (design decision: recompute-on-report, debounced PRs).
+    recompute_for_app(
+        session, app, profile.environment, store,
+        config=config, based_on_profile_id=row_id,
+    )
+    return session.get(UsageProfileRow, row_id)
