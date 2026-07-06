@@ -7,6 +7,10 @@ metadata:
     app.kubernetes.io/name: gojira
 spec:
   replicas: 1
+  # Recreate, not RollingUpdate: the SQLite PVC is ReadWriteOnce, so a surged
+  # new pod deadlocks waiting for the volume the old pod still holds.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: gojira
@@ -16,9 +20,21 @@ spec:
         app.kubernetes.io/name: gojira
     spec:
       serviceAccountName: gojira
+      # The Service is named "gojira", so K8s would inject the Docker-links var
+      # GOJIRA_PORT=tcp://<clusterIP>:80 — clobbering the app's numeric port env.
+      enableServiceLinks: false
+      securityContext:
+        # The image runs as non-root UID 10001; fsGroup makes kubelet chown
+        # mounted volumes (the /data PVC) so SQLite can create its db file.
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
       containers:
         - name: gojira
           image: gojira  # set by kustomize (images:) to the AR path + tag
+          # The dev tag is mutable — without Always, a node that cached an old
+          # (e.g. wrong-arch) image under the same tag will keep running it.
+          imagePullPolicy: Always
           ports:
             - name: http
               containerPort: 8080
