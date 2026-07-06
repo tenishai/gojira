@@ -152,7 +152,9 @@ You now have an app Gojira deployed, with no hand-written YAML.
 Simulate an operator hot-patching production:
 
 ```bash
-kubectl -n demo set resources deploy/gojira-demo --requests=cpu=750m
+# Bump both — a request above the class's 500m limit alone would be rejected
+# by the API server (requests must be <= limits).
+kubectl -n <namespace> set resources deploy/gojira-demo --requests=cpu=750m --limits=cpu=1500m
 ```
 
 In the UI, on the app page → **Drift** → **Scan now**. Within the scan you'll see:
