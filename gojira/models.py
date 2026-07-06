@@ -178,6 +178,97 @@ class DriftFinding(Base):
     app: Mapped["App"] = relationship()
 
 
+class UsageProfileRow(Base):
+    """Append-only evidence ledger: one row per agent report (Phase 4 sizing).
+
+    The wire shape is gojira.sizing.profile.UsageProfile; cpu/memory land as
+    JSON verbatim. Rows are evidence, not state — prunable by age, never
+    updated. Derived state lives in sizing_recommendations.
+    """
+
+    __tablename__ = "usage_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    app_id: Mapped[int] = mapped_column(ForeignKey("apps.id"))
+    environment: Mapped[str] = mapped_column(String(16))
+    window_days: Mapped[int]
+    samples: Mapped[int]
+    cpu_json: Mapped[str] = mapped_column(Text)
+    memory_json: Mapped[str] = mapped_column(Text)
+    restarts: Mapped[int] = mapped_column(default=0)
+    oom_kills: Mapped[int] = mapped_column(default=0)
+    reported_by: Mapped[str] = mapped_column(String(255))
+    reported_at: Mapped[datetime]
+    received_at: Mapped[datetime] = mapped_column(default=utcnow, server_default=func.now())
+
+    app: Mapped["App"] = relationship()
+
+
+class RecommendationKind(enum.StrEnum):
+    OVERRIDE = "override"                        # per-app gojira.yaml overrides block
+    CLASS_RECALIBRATION = "class_recalibration"  # opinions/sizing.yaml default change
+
+
+class RecommendationStatus(enum.StrEnum):
+    OPEN = "open"
+    PR_OPENED = "pr_opened"
+    MERGED = "merged"
+    DISMISSED = "dismissed"
+    STALE = "stale"          # superseded by newer evidence before any PR
+
+
+class SizingRecommendation(Base):
+    """A derived rightsizing proposal — what the UI shows and the PR generator
+    consumes. At most one live row per (app, environment, kind): recompute
+    supersedes in place rather than stacking (rate-of-change guardrail).
+    """
+
+    __tablename__ = "sizing_recommendations"
+    __table_args__ = (
+        UniqueConstraint("app_id", "environment", "kind", name="uq_sizing_app_env_kind"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    app_id: Mapped[int] = mapped_column(ForeignKey("apps.id"))
+    environment: Mapped[str] = mapped_column(String(16))
+    kind: Mapped[RecommendationKind] = mapped_column(String(32))
+    current_json: Mapped[str] = mapped_column(Text)   # spec as deployed
+    proposed_json: Mapped[str] = mapped_column(Text)  # spec as recommended
+    justification: Mapped[str] = mapped_column(Text)  # lands verbatim in the PR
+    confidence: Mapped[str] = mapped_column(String(16), default="medium")
+    status: Mapped[RecommendationStatus] = mapped_column(
+        String(16), default=RecommendationStatus.OPEN
+    )
+    pr_url: Mapped[str | None] = mapped_column(String(512))
+    based_on_profile_id: Mapped[int | None] = mapped_column(ForeignKey("usage_profiles.id"))
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        default=utcnow, server_default=func.now(), onupdate=utcnow
+    )
+
+    app: Mapped["App"] = relationship()
+    based_on: Mapped[UsageProfileRow | None] = relationship()
+
+
+class AgentToken(Base):
+    """Per-cluster bearer-token hash for /api/v1/usage ingestion auth.
+
+    Minted when Gojira deploys a sizing agent into a cluster; only the SHA-256
+    lands here (the plaintext goes into the cluster as a Secret and is never
+    stored). A separate table — not a column on clusters — so create_all
+    upgrades existing databases without a migration.
+    """
+
+    __tablename__ = "agent_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cluster_id: Mapped[int] = mapped_column(ForeignKey("clusters.id"), unique=True)
+    token_sha256: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, server_default=func.now())
+
+    cluster: Mapped[Cluster] = relationship()
+
+
 class Event(Base):
     """Append-only log: webhooks received, deploys observed, operator actions."""
 
