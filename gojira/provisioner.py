@@ -259,7 +259,9 @@ def provision_app(
     if not absorb(ProvisionEngine(per_app_steps()).run(session, ctx)):
         return aggregate
 
-    app.status = AppStatus.AWAITING_PR
+    # No setup PR means there was nothing to propose (re-onboard of an
+    # already-configured repo) — deploys already flow, so the app is ACTIVE.
+    app.status = AppStatus.AWAITING_PR if app.setup_pr_url else AppStatus.ACTIVE
     _emit(session, app, "provision.run_completed")
     session.commit()
     aggregate.completed = True

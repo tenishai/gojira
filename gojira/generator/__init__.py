@@ -16,6 +16,7 @@ work without per-app configuration.
 
 import logging
 
+import yaml
 from jinja2 import Environment, PackageLoader, StrictUndefined
 from pydantic import BaseModel, model_validator
 
@@ -87,6 +88,38 @@ class GeneratorSpec(BaseModel):
 
     def image(self, env: EnvSpec) -> str:
         return f"{env.ar_repo}/{self.app}"
+
+
+def preserve_patches(existing_text: str, rendered_text: str) -> str:
+    """Carry an existing kustomization's `patches:` into a fresh render.
+
+    Regenerating an overlay must not discard operator-owned state: drift
+    capture (and operators by hand) wire strategic-merge patches into the
+    overlay kustomization, and a blind overwrite silently reverts them on
+    re-onboard — the exact thing the design forbids (design.md:26).
+
+    The block is appended textually so the render's comments survive. Only
+    `patches` is preserved: every other field is Gojira's to regenerate.
+    """
+    try:
+        existing = yaml.safe_load(existing_text) or {}
+    except yaml.YAMLError:
+        return rendered_text  # unparseable old file — regenerate clean
+    patches = existing.get("patches") or []
+    if not patches:
+        return rendered_text
+
+    rendered = yaml.safe_load(rendered_text) or {}
+    have = {p.get("path") for p in rendered.get("patches", []) if isinstance(p, dict)}
+    keep = [p for p in patches if isinstance(p, dict) and p.get("path") not in have]
+    if not keep:
+        return rendered_text
+
+    lines = ["patches:"]
+    for p in keep:
+        lines.append(f"  - path: {p['path']}")
+    sep = "" if rendered_text.endswith("\n") else "\n"
+    return f"{rendered_text}{sep}" + "\n".join(lines) + "\n"
 
 
 def render(spec: GeneratorSpec) -> dict[str, str]:
