@@ -47,11 +47,24 @@ cd ..
 
 ## 2 — Build and push Gojira's image
 
+> **Architecture gotcha:** GKE Autopilot nodes are **amd64**. If your build
+> machine is ARM (Apple Silicon, DGX Spark), a plain `docker build` produces an
+> arm64 image and the pod crash-loops with `exec format error`. Cross-building
+> with `buildx --platform linux/amd64` can also fail under QEMU (the
+> google-cloud-cli apt layer is flaky under emulation). The reliable path from
+> an ARM machine is Cloud Build:
+
 ```bash
 export AR_PATH=$(cd terraform && terraform output -raw ar_repo_path)   # e.g. us-central1-docker.pkg.dev/$PROJECT/gojira
+
+# On an amd64 machine:
 gcloud auth configure-docker ${REGION}-docker.pkg.dev -q
 docker build -t $AR_PATH/gojira:dev .
 docker push $AR_PATH/gojira:dev
+
+# On ARM (or anywhere): build remotely on amd64 and push in one step
+gcloud services enable cloudbuild.googleapis.com --project $PROJECT
+gcloud builds submit --tag $AR_PATH/gojira:dev --project $PROJECT --region $REGION .
 ```
 
 ## 3 — Create the GitHub App secret
