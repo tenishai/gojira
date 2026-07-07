@@ -45,6 +45,44 @@
   {% endfor %}
   {% endif %}
 
+  {% if v.sizing %}
+  <h2>Sizing</h2>
+  {% for s in v.sizing %}
+  <div class="card">
+    <p><strong>{{ s.environment }}</strong>
+      {% if s.rec_status %}<span class="badge b-{{ s.rec_status }}">{{ s.rec_status }}</span>{% endif %}
+      {% if s.pr_url %}· <a href="{{ s.pr_url }}">sizing PR</a>{% endif %}
+      <span class="muted" style="font-size:0.85em">· last report {{ s.reported_at }}</span></p>
+    <table>
+      <thead><tr><th>Resource</th><th>Request</th><th>p95</th><th>p99</th><th>Limit</th></tr></thead>
+      <tbody>
+        {% for res, req, p95, p99, lim in s.usage %}
+        <tr><td>{{ res }}</td><td class="mono">{{ req }}</td><td class="mono">{{ p95 }}</td><td class="mono">{{ p99 }}</td><td class="mono">{{ lim }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if s.proposed %}
+      <table>
+        <thead><tr><th>Proposed</th><th>Request</th><th>Limit</th></tr></thead>
+        <tbody>
+          {% for res, req, lim in s.proposed %}
+          <tr><td>{{ res }}</td><td class="mono">{{ req }}</td><td class="mono">{{ lim }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted">{{ s.justification }}</p>
+      {% if s.rec_status == "open" %}
+      <form method="post" action="/apps/{{ v.app.id }}/sizing/{{ s.environment }}/open-pr">
+        <button type="submit">Open sizing PR</button>
+      </form>
+      {% endif %}
+    {% else %}
+      <p class="muted">Within class sizing — no change recommended.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+
   {% if v.environments | length > 1 %}
   <h2>Release</h2>
   <div class="card">
