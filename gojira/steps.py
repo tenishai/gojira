@@ -15,6 +15,8 @@ gated production target.
 import logging
 from dataclasses import dataclass
 
+import yaml
+
 from gojira.gcp import GCPClient
 from gojira.generator import (
     EnvSpec,
@@ -344,17 +346,59 @@ class GenerateArtifacts:
                 update={"overrides": read_overrides(existing_spec.read_text())}
             )
         files = render(spec)
+        rendered_targets = _rendered_targets(files)
         for relpath, content in files.items():
             target = ctx.workdir / relpath
             # Re-onboard case: an existing overlay kustomization may carry
             # operator-owned patches (drift capture). Preserve them — a blind
             # overwrite silently reverts captured cluster state on next deploy.
+            # But drop patches whose target the render no longer produces (an
+            # app rename orphans them and kustomize hard-fails the build).
             if target.name == "kustomization.yaml" and target.exists():
-                content = preserve_patches(target.read_text(), content)
+                content = preserve_patches(
+                    target.read_text(),
+                    content,
+                    keep_path=lambda p, d=target.parent: _patch_targets_rendered(
+                        d / p, rendered_targets
+                    ),
+                )
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content)
         log.info("generated %d artifacts into %s", len(files), ctx.workdir)
         return f"{len(files)} files"
+
+
+def _rendered_targets(files: dict[str, str]) -> set[tuple[str, str]]:
+    """(kind, name) of every object the render produces under k8s/base."""
+    targets = set()
+    for relpath, content in files.items():
+        if not relpath.startswith("k8s/base/") or relpath.endswith("kustomization.yaml"):
+            continue
+        try:
+            for doc in yaml.safe_load_all(content):
+                if doc and doc.get("kind") and doc.get("metadata", {}).get("name"):
+                    targets.add((doc["kind"], doc["metadata"]["name"]))
+        except yaml.YAMLError:
+            continue
+    return targets
+
+
+def _patch_targets_rendered(patch_path, rendered: set[tuple[str, str]]) -> bool:
+    """Does this overlay patch target an object the render still produces?
+    Unreadable/unparseable patches are kept (fail open — a human wired them)."""
+    try:
+        doc = yaml.safe_load(patch_path.read_text())
+    except (OSError, yaml.YAMLError):
+        return True
+    kind = (doc or {}).get("kind")
+    name = (doc or {}).get("metadata", {}).get("name")
+    if not kind or not name:
+        return True
+    keep = (kind, name) in rendered
+    if not keep:
+        log.info("dropping orphaned patch %s (targets %s/%s, no longer rendered)",
+                 patch_path.name, kind, name)
+    return keep
 
 
 class OpenSetupPr:

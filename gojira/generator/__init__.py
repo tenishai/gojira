@@ -163,13 +163,18 @@ def apply_resource_overrides(
     return updated
 
 
-def preserve_patches(existing_text: str, rendered_text: str) -> str:
+def preserve_patches(existing_text: str, rendered_text: str, keep_path=None) -> str:
     """Carry an existing kustomization's `patches:` into a fresh render.
 
     Regenerating an overlay must not discard operator-owned state: drift
     capture (and operators by hand) wire strategic-merge patches into the
     overlay kustomization, and a blind overwrite silently reverts them on
     re-onboard — the exact thing the design forbids (design.md:26).
+
+    `keep_path(path) -> bool` lets the caller drop patches whose target no
+    longer exists in the render (an app rename orphans them, and kustomize
+    hard-fails the whole build on an orphaned patch — found live). Default:
+    keep everything.
 
     The block is appended textually so the render's comments survive. Only
     `patches` is preserved: every other field is Gojira's to regenerate.
@@ -184,7 +189,11 @@ def preserve_patches(existing_text: str, rendered_text: str) -> str:
 
     rendered = yaml.safe_load(rendered_text) or {}
     have = {p.get("path") for p in rendered.get("patches", []) if isinstance(p, dict)}
-    keep = [p for p in patches if isinstance(p, dict) and p.get("path") not in have]
+    keep = [
+        p for p in patches
+        if isinstance(p, dict) and p.get("path") not in have
+        and (keep_path is None or keep_path(p.get("path", "")))
+    ]
     if not keep:
         return rendered_text
 
