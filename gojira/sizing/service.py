@@ -14,12 +14,24 @@ evidence for prod apps elsewhere.
 import hashlib
 import logging
 import secrets
+import shutil
+import tempfile
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gojira.config import SizingConfig
-from gojira.models import AgentToken, App, Cluster, Environment, UsageProfileRow
+from gojira.models import (
+    AgentToken,
+    App,
+    Cluster,
+    Environment,
+    RecommendationKind,
+    SizingRecommendation,
+    UsageProfileRow,
+)
+from gojira.sizing.pr import open_override_pr
 from gojira.sizing.profile import UsageProfile
 from gojira.sizing.recommender import recompute_for_app
 from gojira.sizing.store import DbSizingStore
@@ -53,6 +65,31 @@ def mint_agent_token(session: Session, cluster: Cluster) -> str:
     session.commit()
     log.info("minted agent token for cluster %s", cluster.name)
     return token
+
+
+def open_pr_for(session: Session, app_id: int, env: str, github) -> str | None:
+    """The UI button: author the sizing PR for (app, env)'s live recommendation.
+
+    Returns the PR URL, or None when there's no OPEN recommendation or nothing
+    to change. Clones into a throwaway tree, same as the drift scanner.
+    """
+    app = session.get(App, app_id)
+    if app is None:
+        return None
+    rec = session.scalar(
+        select(SizingRecommendation).where(
+            SizingRecommendation.app_id == app_id,
+            SizingRecommendation.environment == env,
+            SizingRecommendation.kind == RecommendationKind.OVERRIDE,
+        )
+    )
+    if rec is None:
+        return None
+    workdir = Path(tempfile.mkdtemp(prefix=f"gojira-sizing-{app.name}-"))
+    try:
+        return open_override_pr(session, app, rec, github, workdir)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 def ingest_usage(

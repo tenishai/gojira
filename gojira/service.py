@@ -283,6 +283,7 @@ class AppStatusView:
     terminal: bool
     counts: dict[str, int] = field(default_factory=dict)
     drift: list[DriftView] = field(default_factory=list)
+    sizing: list["SizingView"] = field(default_factory=list)
 
 
 def _drift_views(session: Session, app_id: int) -> list[DriftView]:
@@ -304,6 +305,68 @@ def _drift_views(session: Session, app_id: int) -> list[DriftView]:
 
 def _fmt(v) -> str:
     return "absent" if v is None else str(v)
+
+
+@dataclass
+class SizingView:
+    """One environment's usage evidence + live recommendation for the app page."""
+
+    environment: str
+    reported_at: str                        # latest profile timestamp, iso-ish
+    usage: list[tuple[str, str, str, str, str]]  # (resource, request, p95, p99, limit)
+    rec_status: str | None                  # open | pr_opened | ... | None = no rec
+    proposed: list[tuple[str, str, str]]    # (resource, request -> , limit ->)
+    justification: str | None
+    pr_url: str | None
+
+
+def _sizing_views(session: Session, app_id: int) -> list[SizingView]:
+    from gojira.models import RecommendationKind, SizingRecommendation, UsageProfileRow
+
+    envs = session.scalars(
+        select(UsageProfileRow.environment)
+        .where(UsageProfileRow.app_id == app_id)
+        .distinct()
+    ).all()
+    views: list[SizingView] = []
+    for env in sorted(envs):
+        latest = session.scalar(
+            select(UsageProfileRow)
+            .where(UsageProfileRow.app_id == app_id, UsageProfileRow.environment == env)
+            .order_by(UsageProfileRow.reported_at.desc())
+            .limit(1)
+        )
+        usage = []
+        for resource, blob in (("cpu", latest.cpu_json), ("memory", latest.memory_json)):
+            u = json.loads(blob)
+            usage.append((resource, u["request"], u["p95"], u["p99"], u["limit"]))
+        rec = session.scalar(
+            select(SizingRecommendation).where(
+                SizingRecommendation.app_id == app_id,
+                SizingRecommendation.environment == env,
+                SizingRecommendation.kind == RecommendationKind.OVERRIDE,
+            )
+        )
+        proposed = []
+        if rec is not None:
+            cur = json.loads(rec.current_json)
+            for resource, p in sorted(json.loads(rec.proposed_json).items()):
+                c = cur.get(resource, {})
+                proposed.append((
+                    resource,
+                    f"{c.get('request', '?')} → {p['request']}",
+                    f"{c.get('limit', '?')} → {p['limit']}",
+                ))
+        views.append(SizingView(
+            environment=env,
+            reported_at=str(latest.reported_at),
+            usage=usage,
+            rec_status=str(rec.status) if rec else None,
+            proposed=proposed,
+            justification=rec.justification if rec else None,
+            pr_url=rec.pr_url if rec else None,
+        ))
+    return views
 
 
 def list_repos(github: GitHubClient, limit: int = 200) -> list[str]:
@@ -441,4 +504,5 @@ def app_status(session: Session, app_id: int) -> AppStatusView:
         terminal=app.status in TERMINAL_STATUSES,
         counts=counts,
         drift=_drift_views(session, app_id),
+        sizing=_sizing_views(session, app_id),
     )
