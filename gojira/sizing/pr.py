@@ -17,6 +17,7 @@ from pathlib import Path
 import yaml
 from sqlalchemy.orm import Session
 
+from gojira.generator import apply_resource_overrides
 from gojira.github import GitHubClient
 from gojira.models import App, RecommendationStatus, SizingRecommendation
 
@@ -96,6 +97,16 @@ def open_override_pr(
     block = render_overrides_block(proposed, rec.justification)
     spec_path.write_text(apply_overrides(spec_path.read_text(), block))
 
+    # The manifest moves in the same PR as the contract — merging it is what
+    # actually resizes the workload (CI applies k8s/, not gojira.yaml).
+    deployment = workdir / "k8s" / "base" / "deployment.yaml"
+    if deployment.exists():
+        requests = {res: v["request"] for res, v in proposed.items()}
+        limits = {res: v["limit"] for res, v in proposed.items()}
+        deployment.write_text(
+            apply_resource_overrides(deployment.read_text(), requests, limits)
+        )
+
     if not github.commit_all(workdir, f"Rightsize {app.name} ({rec.environment}): measured evidence"):
         log.info("override for %s produced no diff — already applied", app.name)
         return None
@@ -138,7 +149,8 @@ def _pr_body(app: App, rec: SizingRecommendation, proposed: dict) -> str:
         "",
         f"**Evidence:** {rec.justification}",
         "",
-        "Merging updates the app's contract; Gojira regenerates manifests from it. "
-        "Close this PR to dismiss the recommendation.",
+        "This PR updates both the contract (`gojira.yaml`) and the manifest "
+        "(`k8s/base/deployment.yaml`) — merging it deploys the new sizing on the "
+        "next CI run. Close it to dismiss the recommendation.",
     ]
     return "\n".join(lines)

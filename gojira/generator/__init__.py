@@ -55,6 +55,35 @@ class EnvSpec(BaseModel):
         return self.ar_repo.split("/")[0]
 
 
+class Overrides(BaseModel):
+    """gojira.yaml's justified escape hatch, as the generator consumes it.
+
+    Only cpu/memory land here — the sizing loop doesn't touch gpu or
+    ephemeral-storage. Unknown keys in the file are ignored, not errors.
+    """
+
+    requests: dict[str, str] = {}
+    limits: dict[str, str] = {}
+    justification: str = ""
+
+
+def read_overrides(gojira_yaml_text: str) -> Overrides | None:
+    """The overrides block from a repo's gojira.yaml, or None if absent/unusable."""
+    try:
+        doc = yaml.safe_load(gojira_yaml_text) or {}
+    except yaml.YAMLError:
+        return None
+    raw = doc.get("overrides")
+    if not isinstance(raw, dict):
+        return None
+    keep = {"cpu", "memory"}
+    return Overrides(
+        requests={k: str(v) for k, v in (raw.get("requests") or {}).items() if k in keep},
+        limits={k: str(v) for k, v in (raw.get("limits") or {}).items() if k in keep},
+        justification=str(raw.get("justification") or ""),
+    )
+
+
 class GeneratorSpec(BaseModel):
     app: str
     repo_full_name: str
@@ -62,6 +91,7 @@ class GeneratorSpec(BaseModel):
     environments: list[EnvSpec]
     default_branch: str = "main"
     schedule: str | None = None  # cron class only
+    overrides: Overrides | None = None  # from the repo's gojira.yaml, if any
 
     @model_validator(mode="after")
     def validate_spec(self):
@@ -88,6 +118,49 @@ class GeneratorSpec(BaseModel):
 
     def image(self, env: EnvSpec) -> str:
         return f"{env.ar_repo}/{self.app}"
+
+
+def apply_resource_overrides(
+    deployment_text: str, requests: dict[str, str], limits: dict[str, str]
+) -> str:
+    """Rewrite cpu/memory values in a generated deployment's resources block.
+
+    Used by the sizing PR so the contract (gojira.yaml) and the manifest move
+    in ONE reviewed PR — merging it actually resizes the workload. Textual, so
+    the file's comments survive; we generated the file, so its shape is known.
+    Validated by parsing afterwards.
+    """
+    lines = deployment_text.splitlines(keepends=True)
+    section = None  # None | "requests" | "limits"
+    out = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "requests:":
+            section = "requests"
+        elif stripped == "limits:":
+            section = "limits"
+        elif section and stripped and not line.startswith(" " * 14):
+            # left the resources sub-block (keys live at 14-space indent)
+            section = None
+        if section:
+            wanted = requests if section == "requests" else limits
+            for key, value in wanted.items():
+                if stripped.startswith(f"{key}:"):
+                    indent = line[: len(line) - len(line.lstrip())]
+                    line = f"{indent}{key}: {value}\n"
+                    break
+        out.append(line)
+    updated = "".join(out)
+
+    parsed = yaml.safe_load(updated)  # belt and braces
+    got = parsed["spec"]["template"]["spec"]["containers"][0]["resources"]
+    for key, value in requests.items():
+        if str(got["requests"].get(key)) != str(value):
+            raise ValueError(f"override failed to apply: requests.{key}")
+    for key, value in limits.items():
+        if str(got["limits"].get(key)) != str(value):
+            raise ValueError(f"override failed to apply: limits.{key}")
+    return updated
 
 
 def preserve_patches(existing_text: str, rendered_text: str) -> str:
@@ -126,6 +199,16 @@ def render(spec: GeneratorSpec) -> dict[str, str]:
     """Render all artifacts for an app. Returns {repo-relative path: content}."""
     sizing = load_sizing()
     cls = sizing.classes[spec.workload_class]
+    if spec.overrides is not None:
+        # The justified escape hatch wins over the class opinion — and doing it
+        # here keeps regeneration idempotent: a re-onboard re-reads gojira.yaml
+        # and re-applies the same overrides instead of reverting to class
+        # defaults (the finding-8 lesson, applied to sizing).
+        cls = cls.model_copy(deep=True)
+        for key, value in spec.overrides.requests.items():
+            setattr(cls.requests, key, value)
+        for key, value in spec.overrides.limits.items():
+            setattr(cls.limits, key, value)
     ctx = {
         "spec": spec,
         "cls": cls,
