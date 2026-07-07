@@ -87,11 +87,25 @@ def app_rec(session):
 
 
 class SpecRepoGitHub(FakeGitHubClient):
-    """Fake whose clone drops a gojira.yaml into the tree."""
+    """Fake whose clone drops a gojira.yaml + generated deployment into the tree."""
 
     def clone(self, repo, workdir):
         super().clone(repo, workdir)
         (workdir / "gojira.yaml").write_text(GOJIRA_YAML)
+        from gojira.generator import EnvSpec, GeneratorSpec, render
+
+        spec = GeneratorSpec(
+            app="clips-api", repo_full_name=repo, workload_class="web",
+            environments=[EnvSpec(
+                name="dev", namespace="clips", project="p", cluster_name="sandbox",
+                location="l", gke_cluster="g", ar_repo="l-docker.pkg.dev/p/apps",
+                wif_provider="projects/1/locations/global/workloadIdentityPools/g/providers/gh",
+                gsa_email="d@p.iam.gserviceaccount.com",
+            )],
+        )
+        target = workdir / "k8s" / "base" / "deployment.yaml"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(render(spec)["k8s/base/deployment.yaml"])
 
 
 def test_open_pr_flow(session, app_rec, tmp_path):
@@ -106,6 +120,11 @@ def test_open_pr_flow(session, app_rec, tmp_path):
     edited = (tmp_path / "gojira.yaml").read_text()
     assert yaml.safe_load(edited)["overrides"]["requests"] == {"cpu": "800m"}
     assert "# Gojira app spec" in edited
+    # The manifest moved in the same PR — merging it actually resizes.
+    dep = yaml.safe_load((tmp_path / "k8s" / "base" / "deployment.yaml").read_text())
+    res = dep["spec"]["template"]["spec"]["containers"][0]["resources"]
+    assert res["requests"]["cpu"] == "800m" and res["limits"]["cpu"] == "1250m"
+    assert res["requests"]["memory"] == "256Mi"  # untouched
 
 
 def test_existing_pr_reused_not_reauthored(session, app_rec, tmp_path):

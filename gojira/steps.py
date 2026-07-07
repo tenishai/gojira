@@ -16,7 +16,13 @@ import logging
 from dataclasses import dataclass
 
 from gojira.gcp import GCPClient
-from gojira.generator import EnvSpec, GeneratorSpec, preserve_patches, render
+from gojira.generator import (
+    EnvSpec,
+    GeneratorSpec,
+    preserve_patches,
+    read_overrides,
+    render,
+)
 from gojira.github import SETUP_BRANCH, GitHubClient
 from gojira.k8s import KubectlClient
 from gojira.models import App, Environment
@@ -329,7 +335,15 @@ class GenerateArtifacts:
     def apply(self, ctx: ProvisionContext) -> str:
         if ctx.workdir is None:
             raise ValueError("generate_artifacts requires ctx.workdir (the repo working tree)")
-        files = render(build_spec(ctx, _gcp(ctx)))
+        spec = build_spec(ctx, _gcp(ctx))
+        # Honor the repo's justified overrides: regeneration must produce the
+        # sized manifests, not revert them to class defaults.
+        existing_spec = ctx.workdir / "gojira.yaml"
+        if existing_spec.exists():
+            spec = spec.model_copy(
+                update={"overrides": read_overrides(existing_spec.read_text())}
+            )
+        files = render(spec)
         for relpath, content in files.items():
             target = ctx.workdir / relpath
             # Re-onboard case: an existing overlay kustomization may carry
