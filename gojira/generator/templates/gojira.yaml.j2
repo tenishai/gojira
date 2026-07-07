@@ -12,6 +12,17 @@ environments:
 {% if spec.schedule %}
 schedule: "{{ spec.schedule }}"
 {% endif %}
+{% if spec.overrides %}
+overrides:
+{% if spec.overrides.requests %}
+  requests: { {% for k, v in spec.overrides.requests | dictsort %}{{ k }}: "{{ v }}"{% if not loop.last %}, {% endif %}{% endfor %} }
+{% endif %}
+{% if spec.overrides.limits %}
+  limits: { {% for k, v in spec.overrides.limits | dictsort %}{{ k }}: "{{ v }}"{% if not loop.last %}, {% endif %}{% endfor %} }
+{% endif %}
+  justification: {{ spec.overrides.justification | tojson }}
+{% else %}
 # overrides:                  # needs a justification — see docs
 #   requests: { cpu: "1", memory: 1Gi }
 #   justification: "measured p99 over 14 days"
+{% endif %}

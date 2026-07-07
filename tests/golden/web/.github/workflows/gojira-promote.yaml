@@ -60,7 +60,7 @@ jobs:
           # any other error still fails the deploy after the retries.
           ok=false
           for attempt in $(seq 1 20); do
-            out=$(kubectl apply -k . 2>&1); rc=$?
+            rc=0; out=$(kubectl apply -k . 2>&1) || rc=$?  # || so bash -e can't kill the retry loop
             echo "$out"
             [ "$rc" -eq 0 ] && { ok=true; break; }
             if echo "$out" | grep -q 'gmp-operator'; then
@@ -122,7 +122,7 @@ jobs:
           # any other error still fails the deploy after the retries.
           ok=false
           for attempt in $(seq 1 20); do
-            out=$(kubectl apply -k . 2>&1); rc=$?
+            rc=0; out=$(kubectl apply -k . 2>&1) || rc=$?  # || so bash -e can't kill the retry loop
             echo "$out"
             [ "$rc" -eq 0 ] && { ok=true; break; }
             if echo "$out" | grep -q 'gmp-operator'; then

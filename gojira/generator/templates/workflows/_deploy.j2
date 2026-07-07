@@ -18,7 +18,7 @@
 {% endif %}
           ok=false
           for attempt in $(seq 1 20); do
-            out=$(kubectl apply -k . 2>&1); rc=$?
+            rc=0; out=$(kubectl apply -k . 2>&1) || rc=$?  # || so bash -e can't kill the retry loop
             echo "$out"
             [ "$rc" -eq 0 ] && { ok=true; break; }
 {% if not is_cron %}
