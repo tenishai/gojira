@@ -107,6 +107,16 @@ def open_override_pr(
             apply_resource_overrides(deployment.read_text(), requests, limits)
         )
 
+    # Finding #9: a drift-capture patch in the env overlay layers OVER base at
+    # kustomize build time — left alone, it silently re-imposes the captured
+    # values and the merged sizing PR changes nothing on the cluster. The
+    # sizing decision is the later, reviewed one: retire the fields it
+    # supersedes from the patch (other captured fields, e.g. probes or
+    # ephemeral-storage, stay).
+    retire_superseded_drift(
+        workdir / "k8s" / "overlays" / rec.environment, app.name, set(proposed)
+    )
+
     if not github.commit_all(workdir, f"Rightsize {app.name} ({rec.environment}): measured evidence"):
         log.info("override for %s produced no diff — already applied", app.name)
         return None
@@ -124,6 +134,64 @@ def open_override_pr(
     session.commit()
     log.info("sizing PR opened for %s/%s: %s", app.name, rec.environment, url)
     return url
+
+
+def retire_superseded_drift(overlay_dir: Path, app_name: str, resources: set[str]) -> bool:
+    """Remove `resources` (e.g. {"cpu","memory"}) from a drift-capture patch.
+
+    If the patch's requests/limits become empty they're dropped; if the whole
+    patch then says nothing beyond container names, the file is deleted and
+    its kustomization wiring removed. Returns True if anything changed.
+    """
+    patch_path = overlay_dir / f"drift-{app_name}.yaml"
+    if not patch_path.exists():
+        return False
+    try:
+        doc = yaml.safe_load(patch_path.read_text())
+    except yaml.YAMLError:
+        return False
+
+    containers = (
+        doc.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+    )
+    changed = False
+    for c in containers:
+        res = c.get("resources", {})
+        for bucket in ("requests", "limits"):
+            for key in resources:
+                if key in res.get(bucket, {}):
+                    del res[bucket][key]
+                    changed = True
+            if bucket in res and not res[bucket]:
+                del res[bucket]
+        if "resources" in c and not c["resources"]:
+            del c["resources"]
+    if not changed:
+        return False
+
+    # Anything left worth keeping? (probes, ephemeral-storage, ...)
+    substantial = any(set(c) - {"name"} for c in containers)
+    if substantial:
+        header = "# Captured by Gojira's drift detector — the live cluster state.\n"
+        patch_path.write_text(header + yaml.safe_dump(doc, sort_keys=False))
+        log.info("retired %s from drift patch %s", sorted(resources), patch_path.name)
+        return True
+
+    patch_path.unlink()
+    kust_path = overlay_dir / "kustomization.yaml"
+    if kust_path.exists():
+        # Textual unwire, so the kustomization's comments survive.
+        lines = [
+            line for line in kust_path.read_text().splitlines(keepends=True)
+            if f"path: {patch_path.name}" not in line
+        ]
+        text = "".join(lines)
+        parsed = yaml.safe_load(text) or {}
+        if not parsed.get("patches"):
+            lines = [line for line in lines if line.strip() != "patches:"]
+        kust_path.write_text("".join(lines))
+    log.info("drift patch %s fully superseded — removed", patch_path.name)
+    return True
 
 
 def _summary(proposed: dict) -> str:
