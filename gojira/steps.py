@@ -16,7 +16,7 @@ import logging
 from dataclasses import dataclass
 
 from gojira.gcp import GCPClient
-from gojira.generator import EnvSpec, GeneratorSpec, render
+from gojira.generator import EnvSpec, GeneratorSpec, preserve_patches, render
 from gojira.github import SETUP_BRANCH, GitHubClient
 from gojira.k8s import KubectlClient
 from gojira.models import App, Environment
@@ -332,6 +332,11 @@ class GenerateArtifacts:
         files = render(build_spec(ctx, _gcp(ctx)))
         for relpath, content in files.items():
             target = ctx.workdir / relpath
+            # Re-onboard case: an existing overlay kustomization may carry
+            # operator-owned patches (drift capture). Preserve them — a blind
+            # overwrite silently reverts captured cluster state on next deploy.
+            if target.name == "kustomization.yaml" and target.exists():
+                content = preserve_patches(target.read_text(), content)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content)
         log.info("generated %d artifacts into %s", len(files), ctx.workdir)
@@ -356,7 +361,14 @@ class OpenSetupPr:
         repo = ctx.app.repo_full_name
         committed = gh.commit_all(ctx.workdir, "Add Gojira deploy config")
         if not committed:
-            raise ValueError("nothing to commit — did generate_artifacts run?")
+            # Re-onboard of an already-configured repo: the render matches what
+            # is on the default branch, so there is no setup to propose. Clear
+            # setup_pr_url (any previous setup PR is merged history) — the
+            # orchestrator reads no-URL as "already active" rather than
+            # "awaiting a PR that will never exist".
+            log.info("%s already carries the generated config — no setup PR needed", repo)
+            ctx.app.setup_pr_url = None
+            return "up-to-date (no setup PR needed)"
         gh.push(ctx.workdir, SETUP_BRANCH)
         base = gh.default_branch(repo)
         envs = ", ".join(
