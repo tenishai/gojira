@@ -130,3 +130,31 @@ def test_first_onboard_still_awaits_pr(session, tmp_path):
     assert result.completed
     assert app.status == AppStatus.AWAITING_PR
     assert app.setup_pr_url and "/pull/" in app.setup_pr_url
+
+def test_rename_drops_orphaned_patch_but_keeps_live_one(tmp_path):
+    """Finding #10 (rename half): a preserved patch whose target the render no
+    longer produces (app renamed) must be dropped — kustomize hard-fails the
+    whole build on an orphaned patch. A patch targeting a still-rendered
+    object survives."""
+    from gojira.generator import preserve_patches
+    from gojira.steps import _patch_targets_rendered, _rendered_targets
+
+    files = {
+        "k8s/base/deployment.yaml":
+            "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: new-name\n",
+    }
+    rendered = _rendered_targets(files)
+
+    overlay = tmp_path
+    (overlay / "drift-old.yaml").write_text(
+        "kind: Deployment\nmetadata:\n  name: old-name\n")
+    (overlay / "drift-new.yaml").write_text(
+        "kind: Deployment\nmetadata:\n  name: new-name\n")
+    existing = "resources:\n- ../../base\npatches:\n- path: drift-old.yaml\n- path: drift-new.yaml\n"
+
+    out = preserve_patches(
+        existing, RENDERED,
+        keep_path=lambda p: _patch_targets_rendered(overlay / p, rendered),
+    )
+    assert "drift-new.yaml" in out       # live target: kept
+    assert "drift-old.yaml" not in out   # orphaned by rename: dropped

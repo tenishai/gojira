@@ -93,3 +93,16 @@ def test_regeneration_with_overrides_is_idempotent():
     ov = Overrides(requests={"cpu": "800m"}, limits={"cpu": "1250m"})
     regenerated = render(_spec(ov))["k8s/base/deployment.yaml"]
     assert regenerated == sized_by_pr
+
+def test_rendered_gojira_yaml_round_trips_overrides():
+    """Finding #10: the contract file must carry the overrides forward. If the
+    template drops them, the next regeneration silently reverts to class
+    defaults — read_overrides(render(...)) must reproduce spec.overrides."""
+    ov = Overrides(requests={"cpu": "50m", "memory": "64Mi"},
+                   limits={"cpu": "100m", "memory": "128Mi"},
+                   justification='measured: p95 30m over 14d; "quoted" chars too')
+    files = render(_spec(ov))
+    back = read_overrides(files["gojira.yaml"])
+    assert back == ov
+    # and without overrides, the commented example remains for humans
+    assert "# overrides:" in render(_spec())["gojira.yaml"]
