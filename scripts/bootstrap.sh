@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Bootstrap Gojira into a sandbox cluster — everything after `terraform apply`.
+#
+#   PROJECT=my-sandbox \
+#   GOJIRA_GITHUB_APP_ID=1234567 \
+#   GOJIRA_GITHUB_APP_PEM=./github-app.pem \
+#   ./scripts/bootstrap.sh
+#
+# What it does, in order (each step idempotent — rerun freely):
+#   1. cluster credentials        (gcloud get-credentials)
+#   2. build + push the image     (Cloud Build — works from ARM machines too)
+#   3. namespace + GitHub App secret
+#   4. render + apply deploy/     (placeholders filled in a temp copy; your
+#                                  working tree stays clean)
+#   5. wait for the pod, print how to reach the UI
+#
+# It deliberately does NOT read terraform state: every value is derived from
+# PROJECT/REGION and the conventions in terraform/ (GSA `gojira@<project>`,
+# AR repo `gojira`, cluster `gojira-sandbox`), so it runs from any machine —
+# terraform can live on a different one.
+
+set -euo pipefail
+
+# --- inputs -------------------------------------------------------------------
+PROJECT="${PROJECT:?set PROJECT to your sandbox GCP project id}"
+REGION="${REGION:-us-central1}"
+CLUSTER="${CLUSTER:-gojira-sandbox}"
+# NB: no apostrophes in :? messages — inside ${VAR:?...} a quote character
+# starts a quote context even within double quotes and eats the script.
+APP_ID="${GOJIRA_GITHUB_APP_ID:?set GOJIRA_GITHUB_APP_ID (the GitHub App numeric id)}"
+PEM="${GOJIRA_GITHUB_APP_PEM:?set GOJIRA_GITHUB_APP_PEM (path to the App private key .pem)}"
+[ -f "$PEM" ] || { echo "error: pem not found at $PEM" >&2; exit 1; }
+
+AR_PATH="${REGION}-docker.pkg.dev/${PROJECT}/gojira"
+GSA="gojira@${PROJECT}.iam.gserviceaccount.com"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
+
+for tool in gcloud kubectl; do
+  command -v "$tool" >/dev/null || { echo "error: $tool not installed" >&2; exit 1; }
+done
+
+step "1/5 cluster credentials ($CLUSTER @ $PROJECT/$REGION)"
+gcloud container clusters get-credentials "$CLUSTER" --region "$REGION" --project "$PROJECT"
+
+step "2/5 build + push image via Cloud Build (avoids the ARM/amd64 trap)"
+gcloud services enable cloudbuild.googleapis.com --project "$PROJECT" --quiet
+gcloud builds submit --tag "${AR_PATH}/gojira:dev" --project "$PROJECT" "$REPO_ROOT"
+
+step "3/5 namespace + GitHub App secret"
+kubectl create namespace gojira --dry-run=client -o yaml | kubectl apply -f -
+# Preserve an existing webhook secret across reruns; mint one on first run.
+WEBHOOK_SECRET="$(kubectl -n gojira get secret gojira-github-app \
+  -o jsonpath='{.data.webhook_secret}' 2>/dev/null | base64 -d || true)"
+WEBHOOK_SECRET="${WEBHOOK_SECRET:-$(openssl rand -hex 32)}"
+kubectl -n gojira create secret generic gojira-github-app \
+  --from-literal=app_id="$APP_ID" \
+  --from-literal=webhook_secret="$WEBHOOK_SECRET" \
+  --from-file=private_key="$PEM" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+step "4/5 render + apply manifests (temp copy — your tree stays clean)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+cp -r "$REPO_ROOT/deploy/." "$TMP/"
+sed -i.bak "s#REPLACE_GSA_EMAIL#${GSA}#" "$TMP/serviceaccount.yaml"
+sed -i.bak "s#REPLACE_AR_PATH#${AR_PATH}#" "$TMP/kustomization.yaml"
+rm -f "$TMP"/*.bak
+kubectl apply -k "$TMP"
+
+step "5/5 wait for Gojira to come up"
+kubectl -n gojira rollout status deploy/gojira --timeout=300s
+
+cat <<EOF
+
+Gojira is running. Reach the UI:
+
+  kubectl -n gojira port-forward svc/gojira 8080:80
+  open http://localhost:8080
+
+Then register your cluster (Clusters page):
+  name: sandbox   gcp_project: ${PROJECT}   location: ${REGION}   gke_cluster: ${CLUSTER}
+
+and connect a repo (Connect page). Full walkthrough: docs/dogfood.md
+EOF
