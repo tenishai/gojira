@@ -226,6 +226,19 @@ def create_app(
         )
         return RedirectResponse(f"/apps/{app_id}", status_code=303)
 
+    @app.post("/apps/{app_id}/sizing/{env}/open-pr")
+    def open_sizing_pr(
+        app_id: int, env: str, request: Request, session: Session = Depends(get_session)
+    ):
+        try:
+            url = sizing_service.open_pr_for(
+                session, app_id, env, request.app.state.clients.github
+            )
+            log.info("sizing PR for app %s/%s: %s", app_id, env, url or "nothing to do")
+        except Exception as exc:
+            log.warning("sizing PR failed for app %s/%s: %s", app_id, env, exc)
+        return RedirectResponse(f"/apps/{app_id}", status_code=303)
+
     @app.post("/api/v1/usage")
     async def ingest_usage(request: Request, session: Session = Depends(get_session)):
         auth = request.headers.get("Authorization", "")
