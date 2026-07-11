@@ -57,6 +57,15 @@ class KubectlClient(ABC):
         Used by the drift detector to read what's actually running. Read-only.
         """
 
+    @abstractmethod
+    def apply(self, manifest: str) -> None:
+        """Apply a YAML manifest (may hold multiple documents). Idempotent."""
+
+    @abstractmethod
+    def create_job_from_cronjob(self, namespace: str, name: str, cronjob: str) -> None:
+        """Run one Job off a CronJob's template now. Jobs are immutable, so a
+        previous run of the same name is deleted first."""
+
 
 class KubectlCLI(KubectlClient):
     """kubectl-backed client, pinned to one kubeconfig context."""
@@ -106,3 +115,20 @@ class KubectlCLI(KubectlClient):
         if "NotFound" in result.stderr or "not found" in result.stderr.lower():
             return None
         raise K8sError(f"kubectl get {kind} {name} -n {namespace} failed: {result.stderr}")
+
+    def apply(self, manifest: str) -> None:
+        # stdin, not argv: manifests can carry secrets, which must never
+        # appear in a process listing.
+        result = self._run("apply", "-f", "-", stdin=manifest)
+        if result.returncode != 0:
+            raise K8sError(f"kubectl apply failed: {result.stderr}")
+
+    def create_job_from_cronjob(self, namespace: str, name: str, cronjob: str) -> None:
+        result = self._run("delete", "job", name, "-n", namespace, "--ignore-not-found")
+        if result.returncode != 0:
+            raise K8sError(f"kubectl delete job {name} failed: {result.stderr}")
+        result = self._run(
+            "create", "job", name, "-n", namespace, f"--from=cronjob/{cronjob}"
+        )
+        if result.returncode != 0:
+            raise K8sError(f"kubectl create job {name} failed: {result.stderr}")

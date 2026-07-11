@@ -30,6 +30,7 @@ from gojira.models import (
     RecommendationKind,
     SizingRecommendation,
     UsageProfileRow,
+    utcnow,
 )
 from gojira.sizing.pr import open_override_pr
 from gojira.sizing.profile import UsageProfile
@@ -62,9 +63,16 @@ def mint_agent_token(session: Session, cluster: Cluster) -> str:
         session.add(row)
     else:
         row.token_sha256 = _sha256(token)  # rotation: old token dies here
+        row.created_at = utcnow()  # the row outlives tokens; the date is the token's
     session.commit()
     log.info("minted agent token for cluster %s", cluster.name)
     return token
+
+
+def agent_tokens_by_cluster(session: Session) -> dict[int, AgentToken]:
+    """cluster_id → its token row. A row's existence is the 'agent deployed'
+    signal the clusters page shows; created_at is the current token's mint time."""
+    return {t.cluster_id: t for t in session.scalars(select(AgentToken))}
 
 
 def open_pr_for(session: Session, app_id: int, env: str, github) -> str | None:
