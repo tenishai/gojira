@@ -144,9 +144,11 @@ curl -X POST http://<gojira>/api/v1/usage \
 ```
 
 See [`tests/fixtures/usage_profile.json`](tests/fixtures/usage_profile.json)
-for the exact contract — it doubles as the cross-repo handshake for the
-in-cluster agent (in development). Until the agent ships, anything that can
-compute a p95 can feed the loop.
+for the exact contract — it doubles as the cross-repo handshake for
+[gojira-sizing-agent](https://github.com/tenishai/gojira-sizing-agent), the
+in-cluster agent Gojira deploys from the Clusters page ("Deploy agent": mints
+the cluster token, applies RBAC + CronJob, grants metrics access, runs a
+first sweep). Anything else that can compute a p95 can feed the loop too.
 
 ## What's built, what's next
 
@@ -155,7 +157,8 @@ compute a p95 can feed the loop.
 | ✅ Connect: provisioner, generator, setup PRs, keyless CI, promotion | proven live |
 | ✅ Capture: drift detection, capture PRs, central scheduler | proven live |
 | ✅ Rightsize: evidence API, recommender, one-PR resizing | proven live |
-| 🔜 In-cluster usage agent (Prometheus → evidence, per cluster) | designed — [docs/sizing-feedback-design.md](docs/sizing-feedback-design.md) |
+| ✅ In-cluster usage agent (GMP/Prometheus → evidence, per cluster) | proven live |
+| ✅ One-button agent deploy + token rotation (Clusters page) | new |
 | 🔜 Public webhook ingress (auto PR-merge detection, regenerate-on-change) | buttons today |
 | 🔜 Guard: Kyverno admission policies, `gojira adopt` | designed |
 
