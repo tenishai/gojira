@@ -2,15 +2,26 @@
 {% block title %}Clusters · Gojira{% endblock %}
 {% block content %}
   <h1>Clusters</h1>
-  {% if error %}<div class="card err">Registration failed: {{ error }}</div>{% endif %}
+  {% if error %}<div class="card err">{{ error }}</div>{% endif %}
   {% if clusters %}
   <table>
-    <thead><tr><th>Name</th><th>Project</th><th>Location</th><th>GKE cluster</th><th>Artifact Registry</th></tr></thead>
+    <thead><tr><th>Name</th><th>Project</th><th>Location</th><th>GKE cluster</th><th>Artifact Registry</th><th>Sizing agent</th></tr></thead>
     <tbody>
       {% for c in clusters %}
       <tr>
         <td>{{ c.name }}</td><td class="mono">{{ c.gcp_project }}</td><td>{{ c.location }}</td>
         <td class="mono">{{ c.gke_cluster }}</td><td class="mono">{{ c.ar_repo }}</td>
+        <td>
+          {% set tok = agents.get(c.id) %}
+          <form method="post" action="/clusters/{{ c.id }}/deploy-agent">
+            {% if tok %}
+              <div class="muted">token minted {{ tok.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+              <button type="submit">Redeploy · rotate token</button>
+            {% else %}
+              <button type="submit">Deploy agent</button>
+            {% endif %}
+          </form>
+        </td>
       </tr>
       {% endfor %}
     </tbody>

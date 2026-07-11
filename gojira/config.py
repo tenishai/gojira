@@ -42,6 +42,27 @@ class SizingConfig(BaseModel):
     limit_headroom: float = 1.5    # proposed limit = p99 * headroom
     history_days: int = 30         # evidence window the recommender reads
 
+    # The sizing agent Gojira deploys into registered clusters (Track C).
+    # agent_image is the one required knob — there is no public image yet.
+    agent_image: str = ""
+    # Where deployed agents report back. The default assumes the agent shares
+    # a cluster with Gojira; remote clusters need Gojira's external URL here.
+    agent_gojira_url: str = "http://gojira.gojira.svc.cluster.local"
+    # Empty → Google Managed Prometheus for the target cluster's own project.
+    agent_prometheus_url: str = ""
+    agent_prometheus_auth: str = "google"
+    # GMP metric names by default — Gojira is GKE-opinionated. Literal PromQL
+    # braces are doubled: the agent runs these through str.format, which
+    # reserves single braces for the {namespace}/{app} slots.
+    agent_cpu_query: str = (
+        "sum by (pod_name) (rate(kubernetes_io:container_cpu_core_usage_time"
+        '{{namespace_name="{namespace}", pod_name=~"{app}-.*"}}[5m]))'
+    )
+    agent_mem_query: str = (
+        "max by (pod_name) (kubernetes_io:container_memory_used_bytes"
+        '{{namespace_name="{namespace}", pod_name=~"{app}-.*", memory_type="non-evictable"}})'
+    )
+
 
 class Config(BaseModel):
     github: GitHubConfig = GitHubConfig()

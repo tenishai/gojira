@@ -93,6 +93,7 @@ class FakeKubectlClient(KubectlClient):
         # live objects keyed by (namespace, kind.lower(), name)
         self.resources = dict(resources or {})
         self.calls: list[str] = []
+        self.applied: list[str] = []  # raw manifests handed to apply()
 
     def namespace_exists(self, namespace):
         return namespace in self.namespaces
@@ -108,6 +109,13 @@ class FakeKubectlClient(KubectlClient):
     def get_resource(self, namespace, kind, name):
         self.calls.append(f"get:{kind}/{name}")
         return self.resources.get((namespace, kind.lower(), name))
+
+    def apply(self, manifest):
+        self.calls.append("apply")
+        self.applied.append(manifest)
+
+    def create_job_from_cronjob(self, namespace, name, cronjob):
+        self.calls.append(f"job:{namespace}/{name}<-{cronjob}")
 
 
 class KubectlFactory:
