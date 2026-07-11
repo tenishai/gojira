@@ -15,8 +15,9 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session, sessionmaker
 
-from gojira import service, webhooks
+from gojira import models, service, webhooks
 from gojira.config import Config, load_config
+from gojira.sizing import agent_deploy
 from gojira.sizing import profile as sizing_profile
 from gojira.sizing import service as sizing_service
 from gojira.opinions import WORKLOAD_CLASSES
@@ -69,8 +70,32 @@ def create_app(
         return TEMPLATES.TemplateResponse(
             request,
             "clusters.html",
-            {"clusters": service.list_clusters(session), "error": error},
+            {
+                "clusters": service.list_clusters(session),
+                "agents": sizing_service.agent_tokens_by_cluster(session),
+                "error": error,
+            },
         )
+
+    @app.post("/clusters/{cluster_id}/deploy-agent")
+    def deploy_agent(cluster_id: int, request: Request, session: Session = Depends(get_session)):
+        cluster = session.get(models.Cluster, cluster_id)
+        if cluster is None:
+            return RedirectResponse("/clusters?error=no such cluster", status_code=303)
+        clients = request.app.state.clients
+        try:
+            msg = agent_deploy.deploy_agent(
+                session,
+                cluster,
+                gcp=clients.gcp,
+                kubectl=clients.kubectl_for(cluster),
+                sizing=request.app.state.config.sizing,
+            )
+            log.info("%s", msg)
+        except Exception as exc:
+            log.warning("agent deploy to %s failed: %s", cluster.name, exc)
+            return RedirectResponse(f"/clusters?error=Agent deploy failed: {exc}", status_code=303)
+        return RedirectResponse("/clusters", status_code=303)
 
     @app.post("/clusters")
     def add_cluster(
@@ -94,7 +119,7 @@ def create_app(
             )
         except Exception as exc:  # connectivity check or DB error → show it
             log.warning("cluster registration failed: %s", exc)
-            return RedirectResponse(f"/clusters?error={exc}", status_code=303)
+            return RedirectResponse(f"/clusters?error=Registration failed: {exc}", status_code=303)
         return RedirectResponse("/clusters", status_code=303)
 
     @app.get("/connect", response_class=HTMLResponse)
