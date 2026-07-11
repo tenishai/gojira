@@ -158,7 +158,7 @@ first sweep). Anything else that can compute a p95 can feed the loop too.
 | ✅ Capture: drift detection, capture PRs, central scheduler | proven live |
 | ✅ Rightsize: evidence API, recommender, one-PR resizing | proven live |
 | ✅ In-cluster usage agent (GMP/Prometheus → evidence, per cluster) | proven live |
-| ✅ One-button agent deploy + token rotation (Clusters page) | new |
+| ✅ One-button agent deploy + token rotation (Clusters page) | proven live |
 | 🔜 Public webhook ingress (auto PR-merge detection, regenerate-on-change) | buttons today |
 | 🔜 Guard: Kyverno admission policies, `gojira adopt` | designed |
 
