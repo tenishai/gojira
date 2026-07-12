@@ -23,7 +23,8 @@ locals {
 
   # Broad because Gojira creates GSAs/WIF/AR and sets project IAM. Sandbox only.
   gojira_roles = [
-    "roles/container.developer",            # kubectl apply to the cluster
+    "roles/container.admin",                # kubectl apply, incl. the cluster-scoped
+                                            # RBAC the agent deploy writes (finding #11)
     "roles/artifactregistry.admin",         # create per-app AR repos, push images
     "roles/iam.serviceAccountAdmin",        # create per-app deploy GSAs
     "roles/iam.workloadIdentityPoolAdmin",  # create the GitHub OIDC WIF pool/provider

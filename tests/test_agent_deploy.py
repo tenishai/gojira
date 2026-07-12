@@ -41,8 +41,10 @@ def sizing(**over) -> SizingConfig:
 
 
 def objects(kubectl) -> dict[str, dict]:
-    """kind → object from the last applied manifest stream."""
-    return {d["kind"]: d for d in yaml.safe_load_all(kubectl.applied[-1])}
+    """kind → object across the applied manifest streams of the last deploy
+    (RBAC and workload are applied separately — see finding #11 ordering)."""
+    docs = [d for m in kubectl.applied[-2:] for d in yaml.safe_load_all(m)]
+    return {d["kind"]: d for d in docs}
 
 
 def test_deploy_applies_the_agent_and_starts_a_sweep(session, cluster):
@@ -106,6 +108,24 @@ def test_operator_prometheus_url_wins_over_gmp_default(session, cluster):
     secret = objects(kubectl)["Secret"]["stringData"]
     assert secret["prometheus_url"] == "http://prom:9090"
     assert secret["prometheus_auth"] == "none"
+
+
+def test_forbidden_cluster_write_never_rotates_a_working_token(session, cluster):
+    """Finding #11: RBAC apply is the permission probe. If the platform can't
+    write to the cluster, the incumbent agent must keep its valid token."""
+    from gojira.k8s import K8sError
+
+    class ForbiddenKubectl(FakeKubectlClient):
+        def apply(self, manifest):
+            raise K8sError("clusterroles.rbac.authorization.k8s.io is forbidden")
+
+    gcp, kubectl = FakeGCPClient(), FakeKubectlClient()
+    deploy_agent(session, cluster, gcp=gcp, kubectl=kubectl, sizing=sizing())
+    incumbent = session.scalar(select(AgentToken)).token_sha256
+
+    with pytest.raises(K8sError, match="forbidden"):
+        deploy_agent(session, cluster, gcp=gcp, kubectl=ForbiddenKubectl(), sizing=sizing())
+    assert session.scalar(select(AgentToken)).token_sha256 == incumbent
 
 
 def test_missing_image_refuses_before_touching_anything(session, cluster):

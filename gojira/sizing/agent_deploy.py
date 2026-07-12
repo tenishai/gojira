@@ -47,10 +47,11 @@ def _wif_member(project: str, project_number: str) -> str:
     )
 
 
-def render_manifests(cluster: Cluster, token: str, sizing: SizingConfig) -> list[dict]:
-    """The agent's desired state on the target cluster, as parsed objects."""
+def render_rbac_manifests() -> list[dict]:
+    """Identity + read grants — everything that needs no token. Applied first:
+    it doubles as the permission probe, so a Forbidden here aborts the deploy
+    before the old token has been rotated away (finding #11)."""
     meta = {"name": AGENT_NAME, "namespace": AGENT_NAMESPACE}
-    prometheus_url = sizing.agent_prometheus_url or _gmp_url(cluster.gcp_project)
     return [
         {"apiVersion": "v1", "kind": "ServiceAccount", "metadata": dict(meta)},
         {
@@ -75,6 +76,14 @@ def render_manifests(cluster: Cluster, token: str, sizing: SizingConfig) -> list
                 {"kind": "ServiceAccount", "name": AGENT_NAME, "namespace": AGENT_NAMESPACE}
             ],
         },
+    ]
+
+
+def render_workload_manifests(cluster: Cluster, token: str, sizing: SizingConfig) -> list[dict]:
+    """The Secret (carrying the fresh token) and the CronJob that consumes it."""
+    meta = {"name": AGENT_NAME, "namespace": AGENT_NAMESPACE}
+    prometheus_url = sizing.agent_prometheus_url or _gmp_url(cluster.gcp_project)
+    return [
         {
             "apiVersion": "v1",
             "kind": "Secret",
@@ -169,11 +178,15 @@ def deploy_agent(
             "image in your registry (see the gojira-sizing-agent repo)"
         )
 
-    token = mint_agent_token(session, cluster)
-    manifests = render_manifests(cluster, token, sizing)
-
+    # RBAC first, token after: the first apply is also the permission probe
+    # (cluster-scoped RBAC needs container.admin — finding #11). If it fails,
+    # a previously working agent keeps its still-valid token.
     kubectl.ensure_namespace(AGENT_NAMESPACE, {"app.kubernetes.io/managed-by": "gojira"})
-    kubectl.apply(yaml.safe_dump_all(manifests, sort_keys=False))
+    kubectl.apply(yaml.safe_dump_all(render_rbac_manifests(), sort_keys=False))
+
+    token = mint_agent_token(session, cluster)
+    kubectl.apply(yaml.safe_dump_all(render_workload_manifests(cluster, token, sizing),
+                                     sort_keys=False))
 
     member = _wif_member(cluster.gcp_project, gcp.project_number(cluster.gcp_project))
     if not gcp.project_has_binding(cluster.gcp_project, member, MONITORING_ROLE):
