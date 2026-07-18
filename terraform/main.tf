@@ -22,6 +22,7 @@ locals {
   ]
 
   # Broad because Gojira creates GSAs/WIF/AR and sets project IAM. Sandbox only.
+  # KEEP IN SYNC with scripts/prepare-project.sh (the brownfield path).
   gojira_roles = [
     "roles/container.admin",                # kubectl apply, incl. the cluster-scoped
                                             # RBAC the agent deploy writes (finding #11)
