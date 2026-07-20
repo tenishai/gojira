@@ -446,16 +446,19 @@ class OpenSetupPr:
     name = "open_setup_pr"
 
     def check(self, ctx: ProvisionContext) -> str | None:
-        url = _github(ctx).existing_pr(ctx.app.repo_full_name, SETUP_BRANCH)
-        if url:
-            ctx.app.setup_pr_url = url
-        return url
+        # An open setup PR is NOT proof the branch matches the render — after a
+        # generator upgrade, Retry must refresh it in place (finding #13: the
+        # old check treated PR-exists as done, so re-provision regenerated the
+        # workdir and then threw it away). apply() is idempotent: it pushes
+        # only when the render actually changed something.
+        return None
 
     def apply(self, ctx: ProvisionContext) -> str:
         if ctx.workdir is None:
             raise ValueError("open_setup_pr requires ctx.workdir")
         gh = _github(ctx)
         repo = ctx.app.repo_full_name
+        existing = gh.existing_pr(repo, SETUP_BRANCH)
         committed = gh.commit_all(ctx.workdir, "Add Gojira deploy config")
         if not committed:
             # Re-onboard of an already-configured repo: the render matches what
@@ -467,6 +470,10 @@ class OpenSetupPr:
             ctx.app.setup_pr_url = None
             return "up-to-date (no setup PR needed)"
         gh.push(ctx.workdir, SETUP_BRANCH)
+        if existing:
+            # Same PR, fresh content — the branch was force-pushed under it.
+            ctx.app.setup_pr_url = existing
+            return f"refreshed {existing}"
         base = gh.default_branch(repo)
         envs = ", ".join(
             f"`{e.name}`→`{e.cluster.name}`" for e in order_by_promotion(ctx.environments)
