@@ -84,6 +84,38 @@ def read_overrides(gojira_yaml_text: str) -> Overrides | None:
     )
 
 
+class DataMount(BaseModel):
+    """A persistent volume the app needs mounted (approval DBs, caches)."""
+
+    pvc: str   # claim name — the PVC object itself stays app-authored
+    path: str  # mount path inside the container
+
+
+def read_app_needs(gojira_yaml_text: str) -> dict:
+    """The app-needs keys from a repo's gojira.yaml, as GeneratorSpec updates.
+
+    Finding #12: real apps arrive with secrets delivery, identity, and state.
+    These keys are the contract for the parts that must render inside Gojira's
+    deployment; the objects they reference (ExternalSecret, ServiceAccount,
+    PVC) stay app-authored and are preserved by preserve_resources().
+    """
+    try:
+        doc = yaml.safe_load(gojira_yaml_text) or {}
+    except yaml.YAMLError:
+        return {}
+    if not isinstance(doc, dict):
+        return {}
+    needs: dict = {}
+    if isinstance(doc.get("secrets_from"), list):
+        needs["secrets_from"] = [str(s) for s in doc["secrets_from"] if s]
+    if doc.get("service_account"):
+        needs["service_account"] = str(doc["service_account"])
+    mount = doc.get("data_mount")
+    if isinstance(mount, dict) and mount.get("pvc") and mount.get("path"):
+        needs["data_mount"] = DataMount(pvc=str(mount["pvc"]), path=str(mount["path"]))
+    return needs
+
+
 class GeneratorSpec(BaseModel):
     app: str
     repo_full_name: str
@@ -92,6 +124,12 @@ class GeneratorSpec(BaseModel):
     default_branch: str = "main"
     schedule: str | None = None  # cron class only
     overrides: Overrides | None = None  # from the repo's gojira.yaml, if any
+    # App needs (finding #12) — sourced from the repo's gojira.yaml, like
+    # overrides. Rendered into the deployment; referenced objects stay
+    # app-authored.
+    secrets_from: list[str] = []
+    service_account: str = ""
+    data_mount: DataMount | None = None
 
     @model_validator(mode="after")
     def validate_spec(self):
@@ -201,6 +239,42 @@ def preserve_patches(existing_text: str, rendered_text: str, keep_path=None) -> 
     for p in keep:
         lines.append(f"  - path: {p['path']}")
     sep = "" if rendered_text.endswith("\n") else "\n"
+    return f"{rendered_text}{sep}" + "\n".join(lines) + "\n"
+
+
+def preserve_resources(existing_text: str, rendered_text: str, file_exists) -> str:
+    """Carry an existing kustomization's app-authored `resources:` entries into
+    a fresh render.
+
+    Finding #12: the generator does not own the whole manifest tree. Apps
+    arrive with objects Gojira doesn't model — ExternalSecrets, ServiceAccounts,
+    PVCs — and regeneration must not orphan them (the files survive on disk but
+    silently leave the build, which is how Iris lost her Slack tokens).
+
+    `file_exists(entry) -> bool` drops entries whose file is gone (same
+    rename-safety stance as preserve_patches: a stale entry hard-fails the
+    whole kustomize build). Entries the render already produces are not
+    duplicated. Appended textually; the render's comments survive.
+    """
+    try:
+        existing = yaml.safe_load(existing_text) or {}
+    except yaml.YAMLError:
+        return rendered_text  # unparseable old file — regenerate clean
+    if not isinstance(existing, dict):
+        return rendered_text
+    entries = [r for r in existing.get("resources") or [] if isinstance(r, str)]
+    if not entries:
+        return rendered_text
+
+    rendered = yaml.safe_load(rendered_text) or {}
+    have = set(rendered.get("resources") or [])
+    keep = [e for e in entries if e not in have and file_exists(e)]
+    if not keep:
+        return rendered_text
+
+    sep = "" if rendered_text.endswith("\n") else "\n"
+    lines = ["  # app-authored resources, preserved by Gojira:"]
+    lines += [f"  - {e}" for e in keep]
     return f"{rendered_text}{sep}" + "\n".join(lines) + "\n"
 
 

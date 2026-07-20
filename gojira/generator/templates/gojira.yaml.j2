@@ -12,6 +12,15 @@ environments:
 {% if spec.schedule %}
 schedule: "{{ spec.schedule }}"
 {% endif %}
+{% if spec.service_account %}
+service_account: {{ spec.service_account }}
+{% endif %}
+{% if spec.secrets_from %}
+secrets_from: [{{ spec.secrets_from | join(", ") }}]
+{% endif %}
+{% if spec.data_mount %}
+data_mount: { pvc: {{ spec.data_mount.pvc }}, path: {{ spec.data_mount.path }} }
+{% endif %}
 {% if spec.overrides %}
 overrides:
 {% if spec.overrides.requests %}
