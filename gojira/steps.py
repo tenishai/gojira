@@ -444,6 +444,13 @@ class OpenSetupPr:
     """Commit the generated tree, push the setup branch, open the setup PR."""
 
     name = "open_setup_pr"
+    # Finding #13, the real root: a DONE ledger row must never skip this step.
+    # Its "resource" is the setup branch/PR, whose freshness the ledger cannot
+    # know — after a generator upgrade the same PR needs new content. Like the
+    # workdir steps (finding #6), check()/apply() re-decide against the real
+    # world each run; apply() is idempotent (up-to-date concludes, changed
+    # content force-pushes under the same PR).
+    ephemeral = True
 
     def check(self, ctx: ProvisionContext) -> str | None:
         # An open setup PR is NOT proof the branch matches the render — after a
