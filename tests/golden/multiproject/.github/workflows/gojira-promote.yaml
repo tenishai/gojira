@@ -46,6 +46,7 @@ jobs:
           cluster_name: qa-gke
           location: us-central1
           project_id: example-project
+          use_dns_based_endpoint: true  # see gojira-ci.yaml (finding #14)
 
       - name: Deploy to qa
         run: |
@@ -117,6 +118,7 @@ jobs:
           cluster_name: prod-gke
           location: us-central1
           project_id: prod-project
+          use_dns_based_endpoint: true  # see gojira-ci.yaml (finding #14)
 
       - name: Deploy to prod
         run: |

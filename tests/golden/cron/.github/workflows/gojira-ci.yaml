@@ -44,6 +44,11 @@ jobs:
           cluster_name: dev-gke
           location: us-central1
           project_id: example-project
+          # IAM-authenticated DNS endpoint: works for private control planes
+          # (GitHub runners can't reach a private IP) and public ones alike.
+          # The provisioner ensures DNS access is enabled on every registered
+          # cluster (finding #14).
+          use_dns_based_endpoint: true
 
       - name: Deploy to dev
         run: |

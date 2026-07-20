@@ -87,6 +87,19 @@ class GCPClient(ABC):
         """Populate local kubeconfig for the cluster; return the context name."""
         ...
 
+    @abstractmethod
+    def dns_access_enabled(self, project: str, location: str, cluster: str) -> bool: ...
+
+    @abstractmethod
+    def enable_dns_access(self, project: str, location: str, cluster: str) -> None:
+        """Allow external traffic on the cluster's IAM-authenticated DNS endpoint.
+
+        Generated CI reaches control planes exclusively through it (finding
+        #14): GitHub runners cannot reach a private endpoint IP, and the DNS
+        endpoint authenticates every request through IAM either way.
+        """
+        ...
+
 
 class GcloudClient(GCPClient):
     """gcloud-backed GCPClient. Each method maps to one or two gcloud commands."""
@@ -230,6 +243,20 @@ class GcloudClient(GCPClient):
             f"--location={location}", f"--project={project}",
         )
         return f"gke_{project}_{location}_{cluster}"
+
+    def dns_access_enabled(self, project: str, location: str, cluster: str) -> bool:
+        out = self._exec(
+            "container", "clusters", "describe", cluster,
+            f"--location={location}", f"--project={project}",
+            "--format=value(controlPlaneEndpointsConfig.dnsEndpointConfig.allowExternalTraffic)",
+        )
+        return out.strip().lower() == "true"
+
+    def enable_dns_access(self, project: str, location: str, cluster: str) -> None:
+        self._exec(
+            "container", "clusters", "update", cluster,
+            f"--location={location}", f"--project={project}", "--enable-dns-access",
+        )
 
 
 def _policy_has(policy_json: str, member: str, role: str) -> bool:
