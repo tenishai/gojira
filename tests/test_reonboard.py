@@ -177,3 +177,24 @@ def test_retry_refreshes_an_open_setup_pr(session, tmp_path):
     assert not [c for c in gh.calls if c.startswith("open_pr")]                  # no duplicate PR
     assert app.status == AppStatus.AWAITING_PR
     assert app.setup_pr_url == "https://github.com/acme/gojira-demo/pull/3"
+
+
+def test_second_provision_run_still_refreshes_the_pr(session, tmp_path):
+    """Finding #13's real root: the DONE ledger row from the first run must not
+    skip open_setup_pr on a Retry — the step is ephemeral, like the workdir
+    steps, because the ledger cannot know whether the branch matches a newer
+    render. Two runs: one PR opened, two pushes."""
+    app = _seed(session)
+    app.setup_pr_url = None
+    session.commit()
+    gh = FakeGitHubClient()
+    for _ in (1, 2):
+        result = provision_app(
+            session, app,
+            gcp=FakeGCPClient(), github=gh,
+            kubectl_for=KubectlFactory(), config=Config(), workdir=tmp_path,
+        )
+        assert result.completed
+    assert len([c for c in gh.calls if c.startswith("open_pr")]) == 1
+    assert len([c for c in gh.calls if c.startswith("push")]) == 2
+    assert app.setup_pr_url and "/pull/" in app.setup_pr_url
