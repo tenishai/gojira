@@ -246,6 +246,27 @@ class EnsureArtifactRepo:
 # --- per-environment scope: cluster setup ------------------------------------
 
 
+class EnsureClusterDnsAccess:
+    """Generated CI reaches this env's control plane through GKE's DNS-based
+    endpoint — the only path that works for private clusters from GitHub
+    runners, and IAM-authenticated everywhere (finding #14). Ensure it's on."""
+
+    name = "ensure_cluster_dns_access"
+
+    def check(self, ctx: ProvisionContext) -> str | None:
+        env = _env(ctx)
+        c = env.cluster
+        if _gcp(ctx).dns_access_enabled(c.gcp_project, c.location, c.gke_cluster):
+            return f"{c.gke_cluster}: dns access on"
+        return None
+
+    def apply(self, ctx: ProvisionContext) -> str:
+        env = _env(ctx)
+        c = env.cluster
+        _gcp(ctx).enable_dns_access(c.gcp_project, c.location, c.gke_cluster)
+        return f"{c.gke_cluster}: dns access enabled"
+
+
 class EnsureNamespace:
     """Create the env's namespace on its cluster, labeled as managed.
 
@@ -596,8 +617,8 @@ def per_project_steps() -> list[Step]:
 
 
 def per_env_steps() -> list[Step]:
-    """Per-environment cluster setup: namespace + any cross-project promote grant."""
-    return [EnsureNamespace(), GrantPromoteSourceReader()]
+    """Per-environment cluster setup: DNS access for CI, namespace, promote grant."""
+    return [EnsureClusterDnsAccess(), EnsureNamespace(), GrantPromoteSourceReader()]
 
 
 def per_app_steps() -> list[Step]:
