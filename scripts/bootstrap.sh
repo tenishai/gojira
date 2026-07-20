@@ -42,7 +42,12 @@ for tool in gcloud kubectl; do
 done
 
 step "1/5 cluster credentials ($CLUSTER @ $PROJECT/$REGION)"
-gcloud container clusters get-credentials "$CLUSTER" --region "$REGION" --project "$PROJECT"
+# GOJIRA_DNS_ENDPOINT=1: reach a private-endpoint cluster over GKE's
+# IAM-authenticated DNS endpoint (brownfield clusters often have no public
+# endpoint and a VPN-only private one; the operator machine may be on
+# neither). Requires allowExternalTraffic on the cluster's dnsEndpointConfig.
+gcloud container clusters get-credentials "$CLUSTER" --region "$REGION" --project "$PROJECT" \
+  ${GOJIRA_DNS_ENDPOINT:+--dns-endpoint}
 
 step "2/5 build + push image via Cloud Build (avoids the ARM/amd64 trap)"
 gcloud services enable cloudbuild.googleapis.com --project "$PROJECT" --quiet
