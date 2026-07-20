@@ -132,6 +132,21 @@ drift capture and the rightsizing loop end to end — is in
 rebuilding from nothing is the same two commands; the platform's state that
 matters lives in your repos, and survives.
 
+### Existing cluster (brownfield)
+
+Already have a cluster that terraform didn't create? Swap the terraform step
+for [scripts/prepare-project.sh](scripts/prepare-project.sh) — it grants the
+same platform identity (APIs, GSA, roles, AR, Workload Identity) into your
+existing project, then `bootstrap.sh` proceeds unchanged with `CLUSTER`
+pointed at your cluster:
+
+```bash
+PROJECT=<your-project> REGION=<region> ./scripts/prepare-project.sh
+PROJECT=<your-project> REGION=<region> CLUSTER=<your-cluster> \
+  GOJIRA_GITHUB_APP_ID=<app id> GOJIRA_GITHUB_APP_PEM=./github-app.pem \
+  ./scripts/bootstrap.sh
+```
+
 ## Feeding the rightsizing loop
 
 Evidence is one JSON document per app/env/window — Kubernetes quantity strings,
