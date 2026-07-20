@@ -33,9 +33,12 @@ jobs:
         run: gcloud auth configure-docker {{ env.ar_host }} --quiet
 
       - name: Build and push image
+        # AR_TOKEN lets a Dockerfile resolve private Artifact Registry package
+        # indexes (pip --extra-index-url, npm) with this workflow's own WIF
+        # identity. Dockerfiles that declare no such ARG ignore it.
         run: |
           TAG="${GITHUB_SHA::12}"
-          docker build -t "$IMAGE:$TAG" .
+          docker build --build-arg AR_TOKEN="$(gcloud auth print-access-token)" -t "$IMAGE:$TAG" .
           docker push "$IMAGE:$TAG"
 
       - uses: google-github-actions/get-gke-credentials@v2
