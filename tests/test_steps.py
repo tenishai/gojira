@@ -425,3 +425,26 @@ def test_provision_app_resumes_after_failure(session, single_env, tmp_path, monk
     assert second.completed
     assert app.status == AppStatus.AWAITING_PR
     assert gcp.calls == []  # nothing re-provisioned in GCP
+
+
+def test_dns_access_enabled_once_then_skipped(session_and_app=None):
+    """Finding #14: per-env step turns on the cluster's DNS-based endpoint —
+    generated CI's only path to a private control plane. Idempotent: second
+    provision run skips via check()."""
+    from gojira.steps import EnsureClusterDnsAccess
+    from tests.fakes import FakeGCPClient
+
+    class Env:
+        class cluster:
+            gcp_project, location, gke_cluster = "p", "us-east4", "g"
+
+    class Ctx:
+        environment = Env()
+        clients = {"gcp": FakeGCPClient()}
+
+    step = EnsureClusterDnsAccess()
+    ctx = Ctx()
+    assert step.check(ctx) is None                       # not enabled yet
+    assert "dns access enabled" in step.apply(ctx)
+    assert ctx.clients["gcp"].dns_access == {("p", "us-east4", "g")}
+    assert step.check(ctx) is not None                   # now skips
