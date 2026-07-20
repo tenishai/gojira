@@ -22,6 +22,8 @@ from gojira.generator import (
     EnvSpec,
     GeneratorSpec,
     preserve_patches,
+    preserve_resources,
+    read_app_needs,
     read_overrides,
     render,
 )
@@ -338,15 +340,33 @@ class GenerateArtifacts:
         if ctx.workdir is None:
             raise ValueError("generate_artifacts requires ctx.workdir (the repo working tree)")
         spec = build_spec(ctx, _gcp(ctx))
-        # Honor the repo's justified overrides: regeneration must produce the
-        # sized manifests, not revert them to class defaults.
+        # Honor the repo's contract: regeneration must produce the sized
+        # manifests (overrides) and the app's declared needs (finding #12),
+        # not revert them to bare class defaults.
         existing_spec = ctx.workdir / "gojira.yaml"
         if existing_spec.exists():
+            text = existing_spec.read_text()
             spec = spec.model_copy(
-                update={"overrides": read_overrides(existing_spec.read_text())}
+                update={"overrides": read_overrides(text), **read_app_needs(text)}
             )
         files = render(spec)
         rendered_targets = _rendered_targets(files)
+
+        # Finding #12: app-authored resources (ExternalSecrets, ServiceAccounts,
+        # PVCs) survive regeneration. Their (kind, name) also count as rendered
+        # for the orphaned-patch check — a patch targeting a preserved resource
+        # is not orphaned.
+        base_dir = ctx.workdir / "k8s" / "base"
+        base_kust = base_dir / "kustomization.yaml"
+        base_key = "k8s/base/kustomization.yaml"
+        if base_kust.exists() and base_key in files:
+            files[base_key] = preserve_resources(
+                base_kust.read_text(),
+                files[base_key],
+                file_exists=lambda e: (base_dir / e).is_file(),
+            )
+            rendered_targets |= _preserved_targets(base_dir, files[base_key])
+
         for relpath, content in files.items():
             target = ctx.workdir / relpath
             # Re-onboard case: an existing overlay kustomization may carry
@@ -379,6 +399,25 @@ def _rendered_targets(files: dict[str, str]) -> set[tuple[str, str]]:
                 if doc and doc.get("kind") and doc.get("metadata", {}).get("name"):
                     targets.add((doc["kind"], doc["metadata"]["name"]))
         except yaml.YAMLError:
+            continue
+    return targets
+
+
+def _preserved_targets(base_dir, kustomization_text: str) -> set[tuple[str, str]]:
+    """(kind, name) of objects in the preserved (non-generated) resource files
+    listed by the final base kustomization. Unreadable files contribute nothing."""
+    targets = set()
+    try:
+        entries = (yaml.safe_load(kustomization_text) or {}).get("resources") or []
+    except yaml.YAMLError:
+        return targets
+    for entry in entries:
+        path = base_dir / str(entry)
+        try:
+            for doc in yaml.safe_load_all(path.read_text()):
+                if doc and doc.get("kind") and doc.get("metadata", {}).get("name"):
+                    targets.add((doc["kind"], doc["metadata"]["name"]))
+        except (OSError, yaml.YAMLError):
             continue
     return targets
 

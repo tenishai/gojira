@@ -25,12 +25,27 @@ spec:
         prometheus.io/port: "{{ port }}"
         prometheus.io/path: /metrics
     spec:
+{% if spec.service_account %}
+      serviceAccountName: {{ spec.service_account }}
+{% endif %}
       containers:
         - name: app
           image: gojira-app
           ports:
             - name: http
               containerPort: {{ port }}
+{% if spec.secrets_from %}
+          envFrom:
+{% for secret in spec.secrets_from %}
+            - secretRef:
+                name: {{ secret }}
+{% endfor %}
+{% endif %}
+{% if spec.data_mount %}
+          volumeMounts:
+            - name: data
+              mountPath: {{ spec.data_mount.path }}
+{% endif %}
           resources:
             requests:
               cpu: {{ cls.requests.cpu }}
@@ -71,4 +86,10 @@ spec:
 {% endif %}
             initialDelaySeconds: 15
             periodSeconds: 20
+{% endif %}
+{% if spec.data_mount %}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ spec.data_mount.pvc }}
 {% endif %}
