@@ -24,6 +24,7 @@ class FakeGCPClient(GCPClient):
         self.sa_bindings = set(e.get("sa_bindings", []))
         self.project_bindings = set(e.get("project_bindings", []))  # (project, member, role)
         self.artifact_repos = set(e.get("artifact_repos", []))
+        self.dns_access = set(e.get("dns_access", []))  # (project, location, cluster)
         self.calls: list[str] = []
 
     def project_number(self, project):
@@ -83,6 +84,13 @@ class FakeGCPClient(GCPClient):
     def get_gke_credentials(self, project, location, cluster):
         self.calls.append(f"get_creds:{cluster}")
         return f"gke_{project}_{location}_{cluster}"
+
+    def dns_access_enabled(self, project, location, cluster):
+        return (project, location, cluster) in self.dns_access
+
+    def enable_dns_access(self, project, location, cluster):
+        self.calls.append(f"enable_dns:{cluster}")
+        self.dns_access.add((project, location, cluster))
 
 
 class FakeKubectlClient(KubectlClient):
