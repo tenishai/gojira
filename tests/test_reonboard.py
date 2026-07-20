@@ -158,3 +158,22 @@ def test_rename_drops_orphaned_patch_but_keeps_live_one(tmp_path):
     )
     assert "drift-new.yaml" in out       # live target: kept
     assert "drift-old.yaml" not in out   # orphaned by rename: dropped
+
+
+def test_retry_refreshes_an_open_setup_pr(session, tmp_path):
+    """Finding #13: a Retry after a generator upgrade must force-push fresh
+    content under the OPEN setup PR — not skip because the PR exists (which
+    silently discarded the regenerated tree on the Fubo pilot)."""
+    app = _seed(session)
+    gh = FakeGitHubClient(
+        existing_pr="https://github.com/acme/gojira-demo/pull/3")  # PR open, stale
+    result = provision_app(
+        session, app,
+        gcp=FakeGCPClient(), github=gh,
+        kubectl_for=KubectlFactory(), config=Config(), workdir=tmp_path,
+    )
+    assert result.completed
+    assert gh.pushed is not None                      # branch force-pushed
+    assert not [c for c in gh.calls if c.startswith("open_pr")]                  # no duplicate PR
+    assert app.status == AppStatus.AWAITING_PR
+    assert app.setup_pr_url == "https://github.com/acme/gojira-demo/pull/3"
