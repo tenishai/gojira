@@ -36,8 +36,9 @@ jobs:
         run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
       - name: Build and push image
+        # AR_TOKEN: see ci.yaml — private AR package indexes via WIF.
         run: |
-          docker build -t "$IMAGE:$GITHUB_REF_NAME" .
+          docker build --build-arg AR_TOKEN="$(gcloud auth print-access-token)" -t "$IMAGE:$GITHUB_REF_NAME" .
           docker push "$IMAGE:$GITHUB_REF_NAME"
 
       - uses: google-github-actions/get-gke-credentials@v2
