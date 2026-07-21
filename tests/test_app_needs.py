@@ -50,6 +50,9 @@ def test_needs_render_into_the_deployment():
     assert pod["volumes"] == [
         {"name": "data", "persistentVolumeClaim": {"claimName": "iris-data"}}
     ]
+    # finding #15: a mounted PVC without fsGroup is unwritable for non-root
+    # images — the sandbox's finding-#2 lesson, encoded in the vocabulary
+    assert pod["securityContext"] == {"fsGroup": 999}
 
 
 def test_needs_absent_renders_no_stubs():
@@ -66,7 +69,10 @@ def test_contract_round_trips():
     got = read_app_needs(rendered)
     assert got["secrets_from"] == ["iris-secrets"]
     assert got["service_account"] == "iris"
-    assert got["data_mount"] == DataMount(pvc="iris-data", path="/data")
+    assert got["data_mount"] == DataMount(pvc="iris-data", path="/data", fs_group=999)
+    # explicit fs_group round-trips too
+    assert read_app_needs("data_mount: { pvc: d, path: /x, fs_group: 10001 }")[
+        "data_mount"].fs_group == 10001
     assert read_app_needs(render(spec())["gojira.yaml"]) == {}
 
 

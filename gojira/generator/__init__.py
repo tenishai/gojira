@@ -89,6 +89,11 @@ class DataMount(BaseModel):
 
     pvc: str   # claim name — the PVC object itself stays app-authored
     path: str  # mount path inside the container
+    # fsGroup for the pod: kubelet chowns the volume to :fs_group and adds it
+    # to the containers' supplemental groups, so any non-root image uid can
+    # write regardless of its value (finding #15 — the sandbox's fsGroup
+    # lesson, relearned by the first fleet app with state).
+    fs_group: int = 999
 
 
 def read_app_needs(gojira_yaml_text: str) -> dict:
@@ -112,7 +117,10 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
         needs["service_account"] = str(doc["service_account"])
     mount = doc.get("data_mount")
     if isinstance(mount, dict) and mount.get("pvc") and mount.get("path"):
-        needs["data_mount"] = DataMount(pvc=str(mount["pvc"]), path=str(mount["path"]))
+        needs["data_mount"] = DataMount(
+            pvc=str(mount["pvc"]), path=str(mount["path"]),
+            **({"fs_group": int(mount["fs_group"])} if str(mount.get("fs_group", "")).isdigit() else {}),
+        )
     return needs
 
 
