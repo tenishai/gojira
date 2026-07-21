@@ -19,7 +19,7 @@ service_account: {{ spec.service_account }}
 secrets_from: [{{ spec.secrets_from | join(", ") }}]
 {% endif %}
 {% if spec.data_mount %}
-data_mount: { pvc: {{ spec.data_mount.pvc }}, path: {{ spec.data_mount.path }} }
+data_mount: { pvc: {{ spec.data_mount.pvc }}, path: {{ spec.data_mount.path }}, fs_group: {{ spec.data_mount.fs_group }} }
 {% endif %}
 {% if spec.overrides %}
 overrides:
