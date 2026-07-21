@@ -28,6 +28,10 @@ spec:
 {% if spec.service_account %}
       serviceAccountName: {{ spec.service_account }}
 {% endif %}
+{% if spec.data_mount %}
+      securityContext:
+        fsGroup: {{ spec.data_mount.fs_group }}
+{% endif %}
       containers:
         - name: app
           image: gojira-app
