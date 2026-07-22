@@ -18,6 +18,12 @@ service_account: {{ spec.service_account }}
 {% if spec.secrets_from %}
 secrets_from: [{{ spec.secrets_from | join(", ") }}]
 {% endif %}
+{% if spec.env_vars %}
+env:
+{% for k, v in spec.env_vars | dictsort %}
+  {{ k }}: {{ v | tojson }}
+{% endfor %}
+{% endif %}
 {% if spec.data_mount %}
 data_mount: { pvc: {{ spec.data_mount.pvc }}, path: {{ spec.data_mount.path }}, fs_group: {{ spec.data_mount.fs_group }} }
 {% endif %}

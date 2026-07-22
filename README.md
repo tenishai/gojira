@@ -76,6 +76,7 @@ the next CI run deploys the new size.
 |---|---|---|---|---|
 | `web` | 250m / 256Mi | 500m / 512Mi | 70% CPU, 2–10 | readiness + liveness HTTP `/health` |
 | `worker` | 500m / 512Mi | 1 / 1Gi | — | liveness TCP |
+| `agent` | 250m / 512Mi | 1 / 1Gi | — (Recreate, single consumer) | liveness TCP |
 | `cron` | 250m / 256Mi | 1 / 1Gi | — | — |
 | `heavy` | 1 / 1Gi | 2 / 2Gi | 70% CPU, 2–6 | readiness + liveness |
 | `gpu` | 1 / 4Gi + 1 GPU | 2 / 8Gi + 1 GPU | — | liveness |

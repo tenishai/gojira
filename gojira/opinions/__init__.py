@@ -35,6 +35,11 @@ class WorkloadClass(BaseModel):
     limits: Resources
     hpa: HPA | None = None
     probes: dict[str, Probe] = {}
+    # Deployment strategy override; None = Kubernetes default (RollingUpdate).
+    # The agent class sets Recreate: Slack Socket Mode tolerates exactly one
+    # live consumer per app token, and RollingUpdate's surge pod briefly runs
+    # two — events split round-robin during every deploy.
+    strategy: str | None = None
 
 
 class SizingOpinions(BaseModel):
@@ -53,4 +58,4 @@ def load_sizing() -> SizingOpinions:
     return SizingOpinions(ephemeral_storage=raw["ephemeral_storage"], classes=classes)
 
 
-WORKLOAD_CLASSES = ("web", "worker", "cron", "heavy", "gpu")
+WORKLOAD_CLASSES = ("web", "worker", "cron", "heavy", "gpu", "agent")

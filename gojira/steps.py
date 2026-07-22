@@ -268,20 +268,34 @@ class EnsureClusterDnsAccess:
 
 
 class EnsureNamespace:
-    """Create the env's namespace on its cluster, labeled as managed.
+    """Create the env's namespace on its cluster, labeled as managed plus the
+    operator's configured labels (defaults.namespace_labels — secrets
+    infrastructure often gates on these; missing labels mean ExternalSecrets
+    silently never sync).
 
     The kubectl client is bound to this env's cluster by the orchestrator.
+    An existing namespace with missing labels is NOT skipped: apply re-asserts
+    labels so already-provisioned namespaces converge on re-onboard.
     """
 
     name = "ensure_namespace"
 
+    def _labels(self, ctx: ProvisionContext) -> dict[str, str]:
+        return {**MANAGED_LABEL, **ctx.config.defaults.namespace_labels}
+
     def check(self, ctx: ProvisionContext) -> str | None:
         ns = _env(ctx).namespace
-        return ns if _kubectl(ctx).namespace_exists(ns) else None
+        kubectl = _kubectl(ctx)
+        if not kubectl.namespace_exists(ns):
+            return None
+        live = kubectl.get_resource(ns, "namespace", ns) or {}
+        have = live.get("metadata", {}).get("labels") or {}
+        want = self._labels(ctx)
+        return ns if all(have.get(k) == v for k, v in want.items()) else None
 
     def apply(self, ctx: ProvisionContext) -> str:
         ns = _env(ctx).namespace
-        _kubectl(ctx).ensure_namespace(ns, MANAGED_LABEL)
+        _kubectl(ctx).ensure_namespace(ns, self._labels(ctx))
         return ns
 
 
