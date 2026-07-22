@@ -115,6 +115,8 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
         needs["secrets_from"] = [str(s) for s in doc["secrets_from"] if s]
     if doc.get("service_account"):
         needs["service_account"] = str(doc["service_account"])
+    if isinstance(doc.get("env"), dict):
+        needs["env_vars"] = {str(k): str(v) for k, v in doc["env"].items()}
     mount = doc.get("data_mount")
     if isinstance(mount, dict) and mount.get("pvc") and mount.get("path"):
         needs["data_mount"] = DataMount(
@@ -138,6 +140,10 @@ class GeneratorSpec(BaseModel):
     secrets_from: list[str] = []
     service_account: str = ""
     data_mount: DataMount | None = None
+    # Plain, non-secret configuration (tenant identity, endpoints). Rendered
+    # inline into the deployment: config changes stay reviewed git commits,
+    # not secret-store writes (Rook's finding).
+    env_vars: dict[str, str] = {}
 
     @model_validator(mode="after")
     def validate_spec(self):
