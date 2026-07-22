@@ -116,6 +116,8 @@ class FakeKubectlClient(KubectlClient):
 
     def get_resource(self, namespace, kind, name):
         self.calls.append(f"get:{kind}/{name}")
+        if kind.lower() == "namespace" and name in self.namespaces:
+            return {"metadata": {"labels": dict(self.namespaces[name])}}
         return self.resources.get((namespace, kind.lower(), name))
 
     def apply(self, manifest):

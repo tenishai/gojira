@@ -209,3 +209,30 @@ def test_iris_shaped_repo_survives_onboarding(tmp_path):
     # and the contract round-trips through the regenerated gojira.yaml
     regenerated = (tmp_path / "gojira.yaml").read_text()
     assert read_app_needs(regenerated)["secrets_from"] == ["iris-secrets"]
+
+
+# --- tenant feedback round 1 (Rook) ---------------------------------------------
+
+
+def test_env_vars_render_inline_and_round_trip():
+    files = render(spec(env_vars={"AGENT_BUNDLE": "rook", "GCP_PROJECT_ID": "p"}))
+    dep = yaml.safe_load(files["k8s/base/deployment.yaml"])
+    env = dep["spec"]["template"]["spec"]["containers"][0]["env"]
+    assert {"name": "AGENT_BUNDLE", "value": "rook"} in env
+    assert read_app_needs(files["gojira.yaml"])["env_vars"] == {
+        "AGENT_BUNDLE": "rook", "GCP_PROJECT_ID": "p"}
+
+
+def test_agent_class_recreate_no_surge():
+    files = render(spec_class("agent"))
+    dep = yaml.safe_load(files["k8s/base/deployment.yaml"])
+    assert dep["spec"]["strategy"] == {"type": "Recreate"}
+    assert dep["spec"]["replicas"] == 1
+    # worker keeps the k8s default — no strategy block
+    worker = yaml.safe_load(render(spec_class("worker"))["k8s/base/deployment.yaml"])
+    assert "strategy" not in worker["spec"]
+
+
+def spec_class(cls_name):
+    s = spec()
+    return s.model_copy(update={"workload_class": cls_name})

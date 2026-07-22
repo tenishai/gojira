@@ -222,14 +222,16 @@ def test_ensure_namespace_creates_with_managed_label(single_env):
     assert kube.namespaces["clips"] == MANAGED_LABEL
 
 
-def test_ensure_namespace_skips_when_present(single_env):
+def test_ensure_namespace_skips_when_present_and_labeled(single_env):
+    # "exists" alone is not "done" anymore (Rook's finding): the namespace
+    # must also carry the managed + configured labels to be skipped.
     app, cluster, env = single_env
-    kube = FakeKubectlClient(existing={"clips": {"existing": "label"}})
+    kube = FakeKubectlClient(existing={"clips": {"gojira.dev/managed": "true"}})
     ctx = ProvisionContext(
         app=app, config=Config(), clients={"kubectl": kube}, environment=env, environments=[env]
     )
     assert EnsureNamespace().check(ctx) == "clips"
-    assert kube.calls == []
+    assert not any(c.startswith("ensure_ns") for c in kube.calls)
 
 
 def test_promote_reader_grant_noop_for_single_env(single_env):
@@ -448,3 +450,32 @@ def test_dns_access_enabled_once_then_skipped(session_and_app=None):
     assert "dns access enabled" in step.apply(ctx)
     assert ctx.clients["gcp"].dns_access == {("p", "us-east4", "g")}
     assert step.check(ctx) is not None                   # now skips
+
+
+def test_namespace_labels_stamped_and_converged():
+    """Rook's finding: secrets infra gates on namespace labels; the provisioner
+    stamps defaults.namespace_labels and re-asserts them on existing
+    namespaces (a label-less namespace is not 'done')."""
+    from gojira.config import Config
+    from gojira.steps import EnsureNamespace, MANAGED_LABEL
+    from tests.fakes import FakeKubectlClient
+
+    cfg = Config()
+    cfg.defaults.namespace_labels = {"fubo.tv/team": "sre"}
+
+    class Env:
+        namespace = "rook"
+
+    class Ctx:
+        environment = Env()
+        config = cfg
+        clients = {"kubectl": FakeKubectlClient(existing={"rook": {"app": "rook"}})}
+
+    step = EnsureNamespace()
+    ctx = Ctx()
+    assert step.check(ctx) is None            # exists but unlabeled → not done
+    step.apply(ctx)
+    kubectl = ctx.clients["kubectl"]
+    assert kubectl.namespaces["rook"]["fubo.tv/team"] == "sre"
+    assert kubectl.namespaces["rook"][next(iter(MANAGED_LABEL))] == "true"
+    assert step.check(ctx) == "rook"          # converged → done

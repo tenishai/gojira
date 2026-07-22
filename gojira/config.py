@@ -26,6 +26,11 @@ class DatabaseConfig(BaseModel):
 class DefaultsConfig(BaseModel):
     ar_location: str = "us-central1"
     environments: list[str] = ["dev", "qa", "prod"]
+    # Stamped on every namespace Gojira creates (and re-asserted on
+    # re-onboard). Secrets infrastructure commonly gates on namespace labels
+    # (e.g. an ESO ClusterSecretStore matching fubo.tv/team) — a missing
+    # label means ExternalSecrets silently never sync (Rook's finding).
+    namespace_labels: dict[str, str] = {}
 
 
 class DriftConfig(BaseModel):
