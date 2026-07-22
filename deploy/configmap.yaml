@@ -18,6 +18,9 @@ data:
     defaults:
       ar_location: us-central1
       environments: [dev, qa, prod]
+      # Labels stamped on every namespace Gojira creates — secrets infra
+      # (e.g. an ESO ClusterSecretStore) often gates on these:
+      # namespace_labels: { example.com/team: sre }
     # To enable the Clusters-page "Deploy agent" button, point sizing.agent_image
     # at your build of https://github.com/tenishai/gojira-sizing-agent:
     # sizing:
