@@ -126,6 +126,23 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
     return needs
 
 
+def read_app_class(gojira_yaml_text: str) -> str | None:
+    """The class: key from a repo's gojira.yaml, or None if absent/unusable.
+
+    Finding #16: the contract file promises "change the class here" — but the
+    generator took class from the DB (set at connect time) and regeneration
+    actively REVERTED a class change merged to main. The contract wins; the
+    DB converges (the finding-#10 lesson, applied to class)."""
+    try:
+        doc = yaml.safe_load(gojira_yaml_text) or {}
+    except yaml.YAMLError:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    cls = doc.get("class")
+    return str(cls) if cls else None
+
+
 class GeneratorSpec(BaseModel):
     app: str
     repo_full_name: str

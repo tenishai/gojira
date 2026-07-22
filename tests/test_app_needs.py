@@ -236,3 +236,53 @@ def test_agent_class_recreate_no_surge():
 def spec_class(cls_name):
     s = spec()
     return s.model_copy(update={"workload_class": cls_name})
+
+
+def test_class_change_in_contract_wins_over_db(tmp_path):
+    """Finding #16: 'change the class here' must be true — a class merged to
+    main regenerates the manifests and converges the DB, instead of the DB
+    silently reverting the contract."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from gojira.config import Config
+    from gojira.models import App, Base, Cluster, Environment
+    from gojira.provisioner import provision_app
+    from tests.fakes import FakeGCPClient, FakeGitHubClient, KubectlFactory
+
+    class AgentContractGitHub(FakeGitHubClient):
+        def clone(self, repo, workdir):
+            super().clone(repo, workdir)
+            (workdir / "gojira.yaml").write_text("app: iris\nclass: agent\n")
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine, expire_on_commit=False)() as session:
+        c = Cluster(name="fubo-dev", gcp_project="p", location="us-east4",
+                    gke_cluster="g", ar_repo="us-east4-docker.pkg.dev/p/apps")
+        session.add(c)
+        session.commit()
+        a = App(name="iris", repo_full_name="fubotv/infra-agent-iris",
+                installation_id=1, workload_class="worker")  # DB says worker
+        session.add(a)
+        session.commit()
+        session.add(Environment(app_id=a.id, name="dev", cluster_id=c.id, namespace="iris"))
+        session.commit()
+        result = provision_app(
+            session, a, gcp=FakeGCPClient(), github=AgentContractGitHub(),
+            kubectl_for=KubectlFactory(), config=Config(), workdir=tmp_path,
+        )
+        assert result.completed
+        assert a.workload_class == "agent"          # DB converged
+
+    dep = yaml.safe_load((tmp_path / "k8s/base/deployment.yaml").read_text())
+    assert dep["spec"]["strategy"] == {"type": "Recreate"}   # agent manifests
+    assert "class: agent" in (tmp_path / "gojira.yaml").read_text()  # not reverted
+
+
+def test_unknown_class_in_contract_falls_back_to_db():
+    from gojira.generator import read_app_class
+    assert read_app_class("class: warlock") == "warlock"  # reader is dumb...
+    # ...the guard lives in GenerateArtifacts (WORKLOAD_CLASSES check) — the
+    # spec keeps the DB class and provision proceeds instead of dying.
+    assert read_app_class("app: x") is None
