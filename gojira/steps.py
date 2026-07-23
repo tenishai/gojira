@@ -23,6 +23,7 @@ from gojira.generator import (
     GeneratorSpec,
     preserve_patches,
     preserve_resources,
+    read_app_class,
     read_app_needs,
     read_overrides,
     render,
@@ -30,6 +31,7 @@ from gojira.generator import (
 from gojira.github import SETUP_BRANCH, GitHubClient
 from gojira.k8s import KubectlClient
 from gojira.models import App, Environment
+from gojira.opinions import WORKLOAD_CLASSES
 from gojira.provisioner import ProvisionContext, Step
 
 log = logging.getLogger(__name__)
@@ -384,6 +386,16 @@ class GenerateArtifacts:
             spec = spec.model_copy(
                 update={"overrides": read_overrides(text), **read_app_needs(text)}
             )
+            # Finding #16: class belongs to the contract too. An unknown class
+            # is left to the DB (fail open with a log, not a dead provision).
+            repo_class = read_app_class(text)
+            if repo_class and repo_class != spec.workload_class:
+                if repo_class in WORKLOAD_CLASSES:
+                    spec = spec.model_copy(update={"workload_class": repo_class})
+                    ctx.app.workload_class = repo_class  # DB converges
+                    log.info("class from contract: %s (db updated)", repo_class)
+                else:
+                    log.warning("ignoring unknown class %r in gojira.yaml", repo_class)
         files = render(spec)
         rendered_targets = _rendered_targets(files)
 
