@@ -75,3 +75,9 @@ def test_allowlist_logic():
     assert allowed("x@ex.com", a)          # case-insensitive
     assert not allowed("shaz@example.com.evil.com", a)
     assert not allowed("", a)
+
+
+def test_healthz_exempt_from_identity(client):
+    """Finding #17: kubelet probes carry no IAP header — the auth gate must
+    never make the platform unready under its own protection."""
+    assert client.get("/healthz").status_code == 200

@@ -24,7 +24,9 @@ from gojira.config import AuthConfig
 log = logging.getLogger(__name__)
 
 IAP_HEADER = "x-goog-authenticated-user-email"
-EXEMPT_PREFIXES = ("/webhook/", "/api/v1/")
+# /healthz: kubelet probes carry no identity — finding #17: the auth gate
+# 401'd Gojira's own readiness probe and the pod could never become Ready.
+EXEMPT_PREFIXES = ("/webhook/", "/api/v1/", "/healthz")
 
 
 def identity_from(request: Request) -> str:

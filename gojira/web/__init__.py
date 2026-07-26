@@ -61,6 +61,11 @@ def create_app(
         with session_factory() as s:
             yield s
 
+    @app.get("/healthz")
+    def healthz():
+        """Probe target — identity-exempt (finding #17: kubelet has no IAP)."""
+        return {"ok": True}
+
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request, session: Session = Depends(get_session)):
         return TEMPLATES.TemplateResponse(
