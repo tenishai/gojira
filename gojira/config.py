@@ -69,7 +69,25 @@ class SizingConfig(BaseModel):
     )
 
 
+class AuthConfig(BaseModel):
+    """Identity at the front door — the Kodama pattern.
+
+    Gojira does not speak OAuth itself: an Identity-Aware Proxy in front of
+    the install authenticates the human and asserts the identity in the
+    x-goog-authenticated-user-email header; Gojira trusts that header and
+    makes the DECISIONS (allowlist, and someday roles). Off by default —
+    laptop mode and port-forward installs keep working unchanged. Never
+    enable without IAP (or an equivalent trusted proxy) actually in front:
+    the header is trivially forgeable on a bare endpoint.
+    """
+
+    enabled: bool = False
+    allowed_domain: str = ""        # e.g. example.com — any user in the domain
+    allowed_emails: list[str] = []  # explicit allowlist, additive to domain
+
+
 class Config(BaseModel):
+    auth: AuthConfig = AuthConfig()
     github: GitHubConfig = GitHubConfig()
     database: DatabaseConfig = DatabaseConfig()
     defaults: DefaultsConfig = DefaultsConfig()
