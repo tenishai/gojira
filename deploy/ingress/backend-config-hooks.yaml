@@ -5,4 +5,8 @@ kind: BackendConfig
 metadata:
   name: gojira-hooks
   namespace: gojira
-spec: {}
+spec:
+  healthCheck:  # see backend-config-ui.yaml — finding #17
+    requestPath: /healthz
+    port: 8080
+    type: HTTP
