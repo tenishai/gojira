@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from gojira import models, service, webhooks
 from gojira.config import Config, load_config
+from gojira.web import auth
 from gojira.sizing import agent_deploy
 from gojira.sizing import profile as sizing_profile
 from gojira.sizing import service as sizing_service
@@ -39,6 +40,7 @@ def create_app(
     app.state.clients = clients or ProvisionClients.real(
         config=app.state.config, session_factory=session_factory
     )
+    auth.install(app, app.state.config.auth)
 
     if app.state.config.drift.enabled:
         @app.on_event("startup")
