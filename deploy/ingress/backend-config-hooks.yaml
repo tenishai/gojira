@@ -1,0 +1,8 @@
+# No IAP: GitHub webhook deliveries can't do OAuth. Gojira verifies the
+# X-Hub-Signature-256 HMAC on every delivery instead.
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: gojira-hooks
+  namespace: gojira
+spec: {}

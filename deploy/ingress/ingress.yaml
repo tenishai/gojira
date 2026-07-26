@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gojira
+  namespace: gojira
+  annotations:
+    kubernetes.io/ingress.class: gce
+    kubernetes.io/ingress.global-static-ip-name: REPLACE_STATIC_IP_NAME
+    networking.gke.io/managed-certificates: gojira-cert
+    networking.gke.io/v1beta1.FrontendConfig: gojira-frontend
+spec:
+  rules:
+    - host: REPLACE_HOSTNAME
+      http:
+        paths:
+          - path: /webhook/
+            pathType: Prefix
+            backend:
+              service: { name: gojira-hooks, port: { number: 80 } }
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: gojira, port: { number: 80 } }
