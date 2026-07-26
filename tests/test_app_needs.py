@@ -286,3 +286,108 @@ def test_unknown_class_in_contract_falls_back_to_db():
     # ...the guard lives in GenerateArtifacts (WORKLOAD_CLASSES check) — the
     # spec keeps the DB class and provision proceeds instead of dying.
     assert read_app_class("app: x") is None
+
+
+# --- adopt-mode inference (zero-touch onboarding) -------------------------------
+
+SHERLOCK_SHAPED = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: sherlock, namespace: sherlock }
+spec:
+  template:
+    spec:
+      serviceAccountName: sherlock
+      securityContext: { fsGroup: 999 }
+      containers:
+        - name: sherlock
+          image: gcr.io/x/sherlock:latest
+          envFrom:
+            - secretRef: { name: sherlock-secrets }
+          env:
+            - name: LOG_LEVEL
+              value: DEBUG
+            - name: FROM_FIELD
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: sherlock-data }
+"""
+
+
+def test_infer_reads_the_apps_declared_needs():
+    from gojira.generator import infer_app_needs
+    needs = infer_app_needs(SHERLOCK_SHAPED)
+    assert needs["service_account"] == "sherlock"
+    assert needs["secrets_from"] == ["sherlock-secrets"]
+    assert needs["env_vars"] == {"LOG_LEVEL": "DEBUG"}   # valueFrom skipped
+    assert needs["data_mount"] == DataMount(pvc="sherlock-data", path="/data",
+                                            fs_group=999)
+
+
+def test_infer_never_makes_things_worse():
+    from gojira.generator import infer_app_needs
+    assert infer_app_needs(":::bad") == {}
+    assert infer_app_needs("kind: Service") == {}
+    assert infer_app_needs("kind: Deployment\nspec: {}") == {}
+
+
+def test_zero_touch_onboarding_seeds_the_contract(tmp_path):
+    """The acceptance test for 'press the button, touch nothing': a repo with
+    hand-built manifests and NO gojira.yaml comes out of provisioning with a
+    contract carrying its inferred needs and a deployment that honors them."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from gojira.config import Config
+    from gojira.models import App, Base, Cluster, Environment
+    from gojira.provisioner import provision_app
+    from tests.fakes import FakeGCPClient, FakeGitHubClient, KubectlFactory
+
+    class UntouchedRepo(FakeGitHubClient):
+        def clone(self, repo, workdir):
+            super().clone(repo, workdir)
+            base = workdir / "k8s" / "base"
+            base.mkdir(parents=True)
+            (base / "deployment.yaml").write_text(SHERLOCK_SHAPED)
+            (base / "kustomization.yaml").write_text(
+                "resources:\n  - deployment.yaml\n  - externalsecret.yaml\n")
+            (base / "externalsecret.yaml").write_text(
+                "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\n"
+                "metadata: { name: sherlock-secrets }\n")
+            # deliberately NO gojira.yaml — nobody touched this repo
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine, expire_on_commit=False)() as session:
+        c = Cluster(name="example-dev", gcp_project="p", location="us-east4",
+                    gke_cluster="g", ar_repo="us-east4-docker.pkg.dev/p/apps")
+        session.add(c)
+        session.commit()
+        a = App(name="sherlock2", repo_full_name="example/sherlock2",
+                installation_id=1, workload_class="agent")
+        session.add(a)
+        session.commit()
+        session.add(Environment(app_id=a.id, name="dev", cluster_id=c.id,
+                                namespace="sherlock2"))
+        session.commit()
+        result = provision_app(
+            session, a, gcp=FakeGCPClient(), github=UntouchedRepo(),
+            kubectl_for=KubectlFactory(), config=Config(), workdir=tmp_path,
+        )
+        assert result.completed
+
+    contract = (tmp_path / "gojira.yaml").read_text()
+    got = read_app_needs(contract)
+    assert got["secrets_from"] == ["sherlock-secrets"]
+    assert got["service_account"] == "sherlock"
+    assert got["data_mount"].fs_group == 999
+
+    dep = yaml.safe_load((tmp_path / "k8s/base/deployment.yaml").read_text())
+    pod = dep["spec"]["template"]["spec"]
+    assert pod["serviceAccountName"] == "sherlock"
+    assert pod["securityContext"] == {"fsGroup": 999}
+    assert {"externalsecret.yaml"} <= set(yaml.safe_load(
+        (tmp_path / "k8s/base/kustomization.yaml").read_text())["resources"])
