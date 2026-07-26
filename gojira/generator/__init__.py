@@ -143,6 +143,67 @@ def read_app_class(gojira_yaml_text: str) -> str | None:
     return str(cls) if cls else None
 
 
+def infer_app_needs(deployment_text: str) -> dict:
+    """Adopt-mode: read an existing deployment's declared needs.
+
+    A brownfield repo without a gojira.yaml still SAYS what it needs — in the
+    deployment it already runs: serviceAccountName, envFrom secretRefs, plain
+    env vars, a PVC mount, an fsGroup. Zero-touch onboarding reads them and
+    seeds the contract the setup PR proposes, instead of shipping a deployment
+    that silently dropped them (finding #12's completion — the platform learns
+    the app by reading it, and the operator reviews what it learned).
+
+    First container only (the drift detector's convention). Env vars with
+    valueFrom are skipped — secret- and field-backed values belong to their
+    own mechanisms. Returns {} for anything unparseable: inference must never
+    make onboarding worse than no inference.
+    """
+    try:
+        doc = yaml.safe_load(deployment_text) or {}
+    except yaml.YAMLError:
+        return {}
+    if not isinstance(doc, dict) or doc.get("kind") != "Deployment":
+        return {}
+    pod = (doc.get("spec") or {}).get("template", {}).get("spec") or {}
+    containers = pod.get("containers") or []
+    if not containers:
+        return {}
+    c0 = containers[0]
+
+    needs: dict = {}
+    if pod.get("serviceAccountName"):
+        needs["service_account"] = str(pod["serviceAccountName"])
+    secrets = [
+        e["secretRef"]["name"]
+        for e in c0.get("envFrom") or []
+        if isinstance(e, dict) and e.get("secretRef", {}).get("name")
+    ]
+    if secrets:
+        needs["secrets_from"] = secrets
+    env = {
+        str(e["name"]): str(e["value"])
+        for e in c0.get("env") or []
+        if isinstance(e, dict) and e.get("name") and "value" in e
+    }
+    if env:
+        needs["env_vars"] = env
+
+    pvc_by_volume = {
+        v["name"]: v["persistentVolumeClaim"]["claimName"]
+        for v in pod.get("volumes") or []
+        if isinstance(v, dict) and v.get("persistentVolumeClaim", {}).get("claimName")
+    }
+    for m in c0.get("volumeMounts") or []:
+        if isinstance(m, dict) and m.get("name") in pvc_by_volume and m.get("mountPath"):
+            fs_group = (pod.get("securityContext") or {}).get("fsGroup")
+            needs["data_mount"] = DataMount(
+                pvc=pvc_by_volume[m["name"]], path=str(m["mountPath"]),
+                **({"fs_group": int(fs_group)} if fs_group else {}),
+            )
+            break
+    return needs
+
+
 class GeneratorSpec(BaseModel):
     app: str
     repo_full_name: str
