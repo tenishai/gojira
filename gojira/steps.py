@@ -21,6 +21,7 @@ from gojira.gcp import GCPClient
 from gojira.generator import (
     EnvSpec,
     GeneratorSpec,
+    infer_app_needs,
     preserve_patches,
     preserve_resources,
     read_app_class,
@@ -381,6 +382,17 @@ class GenerateArtifacts:
         # manifests (overrides) and the app's declared needs (finding #12),
         # not revert them to bare class defaults.
         existing_spec = ctx.workdir / "gojira.yaml"
+        if not existing_spec.exists():
+            # Adopt-mode (zero-touch onboarding): no contract yet, but the
+            # repo's existing deployment declares its needs — read them and
+            # seed the contract the setup PR proposes for review.
+            old_deployment = ctx.workdir / "k8s" / "base" / "deployment.yaml"
+            if old_deployment.exists():
+                inferred = infer_app_needs(old_deployment.read_text())
+                if inferred:
+                    spec = spec.model_copy(update=inferred)
+                    log.info("adopt: inferred needs from existing deployment: %s",
+                             sorted(inferred))
         if existing_spec.exists():
             text = existing_spec.read_text()
             spec = spec.model_copy(
