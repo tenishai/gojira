@@ -6,6 +6,12 @@ metadata:
   name: gojira-ui
   namespace: gojira
 spec:
+  # LB health checkers carry no identity either — finding #17, third layer
+  # (kubelet, then Google's probers). /healthz is identity-exempt.
+  healthCheck:
+    requestPath: /healthz
+    port: 8080
+    type: HTTP
   iap:
     enabled: true
     oauthclientCredentials:
