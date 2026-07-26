@@ -1,0 +1,8 @@
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: gojira-cert
+  namespace: gojira
+spec:
+  domains:
+    - REPLACE_HOSTNAME

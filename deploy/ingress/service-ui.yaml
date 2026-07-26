@@ -1,0 +1,19 @@
+# The base Service, re-declared with LB annotations (applied after deploy/,
+# so this version wins). Same selector, same port — plus container-native
+# NEGs and the IAP BackendConfig.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gojira
+  namespace: gojira
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/backend-config: '{"default": "gojira-ui"}'
+spec:
+  selector:
+    app.kubernetes.io/name: gojira
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  type: ClusterIP
