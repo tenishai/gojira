@@ -6,6 +6,12 @@
 #   GOJIRA_GITHUB_APP_PEM=./github-app.pem \
 #   ./scripts/bootstrap.sh
 #
+# Optional front door (IAP + HTTPS LB; see deploy/ingress/):
+#   GOJIRA_HOSTNAME=gojira.example.com     enables the ingress step
+#   GOJIRA_IAP_MEMBERS=domain:example.com  comma-separated IAP accessor grants
+# After it provisions, point DNS (A record) at the printed static IP and set
+# the auth: block in your config (enabled + allowed_domain/allowed_emails).
+#
 # What it does, in order (each step idempotent — rerun freely):
 #   1. cluster credentials        (gcloud get-credentials)
 #   2. build + push the image     (Cloud Build — works from ARM machines too)
@@ -13,6 +19,7 @@
 #   4. render + apply deploy/     (placeholders filled in a temp copy; your
 #                                  working tree stays clean)
 #   5. wait for the pod, print how to reach the UI
+#   6. (only with GOJIRA_HOSTNAME) static IP, IAP OAuth client, ingress
 #
 # It deliberately does NOT read terraform state: every value is derived from
 # PROJECT/REGION and the conventions in terraform/ (GSA `gojira@<project>`,
@@ -76,6 +83,58 @@ kubectl apply -k "$TMP"
 
 step "5/5 wait for Gojira to come up"
 kubectl -n gojira rollout status deploy/gojira --timeout=300s
+
+if [ -n "${GOJIRA_HOSTNAME:-}" ]; then
+  step "6 (optional) front door: IAP + HTTPS LB for $GOJIRA_HOSTNAME"
+  IP_NAME="gojira-ingress-ip"
+  gcloud compute addresses describe "$IP_NAME" --global --project "$PROJECT" >/dev/null 2>&1 \
+    || gcloud compute addresses create "$IP_NAME" --global --project "$PROJECT"
+  STATIC_IP="$(gcloud compute addresses describe "$IP_NAME" --global --project "$PROJECT" --format='value(address)')"
+
+  # IAP OAuth client. Brands are one-per-project; API-created brands are
+  # manageable here, Console-created ones are not — in that case create a
+  # client by hand and pre-create the secret (we skip if it already exists).
+  if ! kubectl -n gojira get secret gojira-iap-oauth >/dev/null 2>&1; then
+    BRAND="$(gcloud iap oauth-brands list --project "$PROJECT" --format='value(name)' 2>/dev/null | head -1)"
+    if [ -z "$BRAND" ]; then
+      BRAND="$(gcloud iap oauth-brands create --project "$PROJECT" \
+        --application_title="Gojira" \
+        --support_email="$(gcloud config get-value account 2>/dev/null)" \
+        --format='value(name)')"
+    fi
+    CLIENT_LINE="$(gcloud iap oauth-clients create "$BRAND" --display_name="gojira" \
+      --format='value(name,secret)')"
+    CLIENT_ID="$(basename "$(echo "$CLIENT_LINE" | cut -f1)")"
+    CLIENT_SECRET="$(echo "$CLIENT_LINE" | cut -f2)"
+    kubectl -n gojira create secret generic gojira-iap-oauth \
+      --from-literal=client_id="$CLIENT_ID" \
+      --from-literal=client_secret="$CLIENT_SECRET"
+  fi
+
+  TMP_ING="$(mktemp -d)"
+  cp -r "$REPO_ROOT/deploy/ingress/." "$TMP_ING/"
+  sed -i.bak "s#REPLACE_HOSTNAME#${GOJIRA_HOSTNAME}#" "$TMP_ING"/*.yaml
+  sed -i.bak "s#REPLACE_STATIC_IP_NAME#${IP_NAME}#" "$TMP_ING"/*.yaml
+  rm -f "$TMP_ING"/*.bak
+  kubectl apply -k "$TMP_ING"
+  rm -rf "$TMP_ING"
+
+  # Who may pass IAP. App-level allowlisting still applies (auth: config).
+  for member in $(echo "${GOJIRA_IAP_MEMBERS:-}" | tr ',' ' '); do
+    gcloud iap web add-iam-policy-binding --project "$PROJECT" \
+      --member="$member" --role=roles/iap.httpsResourceAccessor >/dev/null \
+      && echo "iap access: $member"
+  done
+
+  cat <<EOI
+
+front door provisioning (cert takes ~15-60 min after DNS resolves):
+  1. Create an A record: ${GOJIRA_HOSTNAME} -> ${STATIC_IP}
+  2. Watch: kubectl -n gojira get managedcertificate gojira-cert
+  3. Enable app auth in your config.yaml:  auth: { enabled: true, allowed_domain: ... }
+  4. Point your GitHub App webhook at https://${GOJIRA_HOSTNAME}/webhook/github
+EOI
+fi
 
 cat <<EOF
 
