@@ -1,0 +1,15 @@
+# The front door — OPTIONAL, applied on top of deploy/ when GOJIRA_HOSTNAME
+# is set (scripts/bootstrap.sh renders the placeholders). One HTTPS load
+# balancer, two locks:
+#   default path  -> service gojira        (IAP: humans, allowlisted in-app)
+#   /webhook/*    -> service gojira-hooks  (no IAP: GitHub, HMAC-verified)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - managed-cert.yaml
+  - frontend-config.yaml
+  - backend-config-ui.yaml
+  - backend-config-hooks.yaml
+  - service-ui.yaml
+  - service-hooks.yaml
+  - ingress.yaml
