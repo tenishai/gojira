@@ -3,6 +3,7 @@
 {% block content %}
   <h1>{{ v.app.name }} <span class="badge b-{{ v.app.status }}">{{ v.app.status }}</span></h1>
   <p class="muted mono">{{ v.app.repo_full_name }} · {{ v.app.workload_class }}</p>
+  {% if error %}<div class="card err">{{ error }}</div>{% endif %}
 
   <h2>Environments</h2>
   <table>
@@ -18,6 +19,16 @@
   {% include "_status.html" %}
 
   {% if v.app.status == "active" %}
+  <h2>Deploy</h2>
+  <div class="card">
+    <p class="muted">Re-runs CI from the current default branch — same pipeline as a
+      push, no commit required. Use it when the namespace lost its workloads
+      (a delete-then-reconnect, a wiped namespace) but the contract is fine.</p>
+    <form method="post" action="/apps/{{ v.app.id }}/redeploy">
+      <button type="submit">Redeploy</button>
+    </form>
+  </div>
+
   <h2>Drift
     <form method="post" action="/apps/{{ v.app.id }}/scan-drift" style="display:inline">
       <button type="submit" style="margin:0 0 0 8px;font-size:0.8em;padding:4px 10px">Scan now</button>

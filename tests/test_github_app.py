@@ -49,6 +49,7 @@ class FakeGitHubServer:
         self.commit_sha = "deadbeef"
         self.created_refs: list[dict] = []
         self.created_pulls: list[dict] = []
+        self.dispatches: list[tuple[str, dict]] = []  # (workflow file, body)
         self.token_mints = 0
         self.requests: list[httpx.Request] = []
 
@@ -93,6 +94,11 @@ class FakeGitHubServer:
             body = _json(request)
             self.created_pulls.append(body)
             return httpx.Response(201, json={"html_url": f"https://github.com/{m.group(1)}/pull/7"})
+
+        m = re.fullmatch(r"/repos/[^/]+/[^/]+/actions/workflows/([^/]+)/dispatches", path)
+        if method == "POST" and m:
+            self.dispatches.append((m.group(1), _json(request)))
+            return httpx.Response(204)
 
         if method == "POST" and re.fullmatch(r"/repos/[^/]+/[^/]+/git/refs", path):
             self.created_refs.append(_json(request))
@@ -202,6 +208,13 @@ def test_create_tag_posts_ref(keypair):
     client = make_client(server, keypair)
     client.create_tag("acme/web", "v1.2.3", "deadbeef")
     assert server.created_refs == [{"ref": "refs/tags/v1.2.3", "sha": "deadbeef"}]
+
+
+def test_dispatch_workflow_posts_ref(keypair):
+    server = FakeGitHubServer()
+    client = make_client(server, keypair)
+    client.dispatch_workflow("acme/web", "gojira-ci.yaml", "main")
+    assert server.dispatches == [("gojira-ci.yaml", {"ref": "main"})]
 
 
 def test_existing_pr_none_then_url(keypair):
