@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from gojira import drift_scan
 from gojira.config import Config
 from gojira.gcp import GCPClient, GcloudClient
-from gojira.github import GhCLI, GitHubAppClient, GitHubClient
+from gojira.github import CI_WORKFLOW, GhCLI, GitHubAppClient, GitHubClient
 from gojira.installations import DbInstallationResolver
 from gojira.k8s import KubectlCLI, KubectlClient
 from gojira.models import (
@@ -422,6 +422,10 @@ def activate_app(session: Session, app: App) -> bool:
     if app.status != AppStatus.AWAITING_PR:
         return False
     app.status = AppStatus.ACTIVE
+    # The URL is merged history now. The provisioner recomputes status from
+    # setup_pr_url after every run, so retaining it would drag the app back
+    # to awaiting_pr on the next provision even with nothing left to merge.
+    app.setup_pr_url = None
     session.add(Event(app_id=app.id, type="app.activated"))
     session.commit()
     log.info("app %s activated (setup PR merged)", app.name)
@@ -440,6 +444,23 @@ def sync_app(session: Session, app_id: int, github: GitHubClient) -> bool:
     if not github.setup_pr_merged(app.repo_full_name):
         return False
     return activate_app(session, app)
+
+
+def redeploy_app(session: Session, app_id: int, github: GitHubClient) -> str:
+    """Re-run the app's CI deploy from the current default branch — no commit
+    required. The resurrection path for a namespace whose workloads are gone
+    while the contract is fine (delete-then-reconnect, a wiped namespace): CI
+    is the only deploy path, so redeploy = dispatch the generated workflow.
+    """
+    app = session.get(App, app_id)
+    if app is None:
+        raise ValueError("no such app")
+    branch = github.default_branch(app.repo_full_name)
+    github.dispatch_workflow(app.repo_full_name, CI_WORKFLOW, branch)
+    session.add(Event(app_id=app.id, type="app.redeployed"))
+    session.commit()
+    log.info("redeploy dispatched for %s (%s@%s)", app.name, app.repo_full_name, branch)
+    return f"CI dispatched on {branch}"
 
 
 def cut_release(github: GitHubClient, repo: str, version: str) -> str:

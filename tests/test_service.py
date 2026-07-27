@@ -206,6 +206,44 @@ def test_cut_release_rejects_empty_version():
         service.cut_release(FakeGitHubClient(), "acme/web", "  ")
 
 
+def test_activate_app_clears_setup_pr_url(session):
+    clusters = _three_clusters(session)
+    app = service.connect_app(
+        session, name="a", repo_full_name="o/a", workload_class="web",
+        env_map={"dev": (clusters["dev"].id, "ns")},
+    )
+    app.status = AppStatus.AWAITING_PR
+    app.setup_pr_url = "https://github.com/o/a/pull/1"
+    session.commit()
+
+    assert service.activate_app(session, app) is True
+    assert app.status == AppStatus.ACTIVE
+    # merged history — the provisioner recomputes status from the URL after
+    # every run, so retaining it would drag the app back to awaiting_pr
+    assert app.setup_pr_url is None
+
+
+def test_redeploy_app_dispatches_ci_workflow(session):
+    clusters = _three_clusters(session)
+    app = service.connect_app(
+        session, name="a", repo_full_name="o/a", workload_class="web",
+        env_map={"dev": (clusters["dev"].id, "ns")},
+    )
+    gh = FakeGitHubClient()
+
+    msg = service.redeploy_app(session, app.id, gh)
+
+    assert gh.dispatched == [("o/a", "gojira-ci.yaml", "main")]
+    assert "main" in msg
+    view = service.app_status(session, app.id)
+    assert any(e.type == "app.redeployed" for e in view.events)
+
+
+def test_redeploy_app_unknown_app(session):
+    with pytest.raises(ValueError, match="no such app"):
+        service.redeploy_app(session, 999, FakeGitHubClient())
+
+
 def test_list_apps_and_clusters(session):
     _three_clusters(session)
     service.connect_app(
