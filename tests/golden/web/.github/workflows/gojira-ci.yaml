@@ -5,6 +5,7 @@ name: Gojira CI
 on:
   push:
     branches: [main]
+  workflow_dispatch: {}  # Gojira's Redeploy button
 
 permissions:
   contents: read

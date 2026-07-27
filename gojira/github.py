@@ -27,6 +27,7 @@ from gojira.shell import CommandRunner
 log = logging.getLogger(__name__)
 
 SETUP_BRANCH = "gojira/setup"
+CI_WORKFLOW = "gojira-ci.yaml"  # the generated deploy workflow's file name
 COMMIT_AUTHOR_NAME = "Gojira"
 COMMIT_AUTHOR_EMAIL = "noreply@gojira.dev"
 
@@ -66,6 +67,10 @@ class GitHubClient(ABC):
     def head_sha(self, repo: str) -> str:
         """The commit SHA at the tip of the repo's default branch."""
         ...
+
+    @abstractmethod
+    def dispatch_workflow(self, repo: str, workflow: str, ref: str) -> None:
+        """Trigger a workflow_dispatch run of workflow (file name) on ref."""
 
     @abstractmethod
     def create_tag(self, repo: str, tag: str, sha: str) -> None:
@@ -189,6 +194,11 @@ class GhCLI(_LocalGit, GitHubClient):
         self._exec(
             [self._gh, "api", "-X", "POST", f"repos/{repo}/git/refs",
              "-f", f"ref=refs/tags/{tag}", "-f", f"sha={sha}"]
+        )
+
+    def dispatch_workflow(self, repo: str, workflow: str, ref: str) -> None:
+        self._exec(
+            [self._gh, "workflow", "run", workflow, "--repo", repo, "--ref", ref]
         )
 
     def clone(self, repo: str, workdir: Path) -> None:
@@ -349,6 +359,16 @@ class GitHubAppClient(_LocalGit, GitHubClient):
             json={"ref": f"refs/tags/{tag}", "sha": sha},
         )
         self._check(r, f"tag {tag} in {repo}")
+
+    def dispatch_workflow(self, repo: str, workflow: str, ref: str) -> None:
+        # Needs the App's "Actions: write" permission. A 422 here usually means
+        # the repo's workflow predates the workflow_dispatch trigger — a setup
+        # PR refresh (re-provision) brings it in.
+        r = self._request(
+            "POST", f"/repos/{repo}/actions/workflows/{workflow}/dispatches", repo,
+            json={"ref": ref},
+        )
+        self._check(r, f"dispatch {workflow} in {repo}")
 
     def existing_pr(self, repo: str, head: str) -> str | None:
         owner = repo.split("/")[0]

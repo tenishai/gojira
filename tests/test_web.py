@@ -272,6 +272,39 @@ def test_promote_cuts_tag_and_redirects_to_actions(client, clients, session_fact
     assert clients.github.tags == [("acme/rel", "v0.3.0", "abc123def456")]
 
 
+def test_redeploy_dispatches_ci_and_redirects_to_actions(client, clients, session_factory):
+    _register_three(session_factory)
+    with session_factory() as s:
+        dev_id = next(c.id for c in service.list_clusters(s) if c.name == "dev")
+        app = service.connect_app(
+            s, name="lazarus", repo_full_name="acme/lazarus", workload_class="web",
+            env_map={"dev": (dev_id, "lazarus")},
+        )
+        app_id = app.id
+
+    r = client.post(f"/apps/{app_id}/redeploy", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "https://github.com/acme/lazarus/actions"
+    assert clients.github.dispatched == [("acme/lazarus", "gojira-ci.yaml", "main")]
+
+
+def test_redeploy_failure_surfaces_on_app_page(client, clients, session_factory):
+    _register_three(session_factory)
+    with session_factory() as s:
+        dev_id = next(c.id for c in service.list_clusters(s) if c.name == "dev")
+        app = service.connect_app(
+            s, name="stuck", repo_full_name="acme/stuck", workload_class="web",
+            env_map={"dev": (dev_id, "stuck")},
+        )
+        app_id = app.id
+    clients.github.dispatch_error = "workflow has no workflow_dispatch trigger"
+
+    r = client.post(f"/apps/{app_id}/redeploy", follow_redirects=True)
+    assert r.status_code == 200
+    assert "Redeploy failed" in r.text
+    assert "workflow_dispatch" in r.text
+
+
 def test_delete_app_removes_it_from_dashboard(client, clients, session_factory):
     _register_three(session_factory)
     with session_factory() as s:
