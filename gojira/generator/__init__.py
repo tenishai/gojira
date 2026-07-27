@@ -113,6 +113,8 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
     needs: dict = {}
     if isinstance(doc.get("secrets_from"), list):
         needs["secrets_from"] = [str(s) for s in doc["secrets_from"] if s]
+    if isinstance(doc.get("config_from"), list):
+        needs["config_from"] = [str(s) for s in doc["config_from"] if s]
     if doc.get("service_account"):
         needs["service_account"] = str(doc["service_account"])
     if isinstance(doc.get("env"), dict):
@@ -180,6 +182,13 @@ def infer_app_needs(deployment_text: str) -> dict:
     ]
     if secrets:
         needs["secrets_from"] = secrets
+    configs = [
+        e["configMapRef"]["name"]
+        for e in c0.get("envFrom") or []
+        if isinstance(e, dict) and e.get("configMapRef", {}).get("name")
+    ]
+    if configs:
+        needs["config_from"] = configs  # finding #18: config is a need too
     env = {
         str(e["name"]): str(e["value"])
         for e in c0.get("env") or []
@@ -216,6 +225,7 @@ class GeneratorSpec(BaseModel):
     # overrides. Rendered into the deployment; referenced objects stay
     # app-authored.
     secrets_from: list[str] = []
+    config_from: list[str] = []  # envFrom ConfigMaps — non-secret config
     service_account: str = ""
     data_mount: DataMount | None = None
     # Plain, non-secret configuration (tenant identity, endpoints). Rendered
@@ -368,6 +378,37 @@ def preserve_resources(existing_text: str, rendered_text: str, file_exists) -> s
     lines = ["  # app-authored resources, preserved by Gojira:"]
     lines += [f"  - {e}" for e in keep]
     return f"{rendered_text}{sep}" + "\n".join(lines) + "\n"
+
+
+GENERATOR_KEYS = ("configMapGenerator", "secretGenerator", "generatorOptions")
+
+
+def preserve_generators(existing_text: str, rendered_text: str) -> str:
+    """Carry an existing kustomization's generator blocks into a fresh render.
+
+    Finding #18: sherlock's non-secret config was born from an overlay
+    configMapGenerator — regeneration dropped it and the app lost its env.
+    configMapGenerator / secretGenerator / generatorOptions survive verbatim
+    (re-serialized; comments inside the blocks are not preserved). Rendered
+    kustomizations never carry generators of their own, so there is nothing
+    to merge — only to keep.
+    """
+    try:
+        existing = yaml.safe_load(existing_text) or {}
+    except yaml.YAMLError:
+        return rendered_text
+    if not isinstance(existing, dict):
+        return rendered_text
+    keep = {k: existing[k] for k in GENERATOR_KEYS if k in existing}
+    if not keep:
+        return rendered_text
+    rendered = yaml.safe_load(rendered_text) or {}
+    keep = {k: v for k, v in keep.items() if k not in rendered}
+    if not keep:
+        return rendered_text
+    sep = "" if rendered_text.endswith("\n") else "\n"
+    block = yaml.safe_dump(keep, sort_keys=False, default_flow_style=False)
+    return f"{rendered_text}{sep}# app-authored generators, preserved by Gojira:\n{block}"
 
 
 def render(spec: GeneratorSpec) -> dict[str, str]:
