@@ -49,11 +49,15 @@ spec:
               value: {{ v | tojson }}
 {% endfor %}
 {% endif %}
-{% if spec.secrets_from %}
+{% if spec.secrets_from or spec.config_from %}
           envFrom:
 {% for secret in spec.secrets_from %}
             - secretRef:
                 name: {{ secret }}
+{% endfor %}
+{% for cm in spec.config_from %}
+            - configMapRef:
+                name: {{ cm }}
 {% endfor %}
 {% endif %}
 {% if spec.data_mount %}
