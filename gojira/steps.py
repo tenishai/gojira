@@ -22,6 +22,7 @@ from gojira.generator import (
     EnvSpec,
     GeneratorSpec,
     infer_app_needs,
+    preserve_generators,
     preserve_patches,
     preserve_resources,
     read_app_class,
@@ -434,6 +435,7 @@ class GenerateArtifacts:
             # But drop patches whose target the render no longer produces (an
             # app rename orphans them and kustomize hard-fails the build).
             if target.name == "kustomization.yaml" and target.exists():
+                content = preserve_generators(target.read_text(), content)
                 content = preserve_patches(
                     target.read_text(),
                     content,
