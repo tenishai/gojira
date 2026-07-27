@@ -9,6 +9,7 @@ the run reaches a terminal state.
 import json
 import logging
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -195,9 +196,13 @@ def create_app(
         return RedirectResponse(f"/apps/{app_obj.id}", status_code=303)
 
     @app.get("/apps/{app_id}", response_class=HTMLResponse)
-    def app_detail(app_id: int, request: Request, session: Session = Depends(get_session)):
+    def app_detail(
+        app_id: int, request: Request, session: Session = Depends(get_session), error: str = ""
+    ):
         view = service.app_status(session, app_id)
-        return TEMPLATES.TemplateResponse(request, "app_detail.html", {"v": view})
+        return TEMPLATES.TemplateResponse(
+            request, "app_detail.html", {"v": view, "error": error}
+        )
 
     @app.get("/apps/{app_id}/status", response_class=HTMLResponse)
     def app_status_partial(
@@ -220,6 +225,20 @@ def create_app(
             delete_namespaces=bool(delete_namespaces),
         )
         return RedirectResponse("/", status_code=303)
+
+    @app.post("/apps/{app_id}/redeploy")
+    def redeploy(app_id: int, request: Request, session: Session = Depends(get_session)):
+        view = service.app_status(session, app_id)
+        try:
+            service.redeploy_app(session, app_id, request.app.state.clients.github)
+        except Exception as exc:
+            log.warning("redeploy failed for app %s: %s", app_id, exc)
+            msg = quote(f"Redeploy failed: {str(exc)[:300]}")
+            return RedirectResponse(f"/apps/{app_id}?error={msg}", status_code=303)
+        # send them to the Actions run the dispatch just triggered
+        return RedirectResponse(
+            f"https://github.com/{view.app.repo_full_name}/actions", status_code=303
+        )
 
     @app.post("/apps/{app_id}/sync")
     def sync(app_id: int, request: Request, session: Session = Depends(get_session)):

@@ -5,7 +5,7 @@ flow is exercised without touching gcloud, kubectl, or git.
 """
 
 from gojira.gcp import GCPClient
-from gojira.github import SETUP_BRANCH, GitHubClient
+from gojira.github import SETUP_BRANCH, GitHubClient, GitHubError
 from gojira.installations import InstallationResolver
 from gojira.k8s import KubectlClient
 from gojira.shell import CommandResult
@@ -156,6 +156,8 @@ class FakeGitHubClient(GitHubClient):
         self.committed = False
         self.pushed = None
         self.tags: list[tuple[str, str, str]] = []  # (repo, tag, sha)
+        self.dispatched: list[tuple[str, str, str]] = []  # (repo, workflow, ref)
+        self.dispatch_error: str | None = None
         self.calls: list[str] = []
 
     def list_repos(self, limit=200):
@@ -176,6 +178,12 @@ class FakeGitHubClient(GitHubClient):
     def create_tag(self, repo, tag, sha):
         self.calls.append(f"tag:{tag}")
         self.tags.append((repo, tag, sha))
+
+    def dispatch_workflow(self, repo, workflow, ref):
+        if self.dispatch_error:
+            raise GitHubError(self.dispatch_error)
+        self.calls.append(f"dispatch:{workflow}@{ref}")
+        self.dispatched.append((repo, workflow, ref))
 
     def default_branch(self, repo):
         return self._default_branch
