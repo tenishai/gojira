@@ -19,6 +19,13 @@
       <form method="post" action="/apps/{{ v.app.id }}/provision" style="display:inline">
         <button type="submit" style="margin:0 0 0 8px;padding:4px 12px">Retry</button>
       </form>
+      {% elif v.terminal %}
+      {# re-run for healthy apps: verifies every step, refreshes the setup PR
+         if the generator moved on. Without this the only re-provision path is
+         delete + reconnect — the wrecking ball. #}
+      <form method="post" action="/apps/{{ v.app.id }}/provision" style="display:inline">
+        <button type="submit" style="margin:0 0 0 8px;padding:4px 12px">Provision again</button>
+      </form>
       {% endif %}
     </p>
     {% if v.steps %}
