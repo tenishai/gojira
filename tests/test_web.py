@@ -85,6 +85,39 @@ def test_app_detail_renders_drift_panel(client, session_factory):
     assert "capture PR" in r.text and "/pull/1" in r.text
 
 
+def test_app_detail_offers_provision_again_when_healthy(client, session_factory):
+    from gojira.models import App, AppStatus
+
+    with session_factory() as s:
+        a = App(name="ok", repo_full_name="acme/ok", installation_id=1,
+                workload_class="web", status=AppStatus.ACTIVE)
+        s.add(a)
+        s.commit()
+        app_id = a.id
+
+    r = client.get(f"/apps/{app_id}")
+    assert r.status_code == 200
+    # a healthy app can re-provision without delete + reconnect
+    assert "Provision again" in r.text
+    assert f"/apps/{app_id}/provision" in r.text
+    assert "Retry" not in r.text  # that label is the failed-state affordance
+
+
+def test_app_detail_keeps_retry_for_failed(client, session_factory):
+    from gojira.models import App, AppStatus
+
+    with session_factory() as s:
+        a = App(name="broken", repo_full_name="acme/broken", installation_id=1,
+                workload_class="web", status=AppStatus.FAILED)
+        s.add(a)
+        s.commit()
+        app_id = a.id
+
+    r = client.get(f"/apps/{app_id}")
+    assert "Retry" in r.text
+    assert "Provision again" not in r.text
+
+
 def test_register_cluster_via_form(client):
     r = client.post(
         "/clusters",
