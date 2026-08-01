@@ -19,6 +19,7 @@ WHO acted — the audit trail a multi-user platform owes its operators.
 """
 
 import logging
+import secrets
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -62,7 +63,12 @@ def api_token_error(request: Request, auth: AuthConfig) -> JSONResponse | None:
     - No token configured, IAP auth disabled: allow (laptop / dev mode).
     """
     if auth.api_token:
-        if request.headers.get("Authorization") != f"Bearer {auth.api_token}":
+        provided = request.headers.get("Authorization")
+        expected = f"Bearer {auth.api_token}"
+        # Non-None check first: compare_digest requires two strs (or two
+        # bytes-likes) of matching type and raises on None, so a missing
+        # header must short-circuit before it ever reaches the comparison.
+        if provided is None or not secrets.compare_digest(provided, expected):
             return JSONResponse({"error": "bearer token required"}, status_code=401)
         return None
     if auth.enabled:
