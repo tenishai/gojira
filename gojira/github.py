@@ -106,7 +106,8 @@ class GitHubClient(ABC):
 
     @abstractmethod
     def merge_pr(self, repo: str, pr_url: str) -> None:
-        """Squash-merge the PR and delete its branch."""
+        """Squash-merge the PR and best-effort delete its branch."""
+        ...
 
 
 class _LocalGit:
@@ -403,6 +404,14 @@ class GitHubAppClient(_LocalGit, GitHubClient):
             json={"merge_method": "squash"},
         )
         self._check(r, f"merge PR {pr_url}")
+        pr = self._request("GET", f"/repos/{repo}/pulls/{number}", repo)
+        self._check(pr, f"fetch PR {pr_url}")
+        head_ref = pr.json()["head"]["ref"]
+        try:
+            d = self._request("DELETE", f"/repos/{repo}/git/refs/heads/{head_ref}", repo)
+            self._check(d, f"delete branch {head_ref} in {repo}")
+        except Exception as exc:  # branch cleanup is cosmetic — never fail the merge over it
+            log.warning("could not delete branch %s in %s after merge: %s", head_ref, repo, exc)
 
     def clone(self, repo: str, workdir: Path) -> None:
         token = self._token(self.installation_id_for(repo))

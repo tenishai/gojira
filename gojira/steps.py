@@ -583,8 +583,20 @@ class MergeSetupPr:
 
     def apply(self, ctx: ProvisionContext) -> str:
         gh = _github(ctx)
+        repo = ctx.app.repo_full_name
         url = ctx.app.setup_pr_url
-        gh.merge_pr(ctx.app.repo_full_name, url)
+        if gh.setup_pr_merged(repo):
+            # Retry after a partial failure: a prior attempt's merge_pr landed
+            # server-side but the client raised before setup_pr_url cleared,
+            # so a naive retry would re-merge an already-merged PR and wedge
+            # the step at FAILED forever. Re-decide against the real world
+            # (OpenSetupPr's idiom) instead of blindly re-calling merge_pr.
+            ctx.app.status = AppStatus.ACTIVE  # load-bearing for direct apply() callers
+            ctx.app.setup_pr_url = None
+            return "already merged"
+        gh.merge_pr(repo, url)
+        # Load-bearing for direct apply() callers; provision_app's recompute
+        # derives the same status from the cleared setup_pr_url below.
         ctx.app.status = AppStatus.ACTIVE
         # Mirrors activate_app's convention (service.py): the URL is merged
         # history now. provision_app recomputes app.status from setup_pr_url
