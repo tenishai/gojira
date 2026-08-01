@@ -15,6 +15,7 @@ from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from gojira import models, service, webhooks
@@ -325,18 +326,23 @@ def create_app(
             installation_id = request.app.state.clients.github.installation_id_for(
                 body.repo_full_name
             )
-        except Exception:
+        except Exception as exc:
+            log.warning("could not resolve installation for %s: %s", body.repo_full_name, exc)
             installation_id = 0
-        app_obj = service.connect_app(
-            session,
-            name=body.name,
-            repo_full_name=body.repo_full_name,
-            workload_class=body.workload_class,
-            env_map=env_map,
-            installation_id=installation_id,
-        )
-        app_obj.auto_merge_setup_pr = body.auto_merge_setup_pr
-        session.commit()
+        try:
+            app_obj = service.connect_app(
+                session,
+                name=body.name,
+                repo_full_name=body.repo_full_name,
+                workload_class=body.workload_class,
+                env_map=env_map,
+                installation_id=installation_id,
+            )
+            app_obj.auto_merge_setup_pr = body.auto_merge_setup_pr
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            return JSONResponse({"error": "repo already connected"}, status_code=409)
         service.start_provision(
             request.app.state.session_factory,
             app_obj.id,

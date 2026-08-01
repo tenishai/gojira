@@ -420,6 +420,20 @@ def test_api_connect_duplicate_repo_409(client, session_factory):
     assert client.post("/api/v1/apps", json=_api_body(name="other")).status_code == 409
 
 
+def test_api_connect_duplicate_race_maps_integrity_error_to_409(
+    client, session_factory, monkeypatch
+):
+    # Simulate the TOCTOU race: the pre-check misses (as it would for a
+    # concurrent request) but the row already exists, so the insert inside
+    # service.connect_app trips the uq_apps_repo unique constraint. The route
+    # must map that IntegrityError to 409, not let it surface as a 500.
+    _register_three(session_factory)
+    assert client.post("/api/v1/apps", json=_api_body()).status_code == 201
+    monkeypatch.setattr(service, "app_by_repo", lambda session, repo: None)
+    resp = client.post("/api/v1/apps", json=_api_body(name="other"))
+    assert resp.status_code == 409
+
+
 def test_api_connect_bad_class_422(client, session_factory):
     _register_three(session_factory)
     resp = client.post("/api/v1/apps", json=_api_body(workload_class="mainframe"))
@@ -428,3 +442,12 @@ def test_api_connect_bad_class_422(client, session_factory):
 
 def test_api_status_unknown_id_404(client):
     assert client.get("/api/v1/apps/999").status_code == 404
+
+
+def test_api_connect_echoes_auto_merge_setup_pr_on_status(client, session_factory):
+    _register_three(session_factory)
+    resp = client.post("/api/v1/apps", json=_api_body(auto_merge_setup_pr=True))
+    assert resp.status_code == 201
+    app_id = resp.json()["id"]
+    status = client.get(f"/api/v1/apps/{app_id}").json()
+    assert status["auto_merge_setup_pr"] is True
