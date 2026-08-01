@@ -176,15 +176,13 @@ class FakeGitHubClient(GitHubClient):
     def setup_pr_merged(self, repo):
         """Repo-history check ("was ANY closed setup PR ever merged").
 
-        Some tests flip this directly after construction (`gh.pr_merged =
-        True`) rather than through the constructor — that assignment shadows
-        the `pr_merged` method below on this particular instance, which is
-        harmless: those tests never call `pr_merged(repo, url)` as a method
-        afterward, only `setup_pr_merged(repo)`, which is why this reads the
-        raw instance dict rather than `self.pr_merged` directly.
+        Backed by `_repo_ever_merged` rather than an attribute named
+        `pr_merged` — that name is also the per-URL `pr_merged(repo, pr_url)`
+        method below, and a same-named instance attribute would shadow it
+        (a test or `merge_pr` assigning `self.pr_merged = True` would make
+        `fake.pr_merged(repo, url)` raise "'bool' object is not callable").
         """
-        override = self.__dict__.get("pr_merged")
-        return override if isinstance(override, bool) else self._repo_ever_merged
+        return self._repo_ever_merged
 
     def pr_merged(self, repo, pr_url):
         """Whether this specific PR has been merged (tracked by URL)."""
@@ -237,7 +235,7 @@ class FakeGitHubClient(GitHubClient):
         self.calls.append(f"merge_pr:{pr_url}")
         self.merged.append(pr_url)
         self.merged_urls.add(pr_url)
-        self.pr_merged = True
+        self._repo_ever_merged = True
 
 
 class MemoryInstallationResolver(InstallationResolver):

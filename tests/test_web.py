@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from gojira import service
 from gojira.config import Config
+from gojira.github import SETUP_BRANCH
 from gojira.models import Base
 from gojira.web import create_app
 
@@ -263,7 +264,7 @@ def test_sync_activates_when_setup_pr_merged(session_factory):
         assert service.app_status(s, app_id).app.status == "awaiting_pr"
 
     # operator merges the PR → sync flips to active
-    gh.pr_merged = True
+    gh._repo_ever_merged = True
     client.post(f"/apps/{app_id}/sync", follow_redirects=False)
     with session_factory() as s:
         assert service.app_status(s, app_id).app.status == "active"
@@ -467,6 +468,67 @@ def test_api_connect_auto_merge_activates(client, session_factory, clients):
         time.sleep(0.05)
     assert status["status"] == "active"
     assert any(s["name"] == "merge_setup_pr" for s in status["steps"])
+
+
+class _RefreshingGitHubClient(FakeGitHubClient):
+    """Unlike the base fake (which always hands back pull/1), open_pr mints a
+    fresh PR number on every call — modeling GitHub reality: a merged PR is
+    closed, so a later push under the same setup branch opens a brand new PR
+    rather than reusing the merged one's number."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._next_pr = 1
+
+    def open_pr(self, repo, head, base, title, body):
+        self.calls.append(f"open_pr:{head}->{base}")
+        url = f"https://github.com/{repo}/pull/{self._next_pr}"
+        self._next_pr += 1
+        self.prs[head] = url
+        return url
+
+
+def test_reprovision_of_auto_merge_app_merges_a_fresh_pr(session_factory):
+    """The merge guard (steps.py's MergeSetupPr) is PR-specific, not repo
+    history: re-provisioning an auto-merge app after a generator upgrade
+    opens a FRESH setup PR under the same branch, and that fresh PR must get
+    merged too — a stale "this repo has had a PR merged before" must never
+    short-circuit the new PR's own merge (which would erase setup_pr_url and
+    silently orphan it)."""
+    gh = _RefreshingGitHubClient()
+    clients = service.ProvisionClients(
+        gcp=FakeGCPClient(), github=gh, kubectl_for=KubectlFactory()
+    )
+    client = TestClient(create_app(session_factory, clients=clients))
+    _register_three(session_factory)
+
+    resp = client.post("/api/v1/apps", json=_api_body(auto_merge_setup_pr=True))
+    app_id = resp.json()["id"]
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        status = client.get(f"/api/v1/apps/{app_id}").json()
+        if status["status"] in ("active", "failed"):
+            break
+        time.sleep(0.05)
+    assert status["status"] == "active"
+    first_pr = gh.merged[-1]
+
+    # The branch's PR closed on merge, so it's no longer "existing" for the
+    # branch — re-provision (e.g. after a generator upgrade) must open a
+    # fresh one instead of silently treating the old merge as covering it.
+    gh.prs.pop(SETUP_BRANCH, None)
+    client.post(f"/apps/{app_id}/provision")
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        status = client.get(f"/api/v1/apps/{app_id}").json()
+        if status["status"] in ("active", "failed"):
+            break
+        time.sleep(0.05)
+    assert status["status"] == "active"
+
+    second_pr = gh.merged[-1]
+    assert second_pr != first_pr
+    assert gh.merged == [first_pr, second_pr]  # both PRs actually merged
 
 
 def test_api_connect_no_dockerfile_422(session_factory):
