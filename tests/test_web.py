@@ -10,6 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from gojira import service
+from gojira.config import Config
 from gojira.models import Base
 from gojira.web import create_app
 
@@ -466,3 +467,108 @@ def test_api_connect_auto_merge_activates(client, session_factory, clients):
         time.sleep(0.05)
     assert status["status"] == "active"
     assert any(s["name"] == "merge_setup_pr" for s in status["steps"])
+
+
+def test_api_connect_no_dockerfile_422(session_factory):
+    clients = service.ProvisionClients(
+        gcp=FakeGCPClient(),
+        github=FakeGitHubClient(dockerfile=False),
+        kubectl_for=KubectlFactory(),
+    )
+    client = TestClient(create_app(session_factory, clients=clients))
+    _register_three(session_factory)
+    resp = client.post("/api/v1/apps", json=_api_body())
+    assert resp.status_code == 422
+    assert "Dockerfile" in resp.json()["error"]
+
+
+def test_api_connect_duplicate_environment_names_422(client, session_factory):
+    _register_three(session_factory)
+    resp = client.post("/api/v1/apps", json=_api_body(
+        environments=[
+            {"name": "dev", "cluster": "dev", "namespace": "a"},
+            {"name": "dev", "cluster": "qa", "namespace": "b"},
+        ]
+    ))
+    assert resp.status_code == 422
+
+
+# --- /api/v1 bearer-token gate (the IAP-exempt namespace's own auth) --------
+
+
+def test_api_token_configured_correct_header_allows(session_factory, clients):
+    cfg = Config()
+    cfg.auth.api_token = "s3cr3t"
+    client = TestClient(create_app(session_factory, clients=clients, config=cfg))
+    _register_three(session_factory)
+
+    resp = client.post(
+        "/api/v1/apps", json=_api_body(), headers={"Authorization": "Bearer s3cr3t"}
+    )
+    assert resp.status_code == 201
+    app_id = resp.json()["id"]
+    status = client.get(
+        f"/api/v1/apps/{app_id}", headers={"Authorization": "Bearer s3cr3t"}
+    )
+    assert status.status_code == 200
+
+
+def test_api_token_configured_missing_header_401(session_factory, clients):
+    cfg = Config()
+    cfg.auth.api_token = "s3cr3t"
+    client = TestClient(create_app(session_factory, clients=clients, config=cfg))
+    _register_three(session_factory)
+
+    resp = client.post("/api/v1/apps", json=_api_body())
+    assert resp.status_code == 401
+
+
+def test_api_token_configured_wrong_header_401(session_factory, clients):
+    cfg = Config()
+    cfg.auth.api_token = "s3cr3t"
+    client = TestClient(create_app(session_factory, clients=clients, config=cfg))
+    _register_three(session_factory)
+
+    resp = client.post(
+        "/api/v1/apps", json=_api_body(), headers={"Authorization": "Bearer nope"}
+    )
+    assert resp.status_code == 401
+
+
+def test_api_status_route_also_requires_configured_token(session_factory, clients):
+    cfg = Config()
+    cfg.auth.api_token = "s3cr3t"
+    client = TestClient(create_app(session_factory, clients=clients, config=cfg))
+    _register_three(session_factory)
+    app_id = client.post(
+        "/api/v1/apps", json=_api_body(), headers={"Authorization": "Bearer s3cr3t"}
+    ).json()["id"]
+
+    assert client.get(f"/api/v1/apps/{app_id}").status_code == 401
+    assert client.get(
+        f"/api/v1/apps/{app_id}", headers={"Authorization": "Bearer s3cr3t"}
+    ).status_code == 200
+
+
+def test_api_no_token_and_iap_enabled_fails_closed(session_factory, clients):
+    """The /api/v1/* exemption from the IAP gate rests on the premise those
+    routes carry their own auth — with no api_token configured, they don't,
+    so an operator who enables IAP without also setting one must be refused
+    rather than silently left wide open."""
+    cfg = Config()
+    cfg.auth.enabled = True
+    client = TestClient(create_app(session_factory, clients=clients, config=cfg))
+    _register_three(session_factory)
+
+    resp = client.post("/api/v1/apps", json=_api_body())
+    assert resp.status_code == 401
+    assert "api_token" in resp.json()["error"]
+
+
+def test_api_no_token_and_iap_disabled_allows(client, session_factory):
+    """Laptop mode (no api_token, IAP disabled): the dev experience every
+    other /api/v1 test in this file already exercises — asserted here
+    explicitly for this finding."""
+    _register_three(session_factory)
+    resp = client.post("/api/v1/apps", json=_api_body())
+    assert resp.status_code == 201

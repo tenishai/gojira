@@ -585,12 +585,20 @@ class MergeSetupPr:
         gh = _github(ctx)
         repo = ctx.app.repo_full_name
         url = ctx.app.setup_pr_url
-        if gh.setup_pr_merged(repo):
+        if gh.pr_merged(repo, url):
             # Retry after a partial failure: a prior attempt's merge_pr landed
             # server-side but the client raised before setup_pr_url cleared,
             # so a naive retry would re-merge an already-merged PR and wedge
             # the step at FAILED forever. Re-decide against the real world
             # (OpenSetupPr's idiom) instead of blindly re-calling merge_pr.
+            #
+            # This guard is PR-specific (checks THIS url, not repo history):
+            # setup_pr_merged() answers "was any closed setup PR ever merged",
+            # which stays true forever after the first merge. Re-provisioning
+            # an auto-merge app opens a fresh PR under the same setup branch
+            # (OpenSetupPr refreshes/reopens it) — a repo-history guard would
+            # short-circuit here, erase setup_pr_url, and silently orphan the
+            # fresh PR every time.
             ctx.app.status = AppStatus.ACTIVE  # load-bearing for direct apply() callers
             ctx.app.setup_pr_url = None
             return "already merged"

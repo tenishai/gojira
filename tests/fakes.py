@@ -142,10 +142,13 @@ class FakeGitHubClient(GitHubClient):
     """In-memory git/GitHub. Tracks the repo flow; preset an existing PR."""
 
     def __init__(self, *, default_branch="main", existing_pr=None, repos=None,
-                 dockerfile=True, pr_merged=False, installation_id=0):
+                 dockerfile=True, pr_merged=False, merged_urls=None, installation_id=0):
         self._default_branch = default_branch
         self.dockerfile = dockerfile
-        self.pr_merged = pr_merged
+        # Repo-history default for setup_pr_merged() (see that method's
+        # docstring for why this can't just live on self.pr_merged).
+        self._repo_ever_merged = pr_merged
+        self.merged_urls = set(merged_urls or [])  # PR-specific merged state, by URL
         self.installation_id = installation_id
         self.repos = repos or ["shaz/clips-api", "shaz/gojira-demo", "acme/web"]
         self.prs = {}
@@ -171,7 +174,21 @@ class FakeGitHubClient(GitHubClient):
         return self.dockerfile if path == "Dockerfile" else True
 
     def setup_pr_merged(self, repo):
-        return self.pr_merged
+        """Repo-history check ("was ANY closed setup PR ever merged").
+
+        Some tests flip this directly after construction (`gh.pr_merged =
+        True`) rather than through the constructor — that assignment shadows
+        the `pr_merged` method below on this particular instance, which is
+        harmless: those tests never call `pr_merged(repo, url)` as a method
+        afterward, only `setup_pr_merged(repo)`, which is why this reads the
+        raw instance dict rather than `self.pr_merged` directly.
+        """
+        override = self.__dict__.get("pr_merged")
+        return override if isinstance(override, bool) else self._repo_ever_merged
+
+    def pr_merged(self, repo, pr_url):
+        """Whether this specific PR has been merged (tracked by URL)."""
+        return pr_url in self.merged_urls
 
     def head_sha(self, repo):
         return "abc123def456"
@@ -219,6 +236,7 @@ class FakeGitHubClient(GitHubClient):
     def merge_pr(self, repo, pr_url):
         self.calls.append(f"merge_pr:{pr_url}")
         self.merged.append(pr_url)
+        self.merged_urls.add(pr_url)
         self.pr_merged = True
 
 

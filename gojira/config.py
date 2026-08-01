@@ -84,6 +84,12 @@ class AuthConfig(BaseModel):
     enabled: bool = False
     allowed_domain: str = ""        # e.g. example.com — any user in the domain
     allowed_emails: list[str] = []  # explicit allowlist, additive to domain
+    # Bearer token gating the IAP-exempt privileged /api/v1 onboarding routes
+    # (api_connect, api_app_status) — that namespace is exempted from the IAP
+    # gate above on the premise its routes carry their own auth; unset here
+    # while enabled is True means those routes have none, so callers must
+    # configure this (web/auth.py's api_token_error fails closed in that case).
+    api_token: str | None = None
 
 
 class Config(BaseModel):
