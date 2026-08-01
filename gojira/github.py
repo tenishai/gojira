@@ -104,6 +104,10 @@ class GitHubClient(ABC):
         """Open a PR; return its URL."""
         ...
 
+    @abstractmethod
+    def merge_pr(self, repo: str, pr_url: str) -> None:
+        """Squash-merge the PR and delete its branch."""
+
 
 class _LocalGit:
     """Auth-free local git operations shared by both backends.
@@ -216,6 +220,10 @@ class GhCLI(_LocalGit, GitHubClient):
             [self._gh, "pr", "create", "--repo", repo, "--head", head,
              "--base", base, "--title", title, "--body", body]
         )
+
+    def merge_pr(self, repo: str, pr_url: str) -> None:
+        self._exec([self._gh, "pr", "merge", pr_url, "--repo", repo,
+                    "--squash", "--delete-branch"])
 
 
 class GitHubAppClient(_LocalGit, GitHubClient):
@@ -387,6 +395,14 @@ class GitHubAppClient(_LocalGit, GitHubClient):
         )
         self._check(r, f"open PR in {repo}")
         return r.json()["html_url"]
+
+    def merge_pr(self, repo: str, pr_url: str) -> None:
+        number = int(pr_url.rstrip("/").rsplit("/", 1)[-1])
+        r = self._request(
+            "PUT", f"/repos/{repo}/pulls/{number}/merge", repo,
+            json={"merge_method": "squash"},
+        )
+        self._check(r, f"merge PR {pr_url}")
 
     def clone(self, repo: str, workdir: Path) -> None:
         token = self._token(self.installation_id_for(repo))

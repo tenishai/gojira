@@ -158,6 +158,7 @@ class FakeGitHubClient(GitHubClient):
         self.tags: list[tuple[str, str, str]] = []  # (repo, tag, sha)
         self.dispatched: list[tuple[str, str, str]] = []  # (repo, workflow, ref)
         self.dispatch_error: str | None = None
+        self.merged: list[str] = []
         self.calls: list[str] = []
 
     def list_repos(self, limit=200):
@@ -214,6 +215,11 @@ class FakeGitHubClient(GitHubClient):
         url = f"https://github.com/{repo}/pull/1"
         self.prs[head] = url
         return url
+
+    def merge_pr(self, repo, pr_url):
+        self.calls.append(f"merge_pr:{pr_url}")
+        self.merged.append(pr_url)
+        self.pr_merged = True
 
 
 class MemoryInstallationResolver(InstallationResolver):

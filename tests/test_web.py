@@ -451,3 +451,18 @@ def test_api_connect_echoes_auto_merge_setup_pr_on_status(client, session_factor
     app_id = resp.json()["id"]
     status = client.get(f"/api/v1/apps/{app_id}").json()
     assert status["auto_merge_setup_pr"] is True
+
+
+def test_api_connect_auto_merge_activates(client, session_factory, clients):
+    _register_three(session_factory)
+    resp = client.post("/api/v1/apps", json=_api_body(auto_merge_setup_pr=True))
+    app_id = resp.json()["id"]
+
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        status = client.get(f"/api/v1/apps/{app_id}").json()
+        if status["status"] in ("active", "failed"):
+            break
+        time.sleep(0.05)
+    assert status["status"] == "active"
+    assert any(s["name"] == "merge_setup_pr" for s in status["steps"])
