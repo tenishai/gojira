@@ -376,3 +376,55 @@ def test_connect_skips_unmapped_env(client, session_factory):
     with session_factory() as s:
         view = service.app_status(s, app_id)
     assert [e.name for e in view.environments] == ["dev"]  # qa/prod skipped
+
+
+def _api_body(**overrides):
+    body = {
+        "name": "clio",
+        "repo_full_name": "acme/agent-clio",
+        "workload_class": "agent",
+        "environments": [{"name": "dev", "cluster": "dev", "namespace": "clio"}],
+        "auto_merge_setup_pr": False,
+    }
+    body.update(overrides)
+    return body
+
+
+def test_api_connect_creates_app_and_provisions(client, session_factory, clients):
+    _register_three(session_factory)
+    resp = client.post("/api/v1/apps", json=_api_body())
+    assert resp.status_code == 201
+    app_id = resp.json()["id"]
+
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        status = client.get(f"/api/v1/apps/{app_id}").json()
+        if status["status"] in ("awaiting_pr", "active", "failed"):
+            break
+        time.sleep(0.05)
+    assert status["status"] == "awaiting_pr"
+    assert status["setup_pr_url"] == "https://github.com/acme/agent-clio/pull/1"
+    assert {"name", "status", "error"} <= set(status["steps"][0])
+
+
+def test_api_connect_unknown_cluster_404(client, session_factory):
+    _register_three(session_factory)
+    resp = client.post("/api/v1/apps", json=_api_body(
+        environments=[{"name": "dev", "cluster": "nope", "namespace": "x"}]))
+    assert resp.status_code == 404
+
+
+def test_api_connect_duplicate_repo_409(client, session_factory):
+    _register_three(session_factory)
+    assert client.post("/api/v1/apps", json=_api_body()).status_code == 201
+    assert client.post("/api/v1/apps", json=_api_body(name="other")).status_code == 409
+
+
+def test_api_connect_bad_class_422(client, session_factory):
+    _register_three(session_factory)
+    resp = client.post("/api/v1/apps", json=_api_body(workload_class="mainframe"))
+    assert resp.status_code == 422
+
+
+def test_api_status_unknown_id_404(client):
+    assert client.get("/api/v1/apps/999").status_code == 404

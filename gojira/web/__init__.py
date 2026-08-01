@@ -14,6 +14,7 @@ from urllib.parse import quote
 from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
 
 from gojira import models, service, webhooks
@@ -289,6 +290,79 @@ def create_app(
         except Exception as exc:
             log.warning("sizing PR failed for app %s/%s: %s", app_id, env, exc)
         return RedirectResponse(f"/apps/{app_id}", status_code=303)
+
+    class EnvIn(BaseModel):
+        name: str
+        cluster: str
+        namespace: str = ""
+
+    class ConnectIn(BaseModel):
+        name: str = Field(min_length=1, max_length=63)
+        repo_full_name: str = Field(pattern=r"^[^/\s]+/[^/\s]+$")
+        workload_class: str
+        environments: list[EnvIn] = Field(min_length=1)
+        auto_merge_setup_pr: bool = False
+
+    @app.post("/api/v1/apps")
+    def api_connect(body: ConnectIn, request: Request, session: Session = Depends(get_session)):
+        if body.workload_class not in WORKLOAD_CLASSES:
+            return JSONResponse(
+                {"error": f"unknown workload class {body.workload_class!r}"}, status_code=422
+            )
+        if service.app_by_repo(session, body.repo_full_name):
+            return JSONResponse({"error": "repo already connected"}, status_code=409)
+        if not service.repo_has_dockerfile(request.app.state.clients.github, body.repo_full_name):
+            return JSONResponse({"error": "repo has no Dockerfile at its root"}, status_code=422)
+        env_map: dict[str, tuple[int, str]] = {}
+        for env in body.environments:
+            cluster = session.query(models.Cluster).filter_by(name=env.cluster).one_or_none()
+            if cluster is None:
+                return JSONResponse(
+                    {"error": f"unknown cluster {env.cluster!r}"}, status_code=404
+                )
+            env_map[env.name] = (cluster.id, env.namespace or body.name)
+        try:
+            installation_id = request.app.state.clients.github.installation_id_for(
+                body.repo_full_name
+            )
+        except Exception:
+            installation_id = 0
+        app_obj = service.connect_app(
+            session,
+            name=body.name,
+            repo_full_name=body.repo_full_name,
+            workload_class=body.workload_class,
+            env_map=env_map,
+            installation_id=installation_id,
+        )
+        app_obj.auto_merge_setup_pr = body.auto_merge_setup_pr
+        session.commit()
+        service.start_provision(
+            request.app.state.session_factory,
+            app_obj.id,
+            clients=request.app.state.clients,
+            config=request.app.state.config,
+        )
+        return JSONResponse({"id": app_obj.id, "status": app_obj.status}, status_code=201)
+
+    @app.get("/api/v1/apps/{app_id}")
+    def api_app_status(app_id: int, session: Session = Depends(get_session)):
+        app_obj = session.get(models.App, app_id)
+        if app_obj is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse(
+            {
+                "id": app_obj.id,
+                "name": app_obj.name,
+                "status": app_obj.status,
+                "setup_pr_url": app_obj.setup_pr_url,
+                "auto_merge_setup_pr": app_obj.auto_merge_setup_pr,
+                "steps": [
+                    {"name": s.step_name, "status": s.status, "error": s.error}
+                    for s in app_obj.steps
+                ],
+            }
+        )
 
     @app.post("/api/v1/usage")
     async def ingest_usage(request: Request, session: Session = Depends(get_session)):
