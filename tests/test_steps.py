@@ -311,6 +311,24 @@ def test_merge_setup_pr_merges_and_activates(single_env):
     assert "merged" in result
 
 
+def test_merge_setup_pr_retry_skips_already_merged_pr(single_env):
+    """A retry after a partial failure (merge landed server-side, client raised
+    before setup_pr_url cleared) must not re-merge — that would error on an
+    already-merged PR and wedge the ephemeral step at FAILED forever."""
+    app, cluster, env = single_env
+    app.auto_merge_setup_pr = True
+    app.setup_pr_url = "https://github.com/acme/agent-clio/pull/1"
+    github = FakeGitHubClient(pr_merged=True)
+    ctx = ProvisionContext(
+        app=app, config=Config(), clients={"github": github}, environments=[env]
+    )
+    result = MergeSetupPr().apply(ctx)
+    assert result == "already merged"
+    assert github.merged == []  # merge_pr was NOT called
+    assert ctx.app.setup_pr_url is None
+    assert ctx.app.status == AppStatus.ACTIVE
+
+
 # --- promotion plan ----------------------------------------------------------
 
 
