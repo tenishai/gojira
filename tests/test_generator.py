@@ -205,3 +205,11 @@ def test_single_env_has_no_promote_workflow():
     files = render(spec)
     assert ".github/workflows/gojira-promote.yaml" not in files
     assert ".github/workflows/gojira-ci.yaml" in files
+
+
+def test_agent_class_renders_service():
+    spec = make_spec(workload_class="agent")
+    files = render(spec)
+    assert "k8s/base/service.yaml" in files
+    assert "readinessProbe" in files["k8s/base/deployment.yaml"]
+    assert "/healthz" in files["k8s/base/deployment.yaml"]
