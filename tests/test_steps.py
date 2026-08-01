@@ -29,6 +29,7 @@ from gojira.steps import (
     EnsureNamespace,
     GrantIamRoles,
     GrantPromoteSourceReader,
+    MergeSetupPr,
     Names,
     build_spec,
     per_project_steps,
@@ -271,6 +272,43 @@ def test_promote_reader_grant_crosses_project(session):
         app=app, config=Config(), clients={"gcp": gcp}, environment=e_qa, environments=envs
     )
     assert step.check(qa_ctx) == "n/a"
+
+
+# --- auto-merge the setup PR --------------------------------------------------
+
+
+def test_merge_setup_pr_skips_when_not_requested(single_env):
+    app, cluster, env = single_env
+    app.auto_merge_setup_pr = False
+    app.setup_pr_url = "https://github.com/acme/agent-clio/pull/1"
+    ctx = ProvisionContext(
+        app=app, config=Config(), clients={"github": FakeGitHubClient()}, environments=[env]
+    )
+    assert MergeSetupPr().check(ctx) == "auto-merge not requested"
+
+
+def test_merge_setup_pr_skips_when_no_pr(single_env):
+    app, cluster, env = single_env
+    app.auto_merge_setup_pr = True
+    app.setup_pr_url = None
+    ctx = ProvisionContext(
+        app=app, config=Config(), clients={"github": FakeGitHubClient()}, environments=[env]
+    )
+    assert MergeSetupPr().check(ctx) == "no setup PR to merge"
+
+
+def test_merge_setup_pr_merges_and_activates(single_env):
+    app, cluster, env = single_env
+    app.auto_merge_setup_pr = True
+    app.setup_pr_url = "https://github.com/acme/agent-clio/pull/1"
+    github = FakeGitHubClient()
+    ctx = ProvisionContext(
+        app=app, config=Config(), clients={"github": github}, environments=[env]
+    )
+    result = MergeSetupPr().apply(ctx)
+    assert github.merged == ["https://github.com/acme/agent-clio/pull/1"]
+    assert ctx.app.status == AppStatus.ACTIVE
+    assert "merged" in result
 
 
 # --- promotion plan ----------------------------------------------------------
