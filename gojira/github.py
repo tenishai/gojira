@@ -189,8 +189,10 @@ class GhCLI(_LocalGit, GitHubClient):
         return out.strip() not in ("", "0")
 
     def pr_merged(self, repo: str, pr_url: str) -> bool:
+        # gh's pr-view JSON has no "merged" field; state is OPEN/CLOSED/MERGED.
         out = self._exec(
-            [self._gh, "pr", "view", pr_url, "--repo", repo, "--json", "merged", "--jq", ".merged"]
+            [self._gh, "pr", "view", pr_url, "--repo", repo,
+             "--json", "state", "--jq", '.state == "MERGED"']
         )
         return out.strip() == "true"
 
