@@ -56,6 +56,7 @@ class FakeGitHubServer:
         self.merges: list[tuple[str, int, dict]] = []  # (repo, number, body)
         self.deleted_refs: list[tuple[str, str]] = []  # (repo, branch)
         self.delete_ref_status = 204
+        self.pull_get_status = 200  # non-200 simulates the post-merge GET failing
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -106,8 +107,10 @@ class FakeGitHubServer:
 
         m = re.fullmatch(r"/repos/([^/]+/[^/]+)/pulls/(\d+)", path)
         if method == "GET" and m:
+            if self.pull_get_status != 200:
+                return httpx.Response(self.pull_get_status, json={"message": "boom"})
             number = int(m.group(2))
-            default = {"number": number, "head": {"ref": "gojira/setup"}}
+            default = {"number": number, "head": {"ref": "gojira/setup"}, "merged": False}
             return httpx.Response(200, json=self.pull_details.get(number, default))
 
         m = re.fullmatch(r"/repos/([^/]+/[^/]+)/git/refs/heads/(.+)", path)
@@ -218,6 +221,16 @@ def test_setup_pr_merged(keypair):
     assert client.setup_pr_merged("acme/web") is True
 
 
+def test_pr_merged_checks_the_specific_pr(keypair):
+    server = FakeGitHubServer()
+    server.pull_details[7] = {"number": 7, "head": {"ref": "gojira/setup"}, "merged": False}
+    server.pull_details[9] = {"number": 9, "head": {"ref": "gojira/setup"}, "merged": True}
+    client = make_client(server, keypair)
+
+    assert client.pr_merged("acme/web", "https://github.com/acme/web/pull/7") is False
+    assert client.pr_merged("acme/web", "https://github.com/acme/web/pull/9") is True
+
+
 def test_default_branch_and_head_sha(keypair):
     server = FakeGitHubServer()
     client = make_client(server, keypair)
@@ -281,6 +294,20 @@ def test_merge_pr_survives_branch_delete_failure(keypair):
 
     assert server.merges == [("acme/web", 7, {"merge_method": "squash"})]
     assert server.deleted_refs == [("acme/web", "feature/x")]
+
+
+def test_merge_pr_survives_post_merge_fetch_failure(keypair):
+    """The post-merge GET (to learn the head ref for branch cleanup) is just as
+    cosmetic as the DELETE it feeds — a failure there must not fail the step
+    after a merge that already succeeded server-side."""
+    server = FakeGitHubServer()
+    server.pull_get_status = 500  # the GET .../pulls/{number} itself fails
+    client = make_client(server, keypair)
+
+    client.merge_pr("acme/web", "https://github.com/acme/web/pull/7")  # must not raise
+
+    assert server.merges == [("acme/web", 7, {"merge_method": "squash"})]
+    assert server.deleted_refs == []  # never reached — the GET failed first
 
 
 def test_list_repos_unions_installations_and_seeds_resolver(keypair):

@@ -317,8 +317,9 @@ def test_merge_setup_pr_retry_skips_already_merged_pr(single_env):
     already-merged PR and wedge the ephemeral step at FAILED forever."""
     app, cluster, env = single_env
     app.auto_merge_setup_pr = True
-    app.setup_pr_url = "https://github.com/acme/agent-clio/pull/1"
-    github = FakeGitHubClient(pr_merged=True)
+    url = "https://github.com/acme/agent-clio/pull/1"
+    app.setup_pr_url = url
+    github = FakeGitHubClient(merged_urls={url})
     ctx = ProvisionContext(
         app=app, config=Config(), clients={"github": github}, environments=[env]
     )
@@ -327,6 +328,28 @@ def test_merge_setup_pr_retry_skips_already_merged_pr(single_env):
     assert github.merged == []  # merge_pr was NOT called
     assert ctx.app.setup_pr_url is None
     assert ctx.app.status == AppStatus.ACTIVE
+
+
+def test_merge_setup_pr_merges_fresh_pr_despite_older_pr_merged(single_env):
+    """The guard is PR-specific, not repo-history: re-provisioning after a
+    generator upgrade opens a FRESH setup PR under the same branch (finding
+    #13's OpenSetupPr refresh). A stale PR #1 having been merged in some
+    earlier cycle must not short-circuit "already merged" for the new PR #2 —
+    that would erase setup_pr_url and silently orphan the fresh PR."""
+    app, cluster, env = single_env
+    app.auto_merge_setup_pr = True
+    old_url = "https://github.com/acme/agent-clio/pull/1"
+    new_url = "https://github.com/acme/agent-clio/pull/2"
+    app.setup_pr_url = new_url
+    github = FakeGitHubClient(merged_urls={old_url})
+    ctx = ProvisionContext(
+        app=app, config=Config(), clients={"github": github}, environments=[env]
+    )
+    result = MergeSetupPr().apply(ctx)
+    assert github.merged == [new_url]  # merge_pr WAS called, on the fresh PR
+    assert ctx.app.setup_pr_url is None
+    assert ctx.app.status == AppStatus.ACTIVE
+    assert "merged" in result
 
 
 # --- promotion plan ----------------------------------------------------------

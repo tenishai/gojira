@@ -14,7 +14,7 @@ from urllib.parse import quote
 from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -304,8 +304,18 @@ def create_app(
         environments: list[EnvIn] = Field(min_length=1)
         auto_merge_setup_pr: bool = False
 
+        @field_validator("environments")
+        @classmethod
+        def _unique_env_names(cls, envs: list[EnvIn]) -> list[EnvIn]:
+            names = [e.name for e in envs]
+            if len(names) != len(set(names)):
+                raise ValueError(f"duplicate environment names: {names}")
+            return envs
+
     @app.post("/api/v1/apps")
     def api_connect(body: ConnectIn, request: Request, session: Session = Depends(get_session)):
+        if err := auth.api_token_error(request, request.app.state.config.auth):
+            return err
         if body.workload_class not in WORKLOAD_CLASSES:
             return JSONResponse(
                 {"error": f"unknown workload class {body.workload_class!r}"}, status_code=422
@@ -343,16 +353,24 @@ def create_app(
         except IntegrityError:
             session.rollback()
             return JSONResponse({"error": "repo already connected"}, status_code=409)
+        # Captured before start_provision: the background thread mutates this
+        # same row in its own session, so reading app_obj.status afterward can
+        # race it and report a status the caller never actually got back from
+        # THIS request (e.g. already "active" instead of the just-connected
+        # "pending").
+        status = app_obj.status
         service.start_provision(
             request.app.state.session_factory,
             app_obj.id,
             clients=request.app.state.clients,
             config=request.app.state.config,
         )
-        return JSONResponse({"id": app_obj.id, "status": app_obj.status}, status_code=201)
+        return JSONResponse({"id": app_obj.id, "status": status}, status_code=201)
 
     @app.get("/api/v1/apps/{app_id}")
-    def api_app_status(app_id: int, session: Session = Depends(get_session)):
+    def api_app_status(app_id: int, request: Request, session: Session = Depends(get_session)):
+        if err := auth.api_token_error(request, request.app.state.config.auth):
+            return err
         app_obj = session.get(models.App, app_id)
         if app_obj is None:
             return JSONResponse({"error": "not found"}, status_code=404)

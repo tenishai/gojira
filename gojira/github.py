@@ -64,6 +64,11 @@ class GitHubClient(ABC):
         ...
 
     @abstractmethod
+    def pr_merged(self, repo: str, pr_url: str) -> bool:
+        """Whether this specific PR has been merged."""
+        ...
+
+    @abstractmethod
     def head_sha(self, repo: str) -> str:
         """The commit SHA at the tip of the repo's default branch."""
         ...
@@ -182,6 +187,12 @@ class GhCLI(_LocalGit, GitHubClient):
              "--state", "merged", "--json", "number", "--jq", "length"]
         )
         return out.strip() not in ("", "0")
+
+    def pr_merged(self, repo: str, pr_url: str) -> bool:
+        out = self._exec(
+            [self._gh, "pr", "view", pr_url, "--repo", repo, "--json", "merged", "--jq", ".merged"]
+        )
+        return out.strip() == "true"
 
     def default_branch(self, repo: str) -> str:
         return self._exec(
@@ -351,6 +362,12 @@ class GitHubAppClient(_LocalGit, GitHubClient):
         self._check(r, f"list setup PRs for {repo}")
         return any(pr.get("merged_at") for pr in r.json())
 
+    def pr_merged(self, repo: str, pr_url: str) -> bool:
+        number = int(pr_url.rstrip("/").rsplit("/", 1)[-1])
+        r = self._request("GET", f"/repos/{repo}/pulls/{number}", repo)
+        self._check(r, f"check merged state of PR {pr_url}")
+        return bool(r.json()["merged"])
+
     def default_branch(self, repo: str) -> str:
         r = self._request("GET", f"/repos/{repo}", repo)
         self._check(r, f"view {repo}")
@@ -404,14 +421,17 @@ class GitHubAppClient(_LocalGit, GitHubClient):
             json={"merge_method": "squash"},
         )
         self._check(r, f"merge PR {pr_url}")
-        pr = self._request("GET", f"/repos/{repo}/pulls/{number}", repo)
-        self._check(pr, f"fetch PR {pr_url}")
-        head_ref = pr.json()["head"]["ref"]
+        # Branch cleanup (fetching the head ref, then deleting it) is cosmetic —
+        # a failure in either call must never fail the step after a successful
+        # merge, so both live inside this one best-effort try/except.
         try:
+            pr = self._request("GET", f"/repos/{repo}/pulls/{number}", repo)
+            self._check(pr, f"fetch PR {pr_url}")
+            head_ref = pr.json()["head"]["ref"]
             d = self._request("DELETE", f"/repos/{repo}/git/refs/heads/{head_ref}", repo)
             self._check(d, f"delete branch {head_ref} in {repo}")
-        except Exception as exc:  # branch cleanup is cosmetic — never fail the merge over it
-            log.warning("could not delete branch %s in %s after merge: %s", head_ref, repo, exc)
+        except Exception as exc:
+            log.warning("could not delete setup branch in %s after merge: %s", repo, exc)
 
     def clone(self, repo: str, workdir: Path) -> None:
         token = self._token(self.installation_id_for(repo))
