@@ -74,6 +74,9 @@ class App(Base):
     workload_class: Mapped[str] = mapped_column(String(16))
     status: Mapped[AppStatus] = mapped_column(String(16), default=AppStatus.PENDING)
     setup_pr_url: Mapped[str | None] = mapped_column(String(512))
+    # Caller-created repos (cortex) opt in to auto-merging the setup PR — the
+    # one-click deploy contract. Human-connected repos keep the review gate.
+    auto_merge_setup_pr: Mapped[bool] = mapped_column(default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(default=utcnow, server_default=func.now())
 
     environments: Mapped[list["Environment"]] = relationship(
