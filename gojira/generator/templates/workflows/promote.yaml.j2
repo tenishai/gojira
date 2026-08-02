@@ -14,7 +14,7 @@ on:
     tags: ['v*']
 
 concurrency:
-  group: gojira-deploy-{{ '${{ github.repository }}' }}
+  group: gojira-deploy-{{ '${{ github.repository }}' }}-{{ '${{ github.workflow }}' }}
   cancel-in-progress: false
 
 permissions:

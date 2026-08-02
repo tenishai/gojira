@@ -184,6 +184,20 @@ def test_ci_targets_first_env():
     assert "build-and-deploy-dev" in ci["jobs"]
 
 
+def test_concurrency_scoped_by_workflow():
+    """ci and promote never target the same cluster (envs are disjoint by
+    construction), so they must not serialize against each other — but
+    repeated runs of the *same* workflow (the actual field race) still queue.
+    """
+    files = render(make_spec())
+    for wf in (".github/workflows/gojira-ci.yaml", ".github/workflows/gojira-promote.yaml"):
+        parsed = yaml.safe_load(files[wf])
+        concurrency = parsed["concurrency"]
+        assert concurrency["cancel-in-progress"] is False
+        assert "github.repository" in concurrency["group"]
+        assert "github.workflow" in concurrency["group"]
+
+
 def test_sameproject_promote_deploys_without_crane_copy():
     """prod shares qa's registry, so the tested image is already present."""
     promote = render(make_spec())[".github/workflows/gojira-promote.yaml"]
