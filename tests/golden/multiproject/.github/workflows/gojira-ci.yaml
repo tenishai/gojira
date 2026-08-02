@@ -8,7 +8,7 @@ on:
   workflow_dispatch: {}  # Gojira's Redeploy button
 
 concurrency:
-  group: gojira-deploy-${{ github.repository }}
+  group: gojira-deploy-${{ github.repository }}-${{ github.workflow }}
   cancel-in-progress: false
 
 permissions:
