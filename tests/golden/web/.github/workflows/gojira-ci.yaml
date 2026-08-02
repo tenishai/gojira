@@ -7,6 +7,10 @@ on:
     branches: [main]
   workflow_dispatch: {}  # Gojira's Redeploy button
 
+concurrency:
+  group: gojira-deploy-${{ github.repository }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
   id-token: write

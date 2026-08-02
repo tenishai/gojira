@@ -12,6 +12,10 @@ on:
   push:
     tags: ['v*']
 
+concurrency:
+  group: gojira-deploy-${{ github.repository }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
   id-token: write
