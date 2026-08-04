@@ -580,6 +580,18 @@ def test_api_connect_namespace_with_slash_422(client, session_factory):
     assert resp.status_code == 422
 
 
+def test_api_connect_namespace_with_trailing_newline_422(client, session_factory):
+    """`$` in the DNS-1123 charset regex matches just before a trailing
+    newline, so `.match()` alone lets 'clio\\n' through; the validator must
+    use `.fullmatch()` (or an equivalent `\\Z`-anchored check) to reject it
+    before the raw newline reaches the DB/YAML pipeline."""
+    _register_three(session_factory)
+    resp = client.post("/api/v1/apps", json=_api_body(
+        environments=[{"name": "dev", "cluster": "dev", "namespace": "clio\n"}]
+    ))
+    assert resp.status_code == 422
+
+
 def test_api_connect_namespace_blank_still_allowed(client, session_factory):
     """Blank namespace is a legitimate sentinel meaning "derive it from the
     app name" (see api_connect's env_map construction) — not a raw value that

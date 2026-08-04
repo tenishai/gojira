@@ -40,7 +40,7 @@ def init_db(engine) -> None:
     if "auto_merge_setup_pr" not in cols:
         with engine.begin() as conn:
             conn.execute(text(
-                "ALTER TABLE apps ADD COLUMN auto_merge_setup_pr BOOLEAN NOT NULL DEFAULT 0"
+                "ALTER TABLE apps ADD COLUMN auto_merge_setup_pr BOOLEAN NOT NULL DEFAULT FALSE"
             ))
         log.info("migrated apps table: added auto_merge_setup_pr")
     log.info("database initialized")

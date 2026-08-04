@@ -28,7 +28,7 @@ class DefaultsConfig(BaseModel):
     environments: list[str] = ["dev", "qa", "prod"]
     # Stamped on every namespace Gojira creates (and re-asserted on
     # re-onboard). Secrets infrastructure commonly gates on namespace labels
-    # (e.g. an ESO ClusterSecretStore matching fubo.tv/team) — a missing
+    # (e.g. an ESO ClusterSecretStore matching example.com/team) — a missing
     # label means ExternalSecrets silently never sync (Rook's finding).
     namespace_labels: dict[str, str] = {}
 
@@ -70,7 +70,7 @@ class SizingConfig(BaseModel):
 
 
 class AuthConfig(BaseModel):
-    """Identity at the front door — the Kodama pattern.
+    """Identity at the front door — the trust-the-proxy pattern.
 
     Gojira does not speak OAuth itself: an Identity-Aware Proxy in front of
     the install authenticates the human and asserts the identity in the
