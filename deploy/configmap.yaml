@@ -6,6 +6,13 @@ metadata:
 data:
   config.yaml: |
     # ${VAR} values are interpolated from the pod's env at load (see config.py).
+    # No default on api_token below is deliberate: an unset $GOJIRA_API_TOKEN
+    # makes config load raise, so the pod fails closed at boot rather than
+    # coming up with the onboarding API (/api/v1/apps, /api/v1/apps/{id})
+    # open to any in-cluster pod. This is independent of auth.enabled (IAP) —
+    # that gate covers the human UI, not the /api/v1/* exemption.
+    auth:
+      api_token: "${GOJIRA_API_TOKEN}"
     github:
       app_id: "${GOJIRA_GITHUB_APP_ID}"
       private_key_path: /secrets/github-app.pem
@@ -20,7 +27,7 @@ data:
       environments: [dev, qa, prod]
       # Labels stamped on every namespace Gojira creates — secrets infra
       # (e.g. an ESO ClusterSecretStore) often gates on these:
-      # namespace_labels: { fubo.tv/team: sre }
+      # namespace_labels: { example.com/team: sre }
     # To enable the Clusters-page "Deploy agent" button, point sizing.agent_image
     # at your build of https://github.com/tenishai/gojira-sizing-agent:
     # sizing:

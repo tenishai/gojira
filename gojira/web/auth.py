@@ -1,4 +1,4 @@
-"""IAP-trusting identity middleware — the Kodama pattern, ported.
+"""IAP-trusting identity middleware — a standard trust-the-proxy pattern, ported.
 
 IAP authenticates the human at the load balancer and asserts
 x-goog-authenticated-user-email on every request it forwards. This
@@ -68,7 +68,13 @@ def api_token_error(request: Request, auth: AuthConfig) -> JSONResponse | None:
         # Non-None check first: compare_digest requires two strs (or two
         # bytes-likes) of matching type and raises on None, so a missing
         # header must short-circuit before it ever reaches the comparison.
-        if provided is None or not secrets.compare_digest(provided, expected):
+        # Encode to bytes before comparing: compare_digest raises TypeError
+        # on two str args if either contains non-ASCII characters, and a
+        # header is attacker-controlled input — encoding first turns a stray
+        # non-ASCII byte into an ordinary mismatch (401) instead of a 500.
+        if provided is None or not secrets.compare_digest(
+            provided.encode("utf-8", "replace"), expected.encode("utf-8")
+        ):
             return JSONResponse({"error": "bearer token required"}, status_code=401)
         return None
     if auth.enabled:
