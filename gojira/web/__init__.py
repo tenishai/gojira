@@ -313,7 +313,7 @@ def create_app(
             # DNS-1123-validated below. So only a non-empty value needs to
             # satisfy the charset here — requiring non-blank would break the
             # "derive it from the app name" convenience the UI relies on.
-            if v and not DNS1123_LABEL.match(v):
+            if v and not DNS1123_LABEL.fullmatch(v):
                 raise ValueError(f"namespace {v!r} is not a valid DNS-1123 label")
             return v
 

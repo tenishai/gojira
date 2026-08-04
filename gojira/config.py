@@ -70,7 +70,7 @@ class SizingConfig(BaseModel):
 
 
 class AuthConfig(BaseModel):
-    """Identity at the front door — the Kodama pattern.
+    """Identity at the front door — the trust-the-proxy pattern.
 
     Gojira does not speak OAuth itself: an Identity-Aware Proxy in front of
     the install authenticates the human and asserts the identity in the
