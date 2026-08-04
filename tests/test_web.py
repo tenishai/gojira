@@ -555,6 +555,63 @@ def test_api_connect_duplicate_environment_names_422(client, session_factory):
     assert resp.status_code == 422
 
 
+# --- name/namespace/repo charset validation (finding #3: auto-merge removes
+# the human-PR sanitization backstop, so these must be enforced up front,
+# before the values ever reach Jinja2-rendered YAML or a GSA id) -----------
+
+
+def test_api_connect_name_with_newline_422(client, session_factory):
+    _register_three(session_factory)
+    resp = client.post("/api/v1/apps", json=_api_body(name="clio\nmalicious"))
+    assert resp.status_code == 422
+
+
+def test_api_connect_name_with_uppercase_or_underscore_422(client, session_factory):
+    _register_three(session_factory)
+    assert client.post("/api/v1/apps", json=_api_body(name="Clio")).status_code == 422
+    assert client.post("/api/v1/apps", json=_api_body(name="cli_o")).status_code == 422
+
+
+def test_api_connect_namespace_with_slash_422(client, session_factory):
+    _register_three(session_factory)
+    resp = client.post("/api/v1/apps", json=_api_body(
+        environments=[{"name": "dev", "cluster": "dev", "namespace": "a/../b"}]
+    ))
+    assert resp.status_code == 422
+
+
+def test_api_connect_namespace_blank_still_allowed(client, session_factory):
+    """Blank namespace is a legitimate sentinel meaning "derive it from the
+    app name" (see api_connect's env_map construction) — not a raw value that
+    ever reaches k8s, so it must not be rejected by the charset check."""
+    _register_three(session_factory)
+    resp = client.post("/api/v1/apps", json=_api_body(
+        environments=[{"name": "dev", "cluster": "dev", "namespace": ""}]
+    ))
+    assert resp.status_code == 201
+
+
+def test_api_connect_repo_full_name_traversal_422(client, session_factory):
+    _register_three(session_factory)
+    # A single ".." segment matches the old single-slash charset regex fine
+    # (two non-slash groups) — it's exactly the traversal case that regex
+    # alone doesn't catch and the dedicated segment check must reject.
+    resp = client.post("/api/v1/apps", json=_api_body(repo_full_name="acme/.."))
+    assert resp.status_code == 422
+
+
+def test_api_connect_repo_full_name_leading_dash_422(client, session_factory):
+    _register_three(session_factory)
+    resp = client.post("/api/v1/apps", json=_api_body(repo_full_name="acme/-rf"))
+    assert resp.status_code == 422
+
+
+def test_api_connect_valid_body_still_passes(client, session_factory):
+    _register_three(session_factory)
+    resp = client.post("/api/v1/apps", json=_api_body())
+    assert resp.status_code == 201
+
+
 # --- /api/v1 bearer-token gate (the IAP-exempt namespace's own auth) --------
 
 
@@ -634,3 +691,24 @@ def test_api_no_token_and_iap_disabled_allows(client, session_factory):
     _register_three(session_factory)
     resp = client.post("/api/v1/apps", json=_api_body())
     assert resp.status_code == 201
+
+
+def test_api_token_non_ascii_header_401_not_500(session_factory, clients):
+    """secrets.compare_digest raises TypeError on two strs where one has
+    non-ASCII content once encoded to bytes of mismatched length/type in some
+    paths — a stray non-ASCII Authorization header must 401, not 500."""
+    cfg = Config()
+    cfg.auth.api_token = "s3cr3t"
+    client = TestClient(create_app(session_factory, clients=clients, config=cfg))
+    _register_three(session_factory)
+
+    resp = client.post(
+        "/api/v1/apps",
+        json=_api_body(),
+        # httpx's TestClient rejects a plain non-ASCII str header outright
+        # (encodes as ascii client-side) — send raw bytes so the non-ASCII
+        # byte actually reaches the server, decoded per HTTP as latin-1 into
+        # a non-ASCII str, same as a real client would deliver it.
+        headers={"Authorization": "Bearer café".encode()},
+    )
+    assert resp.status_code == 401

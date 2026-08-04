@@ -8,6 +8,7 @@ the run reaches a terminal state.
 
 import json
 import logging
+import re
 from pathlib import Path
 from urllib.parse import quote
 
@@ -30,6 +31,12 @@ from gojira.service import ProvisionClients
 log = logging.getLogger(__name__)
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+# k8s object-name charset (RFC 1123 label): these values flow unsanitized into
+# Jinja2-rendered YAML and a GSA id (finding #3) — auto-merge removes the
+# human-review backstop that used to catch a stray char before it got that
+# far, so the API boundary has to enforce it instead.
+DNS1123_LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 
 
 def create_app(
@@ -297,9 +304,22 @@ def create_app(
         cluster: str
         namespace: str = ""
 
+        @field_validator("namespace")
+        @classmethod
+        def _namespace_charset(cls, v: str) -> str:
+            # Blank is a legitimate sentinel, not a raw value that ever
+            # reaches k8s: api_connect derives the real namespace with
+            # `env.namespace or body.name`, and body.name is itself
+            # DNS-1123-validated below. So only a non-empty value needs to
+            # satisfy the charset here — requiring non-blank would break the
+            # "derive it from the app name" convenience the UI relies on.
+            if v and not DNS1123_LABEL.match(v):
+                raise ValueError(f"namespace {v!r} is not a valid DNS-1123 label")
+            return v
+
     class ConnectIn(BaseModel):
-        name: str = Field(min_length=1, max_length=63)
-        repo_full_name: str = Field(pattern=r"^[^/\s]+/[^/\s]+$")
+        name: str = Field(min_length=1, max_length=63, pattern=DNS1123_LABEL.pattern)
+        repo_full_name: str = Field(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
         workload_class: str
         environments: list[EnvIn] = Field(min_length=1)
         auto_merge_setup_pr: bool = False
@@ -311,6 +331,20 @@ def create_app(
             if len(names) != len(set(names)):
                 raise ValueError(f"duplicate environment names: {names}")
             return envs
+
+        @field_validator("repo_full_name")
+        @classmethod
+        def _repo_full_name_no_traversal(cls, v: str) -> str:
+            # The charset pattern above allows '.' and '-', which are legal
+            # GitHub owner/repo characters but also let a segment spell '.',
+            # '..', or a leading '-' (which some tools parse as a flag) —
+            # reject those specifically rather than narrowing the charset
+            # itself.
+            owner, repo = v.split("/", 1)
+            for segment in (owner, repo):
+                if segment in (".", "..") or segment.startswith("-"):
+                    raise ValueError(f"repo_full_name segment {segment!r} is not allowed")
+            return v
 
     @app.post("/api/v1/apps")
     def api_connect(body: ConnectIn, request: Request, session: Session = Depends(get_session)):
