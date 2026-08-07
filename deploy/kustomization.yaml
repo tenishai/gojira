@@ -19,6 +19,6 @@ images:
     newName: REPLACE_AR_PATH/gojira
     newTag: dev
 
-# The gojira-github-app Secret (app_id, webhook_secret, private_key) is created
-# out-of-band so the private key never lands in git — see deploy/secret.example.yaml
-# and the runbook's `kubectl create secret` step.
+# The gojira-github-app Secret (app_id, webhook_secret, api_token, private_key)
+# is created out-of-band so the private key never lands in git — see
+# deploy/secret.example.yaml and the runbook's `kubectl create secret` step.

@@ -32,7 +32,7 @@ from gojira.generator import (
 )
 from gojira.github import SETUP_BRANCH, GitHubClient
 from gojira.k8s import KubectlClient
-from gojira.models import App, Environment
+from gojira.models import App, AppStatus, Environment
 from gojira.opinions import WORKLOAD_CLASSES
 from gojira.provisioner import ProvisionContext, Step
 
@@ -563,6 +563,58 @@ class OpenSetupPr:
         return url
 
 
+class MergeSetupPr:
+    """Auto-merge the setup PR when the app opted in (caller-created repos).
+
+    The one-click contract: a programmatic caller that authored the repo has
+    no human content to protect, so the review gate is theirs to waive. Like
+    OpenSetupPr, re-decides against the real world each run.
+    """
+
+    name = "merge_setup_pr"
+    ephemeral = True
+
+    def check(self, ctx: ProvisionContext) -> str | None:
+        if not ctx.app.auto_merge_setup_pr:
+            return "auto-merge not requested"
+        if not ctx.app.setup_pr_url:
+            return "no setup PR to merge"
+        return None
+
+    def apply(self, ctx: ProvisionContext) -> str:
+        gh = _github(ctx)
+        repo = ctx.app.repo_full_name
+        url = ctx.app.setup_pr_url
+        if gh.pr_merged(repo, url):
+            # Retry after a partial failure: a prior attempt's merge_pr landed
+            # server-side but the client raised before setup_pr_url cleared,
+            # so a naive retry would re-merge an already-merged PR and wedge
+            # the step at FAILED forever. Re-decide against the real world
+            # (OpenSetupPr's idiom) instead of blindly re-calling merge_pr.
+            #
+            # This guard is PR-specific (checks THIS url, not repo history):
+            # setup_pr_merged() answers "was any closed setup PR ever merged",
+            # which stays true forever after the first merge. Re-provisioning
+            # an auto-merge app opens a fresh PR under the same setup branch
+            # (OpenSetupPr refreshes/reopens it) — a repo-history guard would
+            # short-circuit here, erase setup_pr_url, and silently orphan the
+            # fresh PR every time.
+            ctx.app.status = AppStatus.ACTIVE  # load-bearing for direct apply() callers
+            ctx.app.setup_pr_url = None
+            return "already merged"
+        gh.merge_pr(repo, url)
+        # Load-bearing for direct apply() callers; provision_app's recompute
+        # derives the same status from the cleared setup_pr_url below.
+        ctx.app.status = AppStatus.ACTIVE
+        # Mirrors activate_app's convention (service.py): the URL is merged
+        # history now. provision_app recomputes app.status from setup_pr_url
+        # right after per_app_steps runs (AWAITING_PR if still set, else
+        # ACTIVE) — leaving it set here would drag the app straight back to
+        # AWAITING_PR before anyone observes the ACTIVE we just set.
+        ctx.app.setup_pr_url = None
+        return f"merged {url}"
+
+
 # --- promotion topology + spec assembly --------------------------------------
 
 
@@ -662,5 +714,5 @@ def per_env_steps() -> list[Step]:
 
 
 def per_app_steps() -> list[Step]:
-    """The repo flow: clone the working tree, render artifacts, open the setup PR."""
-    return [PrepareWorkdir(), GenerateArtifacts(), OpenSetupPr()]
+    """The repo flow: clone, render artifacts, open the setup PR, optionally merge it."""
+    return [PrepareWorkdir(), GenerateArtifacts(), OpenSetupPr(), MergeSetupPr()]

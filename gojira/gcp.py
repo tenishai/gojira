@@ -238,9 +238,12 @@ class GcloudClient(GCPClient):
     # --- gke -----------------------------------------------------------------
 
     def get_gke_credentials(self, project: str, location: str, cluster: str) -> str:
+        # The pipeline has already ensured DNS access (ensure_cluster_dns_access);
+        # the default endpoint form writes a private IP that is unreachable
+        # off-VPC and silently clobbers the shared kubeconfig.
         self._exec(
             "container", "clusters", "get-credentials", cluster,
-            f"--location={location}", f"--project={project}",
+            f"--location={location}", f"--project={project}", "--dns-endpoint",
         )
         return f"gke_{project}_{location}_{cluster}"
 

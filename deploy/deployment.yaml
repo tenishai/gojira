@@ -47,6 +47,9 @@ spec:
             - name: GOJIRA_WEBHOOK_SECRET
               valueFrom:
                 secretKeyRef: { name: gojira-github-app, key: webhook_secret }
+            - name: GOJIRA_API_TOKEN
+              valueFrom:
+                secretKeyRef: { name: gojira-github-app, key: api_token }
           resources:
             requests: { cpu: 250m, memory: 512Mi, ephemeral-storage: 1Gi }
             limits: { cpu: "1", memory: 1Gi, ephemeral-storage: 2Gi }

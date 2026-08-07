@@ -142,10 +142,13 @@ class FakeGitHubClient(GitHubClient):
     """In-memory git/GitHub. Tracks the repo flow; preset an existing PR."""
 
     def __init__(self, *, default_branch="main", existing_pr=None, repos=None,
-                 dockerfile=True, pr_merged=False, installation_id=0):
+                 dockerfile=True, pr_merged=False, merged_urls=None, installation_id=0):
         self._default_branch = default_branch
         self.dockerfile = dockerfile
-        self.pr_merged = pr_merged
+        # Repo-history default for setup_pr_merged() (see that method's
+        # docstring for why this can't just live on self.pr_merged).
+        self._repo_ever_merged = pr_merged
+        self.merged_urls = set(merged_urls or [])  # PR-specific merged state, by URL
         self.installation_id = installation_id
         self.repos = repos or ["shaz/clips-api", "shaz/gojira-demo", "acme/web"]
         self.prs = {}
@@ -158,6 +161,7 @@ class FakeGitHubClient(GitHubClient):
         self.tags: list[tuple[str, str, str]] = []  # (repo, tag, sha)
         self.dispatched: list[tuple[str, str, str]] = []  # (repo, workflow, ref)
         self.dispatch_error: str | None = None
+        self.merged: list[str] = []
         self.calls: list[str] = []
 
     def list_repos(self, limit=200):
@@ -170,7 +174,19 @@ class FakeGitHubClient(GitHubClient):
         return self.dockerfile if path == "Dockerfile" else True
 
     def setup_pr_merged(self, repo):
-        return self.pr_merged
+        """Repo-history check ("was ANY closed setup PR ever merged").
+
+        Backed by `_repo_ever_merged` rather than an attribute named
+        `pr_merged` — that name is also the per-URL `pr_merged(repo, pr_url)`
+        method below, and a same-named instance attribute would shadow it
+        (a test or `merge_pr` assigning `self.pr_merged = True` would make
+        `fake.pr_merged(repo, url)` raise "'bool' object is not callable").
+        """
+        return self._repo_ever_merged
+
+    def pr_merged(self, repo, pr_url):
+        """Whether this specific PR has been merged (tracked by URL)."""
+        return pr_url in self.merged_urls
 
     def head_sha(self, repo):
         return "abc123def456"
@@ -214,6 +230,12 @@ class FakeGitHubClient(GitHubClient):
         url = f"https://github.com/{repo}/pull/1"
         self.prs[head] = url
         return url
+
+    def merge_pr(self, repo, pr_url):
+        self.calls.append(f"merge_pr:{pr_url}")
+        self.merged.append(pr_url)
+        self.merged_urls.add(pr_url)
+        self._repo_ever_merged = True
 
 
 class MemoryInstallationResolver(InstallationResolver):
