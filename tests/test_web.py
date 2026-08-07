@@ -724,3 +724,67 @@ def test_api_token_non_ascii_header_401_not_500(session_factory, clients):
         headers={"Authorization": "Bearer café".encode()},
     )
     assert resp.status_code == 401
+
+
+# --- POST /api/v1/apps/{id}/provision (programmatic reprovision kick) -------
+
+
+def _settle(client, app_id, headers=None, want=("awaiting_pr", "active", "failed")):
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        status = client.get(f"/api/v1/apps/{app_id}", headers=headers or {}).json()
+        if status["status"] in want:
+            return status
+        time.sleep(0.05)
+    raise AssertionError(f"app {app_id} never settled: {status}")
+
+
+def test_api_provision_kicks_new_run(client, session_factory, clients):
+    """The automation-tier equivalent of the UI's Provision-again button:
+    a room that created an app over /api/v1 must be able to re-kick a run
+    through the same token-gated namespace (the UI route sits behind the
+    IAP-identity gate, which a server-to-server caller can never satisfy)."""
+    _register_three(session_factory)
+    app_id = client.post("/api/v1/apps", json=_api_body()).json()["id"]
+    _settle(client, app_id)
+
+    resp = client.post(f"/api/v1/apps/{app_id}/provision")
+    assert resp.status_code == 202
+    assert resp.json() == {"id": app_id, "status": "provisioning"}
+    assert _settle(client, app_id)["status"] == "awaiting_pr"
+
+
+def test_api_provision_unknown_id_404(client, session_factory):
+    _register_three(session_factory)
+    resp = client.post("/api/v1/apps/999/provision")
+    assert resp.status_code == 404
+    assert resp.json() == {"error": "not found"}
+
+
+def test_api_provision_requires_configured_token(session_factory, clients):
+    cfg = Config()
+    cfg.auth.api_token = "s3cr3t"
+    client = TestClient(create_app(session_factory, clients=clients, config=cfg))
+    _register_three(session_factory)
+    ok = {"Authorization": "Bearer s3cr3t"}
+    app_id = client.post("/api/v1/apps", json=_api_body(), headers=ok).json()["id"]
+    _settle(client, app_id, headers=ok)
+
+    assert client.post(f"/api/v1/apps/{app_id}/provision").status_code == 401
+    assert (
+        client.post(
+            f"/api/v1/apps/{app_id}/provision",
+            headers={"Authorization": "Bearer nope"},
+        ).status_code
+        == 401
+    )
+    assert client.post(f"/api/v1/apps/{app_id}/provision", headers=ok).status_code == 202
+
+
+def test_api_provision_fails_closed_iap_enabled_no_token(session_factory, clients):
+    cfg = Config()
+    cfg.auth.enabled = True
+    client = TestClient(create_app(session_factory, clients=clients, config=cfg))
+    resp = client.post("/api/v1/apps/1/provision")
+    assert resp.status_code == 401
+    assert "api_token" in resp.json()["error"]
