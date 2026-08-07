@@ -422,6 +422,26 @@ def create_app(
             }
         )
 
+    @app.post("/api/v1/apps/{app_id}/provision")
+    def api_provision(app_id: int, request: Request, session: Session = Depends(get_session)):
+        # The automation-tier twin of the UI's Provision-again button: that
+        # form route sits behind the IAP-identity gate, which a
+        # server-to-server caller can never satisfy — so programmatic
+        # clients re-kick runs here, under the same bearer gate as the rest
+        # of /api/v1.
+        if err := auth.api_token_error(request, request.app.state.config.auth):
+            return err
+        app_obj = session.get(models.App, app_id)
+        if app_obj is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        service.start_provision(
+            request.app.state.session_factory,
+            app_id,
+            clients=request.app.state.clients,
+            config=request.app.state.config,
+        )
+        return JSONResponse({"id": app_id, "status": "provisioning"}, status_code=202)
+
     @app.post("/api/v1/usage")
     async def ingest_usage(request: Request, session: Session = Depends(get_session)):
         auth = request.headers.get("Authorization", "")
