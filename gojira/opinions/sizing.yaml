@@ -37,6 +37,9 @@ classes:
     hpa: null
     strategy: Recreate
     probes:
+      # a2a transport serves /healthz on APP_PORT; an http readiness probe is
+      # also what makes the generator emit a Service for this class.
+      readiness: { type: http, path: /healthz }
       liveness: { type: tcp }
 
   cron:

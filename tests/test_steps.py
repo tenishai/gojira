@@ -29,6 +29,7 @@ from gojira.steps import (
     EnsureNamespace,
     GrantIamRoles,
     GrantPromoteSourceReader,
+    MergeSetupPr,
     Names,
     build_spec,
     per_project_steps,
@@ -271,6 +272,84 @@ def test_promote_reader_grant_crosses_project(session):
         app=app, config=Config(), clients={"gcp": gcp}, environment=e_qa, environments=envs
     )
     assert step.check(qa_ctx) == "n/a"
+
+
+# --- auto-merge the setup PR --------------------------------------------------
+
+
+def test_merge_setup_pr_skips_when_not_requested(single_env):
+    app, cluster, env = single_env
+    app.auto_merge_setup_pr = False
+    app.setup_pr_url = "https://github.com/acme/agent-clio/pull/1"
+    ctx = ProvisionContext(
+        app=app, config=Config(), clients={"github": FakeGitHubClient()}, environments=[env]
+    )
+    assert MergeSetupPr().check(ctx) == "auto-merge not requested"
+
+
+def test_merge_setup_pr_skips_when_no_pr(single_env):
+    app, cluster, env = single_env
+    app.auto_merge_setup_pr = True
+    app.setup_pr_url = None
+    ctx = ProvisionContext(
+        app=app, config=Config(), clients={"github": FakeGitHubClient()}, environments=[env]
+    )
+    assert MergeSetupPr().check(ctx) == "no setup PR to merge"
+
+
+def test_merge_setup_pr_merges_and_activates(single_env):
+    app, cluster, env = single_env
+    app.auto_merge_setup_pr = True
+    app.setup_pr_url = "https://github.com/acme/agent-clio/pull/1"
+    github = FakeGitHubClient()
+    ctx = ProvisionContext(
+        app=app, config=Config(), clients={"github": github}, environments=[env]
+    )
+    result = MergeSetupPr().apply(ctx)
+    assert github.merged == ["https://github.com/acme/agent-clio/pull/1"]
+    assert ctx.app.status == AppStatus.ACTIVE
+    assert "merged" in result
+
+
+def test_merge_setup_pr_retry_skips_already_merged_pr(single_env):
+    """A retry after a partial failure (merge landed server-side, client raised
+    before setup_pr_url cleared) must not re-merge — that would error on an
+    already-merged PR and wedge the ephemeral step at FAILED forever."""
+    app, cluster, env = single_env
+    app.auto_merge_setup_pr = True
+    url = "https://github.com/acme/agent-clio/pull/1"
+    app.setup_pr_url = url
+    github = FakeGitHubClient(merged_urls={url})
+    ctx = ProvisionContext(
+        app=app, config=Config(), clients={"github": github}, environments=[env]
+    )
+    result = MergeSetupPr().apply(ctx)
+    assert result == "already merged"
+    assert github.merged == []  # merge_pr was NOT called
+    assert ctx.app.setup_pr_url is None
+    assert ctx.app.status == AppStatus.ACTIVE
+
+
+def test_merge_setup_pr_merges_fresh_pr_despite_older_pr_merged(single_env):
+    """The guard is PR-specific, not repo-history: re-provisioning after a
+    generator upgrade opens a FRESH setup PR under the same branch (finding
+    #13's OpenSetupPr refresh). A stale PR #1 having been merged in some
+    earlier cycle must not short-circuit "already merged" for the new PR #2 —
+    that would erase setup_pr_url and silently orphan the fresh PR."""
+    app, cluster, env = single_env
+    app.auto_merge_setup_pr = True
+    old_url = "https://github.com/acme/agent-clio/pull/1"
+    new_url = "https://github.com/acme/agent-clio/pull/2"
+    app.setup_pr_url = new_url
+    github = FakeGitHubClient(merged_urls={old_url})
+    ctx = ProvisionContext(
+        app=app, config=Config(), clients={"github": github}, environments=[env]
+    )
+    result = MergeSetupPr().apply(ctx)
+    assert github.merged == [new_url]  # merge_pr WAS called, on the fresh PR
+    assert ctx.app.setup_pr_url is None
+    assert ctx.app.status == AppStatus.ACTIVE
+    assert "merged" in result
 
 
 # --- promotion plan ----------------------------------------------------------

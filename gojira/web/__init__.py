@@ -8,12 +8,15 @@ the run reaches a terminal state.
 
 import json
 import logging
+import re
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from gojira import models, service, webhooks
@@ -28,6 +31,12 @@ from gojira.service import ProvisionClients
 log = logging.getLogger(__name__)
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+# k8s object-name charset (RFC 1123 label): these values flow unsanitized into
+# Jinja2-rendered YAML and a GSA id (finding #3) — auto-merge removes the
+# human-review backstop that used to catch a stray char before it got that
+# far, so the API boundary has to enforce it instead.
+DNS1123_LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 
 
 def create_app(
@@ -289,6 +298,129 @@ def create_app(
         except Exception as exc:
             log.warning("sizing PR failed for app %s/%s: %s", app_id, env, exc)
         return RedirectResponse(f"/apps/{app_id}", status_code=303)
+
+    class EnvIn(BaseModel):
+        name: str
+        cluster: str
+        namespace: str = ""
+
+        @field_validator("namespace")
+        @classmethod
+        def _namespace_charset(cls, v: str) -> str:
+            # Blank is a legitimate sentinel, not a raw value that ever
+            # reaches k8s: api_connect derives the real namespace with
+            # `env.namespace or body.name`, and body.name is itself
+            # DNS-1123-validated below. So only a non-empty value needs to
+            # satisfy the charset here — requiring non-blank would break the
+            # "derive it from the app name" convenience the UI relies on.
+            if v and not DNS1123_LABEL.fullmatch(v):
+                raise ValueError(f"namespace {v!r} is not a valid DNS-1123 label")
+            return v
+
+    class ConnectIn(BaseModel):
+        name: str = Field(min_length=1, max_length=63, pattern=DNS1123_LABEL.pattern)
+        repo_full_name: str = Field(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+        workload_class: str
+        environments: list[EnvIn] = Field(min_length=1)
+        auto_merge_setup_pr: bool = False
+
+        @field_validator("environments")
+        @classmethod
+        def _unique_env_names(cls, envs: list[EnvIn]) -> list[EnvIn]:
+            names = [e.name for e in envs]
+            if len(names) != len(set(names)):
+                raise ValueError(f"duplicate environment names: {names}")
+            return envs
+
+        @field_validator("repo_full_name")
+        @classmethod
+        def _repo_full_name_no_traversal(cls, v: str) -> str:
+            # The charset pattern above allows '.' and '-', which are legal
+            # GitHub owner/repo characters but also let a segment spell '.',
+            # '..', or a leading '-' (which some tools parse as a flag) —
+            # reject those specifically rather than narrowing the charset
+            # itself.
+            owner, repo = v.split("/", 1)
+            for segment in (owner, repo):
+                if segment in (".", "..") or segment.startswith("-"):
+                    raise ValueError(f"repo_full_name segment {segment!r} is not allowed")
+            return v
+
+    @app.post("/api/v1/apps")
+    def api_connect(body: ConnectIn, request: Request, session: Session = Depends(get_session)):
+        if err := auth.api_token_error(request, request.app.state.config.auth):
+            return err
+        if body.workload_class not in WORKLOAD_CLASSES:
+            return JSONResponse(
+                {"error": f"unknown workload class {body.workload_class!r}"}, status_code=422
+            )
+        if service.app_by_repo(session, body.repo_full_name):
+            return JSONResponse({"error": "repo already connected"}, status_code=409)
+        if not service.repo_has_dockerfile(request.app.state.clients.github, body.repo_full_name):
+            return JSONResponse({"error": "repo has no Dockerfile at its root"}, status_code=422)
+        env_map: dict[str, tuple[int, str]] = {}
+        for env in body.environments:
+            cluster = session.query(models.Cluster).filter_by(name=env.cluster).one_or_none()
+            if cluster is None:
+                return JSONResponse(
+                    {"error": f"unknown cluster {env.cluster!r}"}, status_code=404
+                )
+            env_map[env.name] = (cluster.id, env.namespace or body.name)
+        try:
+            installation_id = request.app.state.clients.github.installation_id_for(
+                body.repo_full_name
+            )
+        except Exception as exc:
+            log.warning("could not resolve installation for %s: %s", body.repo_full_name, exc)
+            installation_id = 0
+        try:
+            app_obj = service.connect_app(
+                session,
+                name=body.name,
+                repo_full_name=body.repo_full_name,
+                workload_class=body.workload_class,
+                env_map=env_map,
+                installation_id=installation_id,
+            )
+            app_obj.auto_merge_setup_pr = body.auto_merge_setup_pr
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            return JSONResponse({"error": "repo already connected"}, status_code=409)
+        # Captured before start_provision: the background thread mutates this
+        # same row in its own session, so reading app_obj.status afterward can
+        # race it and report a status the caller never actually got back from
+        # THIS request (e.g. already "active" instead of the just-connected
+        # "pending").
+        status = app_obj.status
+        service.start_provision(
+            request.app.state.session_factory,
+            app_obj.id,
+            clients=request.app.state.clients,
+            config=request.app.state.config,
+        )
+        return JSONResponse({"id": app_obj.id, "status": status}, status_code=201)
+
+    @app.get("/api/v1/apps/{app_id}")
+    def api_app_status(app_id: int, request: Request, session: Session = Depends(get_session)):
+        if err := auth.api_token_error(request, request.app.state.config.auth):
+            return err
+        app_obj = session.get(models.App, app_id)
+        if app_obj is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse(
+            {
+                "id": app_obj.id,
+                "name": app_obj.name,
+                "status": app_obj.status,
+                "setup_pr_url": app_obj.setup_pr_url,
+                "auto_merge_setup_pr": app_obj.auto_merge_setup_pr,
+                "steps": [
+                    {"name": s.step_name, "status": s.status, "error": s.error}
+                    for s in app_obj.steps
+                ],
+            }
+        )
 
     @app.post("/api/v1/usage")
     async def ingest_usage(request: Request, session: Session = Depends(get_session)):

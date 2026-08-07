@@ -45,3 +45,12 @@ def test_gpu_class_requests_gpu(sizing):
 def test_ephemeral_storage_explicit(sizing):
     assert sizing.ephemeral_storage["requests"]
     assert sizing.ephemeral_storage["limits"]
+
+
+def test_agent_class_has_http_readiness_on_healthz(sizing):
+    cls = sizing.classes["agent"]
+    readiness = cls.probes["readiness"]
+    assert readiness.type == "http"
+    assert readiness.path == "/healthz"
+    assert cls.probes["liveness"].type == "tcp"
+    assert cls.strategy == "Recreate"

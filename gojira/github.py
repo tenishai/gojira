@@ -64,6 +64,11 @@ class GitHubClient(ABC):
         ...
 
     @abstractmethod
+    def pr_merged(self, repo: str, pr_url: str) -> bool:
+        """Whether this specific PR has been merged."""
+        ...
+
+    @abstractmethod
     def head_sha(self, repo: str) -> str:
         """The commit SHA at the tip of the repo's default branch."""
         ...
@@ -102,6 +107,11 @@ class GitHubClient(ABC):
     @abstractmethod
     def open_pr(self, repo: str, head: str, base: str, title: str, body: str) -> str:
         """Open a PR; return its URL."""
+        ...
+
+    @abstractmethod
+    def merge_pr(self, repo: str, pr_url: str) -> None:
+        """Squash-merge the PR and best-effort delete its branch."""
         ...
 
 
@@ -178,6 +188,14 @@ class GhCLI(_LocalGit, GitHubClient):
         )
         return out.strip() not in ("", "0")
 
+    def pr_merged(self, repo: str, pr_url: str) -> bool:
+        # gh's pr-view JSON has no "merged" field; state is OPEN/CLOSED/MERGED.
+        out = self._exec(
+            [self._gh, "pr", "view", pr_url, "--repo", repo,
+             "--json", "state", "--jq", '.state == "MERGED"']
+        )
+        return out.strip() == "true"
+
     def default_branch(self, repo: str) -> str:
         return self._exec(
             [self._gh, "repo", "view", repo, "--json", "defaultBranchRef",
@@ -216,6 +234,10 @@ class GhCLI(_LocalGit, GitHubClient):
             [self._gh, "pr", "create", "--repo", repo, "--head", head,
              "--base", base, "--title", title, "--body", body]
         )
+
+    def merge_pr(self, repo: str, pr_url: str) -> None:
+        self._exec([self._gh, "pr", "merge", pr_url, "--repo", repo,
+                    "--squash", "--delete-branch"])
 
 
 class GitHubAppClient(_LocalGit, GitHubClient):
@@ -342,6 +364,12 @@ class GitHubAppClient(_LocalGit, GitHubClient):
         self._check(r, f"list setup PRs for {repo}")
         return any(pr.get("merged_at") for pr in r.json())
 
+    def pr_merged(self, repo: str, pr_url: str) -> bool:
+        number = int(pr_url.rstrip("/").rsplit("/", 1)[-1])
+        r = self._request("GET", f"/repos/{repo}/pulls/{number}", repo)
+        self._check(r, f"check merged state of PR {pr_url}")
+        return bool(r.json()["merged"])
+
     def default_branch(self, repo: str) -> str:
         r = self._request("GET", f"/repos/{repo}", repo)
         self._check(r, f"view {repo}")
@@ -387,6 +415,25 @@ class GitHubAppClient(_LocalGit, GitHubClient):
         )
         self._check(r, f"open PR in {repo}")
         return r.json()["html_url"]
+
+    def merge_pr(self, repo: str, pr_url: str) -> None:
+        number = int(pr_url.rstrip("/").rsplit("/", 1)[-1])
+        r = self._request(
+            "PUT", f"/repos/{repo}/pulls/{number}/merge", repo,
+            json={"merge_method": "squash"},
+        )
+        self._check(r, f"merge PR {pr_url}")
+        # Branch cleanup (fetching the head ref, then deleting it) is cosmetic —
+        # a failure in either call must never fail the step after a successful
+        # merge, so both live inside this one best-effort try/except.
+        try:
+            pr = self._request("GET", f"/repos/{repo}/pulls/{number}", repo)
+            self._check(pr, f"fetch PR {pr_url}")
+            head_ref = pr.json()["head"]["ref"]
+            d = self._request("DELETE", f"/repos/{repo}/git/refs/heads/{head_ref}", repo)
+            self._check(d, f"delete branch {head_ref} in {repo}")
+        except Exception as exc:
+            log.warning("could not delete setup branch in %s after merge: %s", repo, exc)
 
     def clone(self, repo: str, workdir: Path) -> None:
         token = self._token(self.installation_id_for(repo))

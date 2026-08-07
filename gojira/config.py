@@ -28,7 +28,7 @@ class DefaultsConfig(BaseModel):
     environments: list[str] = ["dev", "qa", "prod"]
     # Stamped on every namespace Gojira creates (and re-asserted on
     # re-onboard). Secrets infrastructure commonly gates on namespace labels
-    # (e.g. an ESO ClusterSecretStore matching fubo.tv/team) — a missing
+    # (e.g. an ESO ClusterSecretStore matching example.com/team) — a missing
     # label means ExternalSecrets silently never sync (Rook's finding).
     namespace_labels: dict[str, str] = {}
 
@@ -70,7 +70,7 @@ class SizingConfig(BaseModel):
 
 
 class AuthConfig(BaseModel):
-    """Identity at the front door — the Kodama pattern.
+    """Identity at the front door — the trust-the-proxy pattern.
 
     Gojira does not speak OAuth itself: an Identity-Aware Proxy in front of
     the install authenticates the human and asserts the identity in the
@@ -82,8 +82,14 @@ class AuthConfig(BaseModel):
     """
 
     enabled: bool = False
-    allowed_domain: str = ""        # e.g. fubo.tv — any user in the domain
+    allowed_domain: str = ""        # e.g. example.com — any user in the domain
     allowed_emails: list[str] = []  # explicit allowlist, additive to domain
+    # Bearer token gating the IAP-exempt privileged /api/v1 onboarding routes
+    # (api_connect, api_app_status) — that namespace is exempted from the IAP
+    # gate above on the premise its routes carry their own auth; unset here
+    # while enabled is True means those routes have none, so callers must
+    # configure this (web/auth.py's api_token_error fails closed in that case).
+    api_token: str | None = None
 
 
 class Config(BaseModel):
