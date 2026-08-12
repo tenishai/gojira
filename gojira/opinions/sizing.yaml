@@ -40,7 +40,11 @@ classes:
       # a2a transport serves /healthz on APP_PORT; an http readiness probe is
       # also what makes the generator emit a Service for this class.
       readiness: { type: http, path: /healthz }
-      liveness: { type: tcp }
+      # http, not tcp: a hung agent keeps its socket open — a tcp check
+      # passes while the agent is dead to the world. Learned live (iris,
+      # 2026-07-26, as a hand-edit the regenerator later reclaimed); safe as
+      # a class opinion since example-agent SDK ≥ 0.9.1 serves /healthz.
+      liveness: { type: http, path: /healthz }
 
   cron:
     requests: { cpu: 250m, memory: 256Mi }
