@@ -1,6 +1,7 @@
 """The UsageProfile wire contract: the golden fixture is the cross-repo handshake."""
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -11,14 +12,28 @@ from gojira.sizing.profile import UsageProfile
 FIXTURE = Path(__file__).parent / "fixtures" / "usage_profile.json"
 
 
-def _fixture() -> dict:
-    return json.loads(FIXTURE.read_text())
+def _fixture(fresh: bool = True) -> dict:
+    """The golden fixture, with reported_at refreshed to now by default.
+
+    The recommender reads evidence through a now-anchored history window
+    (store.history: now - history_days), so any test that feeds the fixture
+    into the store would silently expire history_days after the frozen date
+    in the file — the whole sizing suite went red on 2026-08-05 that way.
+    fresh=False serves the file verbatim for the wire-contract tests, which
+    are about the frozen form (field shapes, the Z-suffixed timestamp).
+    """
+    data = json.loads(FIXTURE.read_text())
+    if fresh:
+        data["reported_at"] = (
+            datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        )
+    return data
 
 
 def test_golden_fixture_validates():
     """The contract test. The agent repo asserts it EMITS this fixture;
     we assert we ACCEPT it. Break the contract → this fails on one side."""
-    p = UsageProfile.model_validate(_fixture())
+    p = UsageProfile.model_validate(_fixture(fresh=False))
     assert p.app == "clips-api"
     assert p.window_days == 14
     assert p.cpu.p99 == "820m"
