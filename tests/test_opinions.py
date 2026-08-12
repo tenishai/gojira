@@ -47,10 +47,12 @@ def test_ephemeral_storage_explicit(sizing):
     assert sizing.ephemeral_storage["limits"]
 
 
-def test_agent_class_has_http_readiness_on_healthz(sizing):
+def test_agent_class_probes_are_http_healthz(sizing):
+    """Both probes hit /healthz over http: readiness gates the generated
+    Service, and liveness must be http because a hung Socket Mode agent
+    keeps its tcp socket open (iris, 2026-07-26)."""
     cls = sizing.classes["agent"]
-    readiness = cls.probes["readiness"]
-    assert readiness.type == "http"
-    assert readiness.path == "/healthz"
-    assert cls.probes["liveness"].type == "tcp"
+    for probe in ("readiness", "liveness"):
+        assert cls.probes[probe].type == "http"
+        assert cls.probes[probe].path == "/healthz"
     assert cls.strategy == "Recreate"
