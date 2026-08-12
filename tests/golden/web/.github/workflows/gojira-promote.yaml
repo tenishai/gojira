@@ -55,7 +55,14 @@ jobs:
       - name: Deploy to qa
         run: |
           cd k8s/overlays/qa
-          kustomize edit set image gojira-app="$IMAGE:$GITHUB_REF_NAME"
+          # Pin the manifest to the digest the registry holds for this tag,
+          # not the tag alone: a re-run on an unchanged commit (the Redeploy
+          # button) rebuilds under the SAME tag, so a tag-only reference makes
+          # the apply a silent no-op while a different image sits in the
+          # registry. The digest rolls pods exactly when the built bytes
+          # changed; the tag stays in the ref for humans reading the cluster.
+          DIGEST=$(gcloud artifacts docker images describe "$IMAGE:$GITHUB_REF_NAME" --format='value(image_summary.digest)')
+          kustomize edit set image gojira-app="$IMAGE:$GITHUB_REF_NAME@$DIGEST"
 
           # Two-phase apply so the workload is not blocked by GMP's admission
           # webhook, which can be unavailable for several minutes on a cold
@@ -118,7 +125,14 @@ jobs:
       - name: Deploy to prod
         run: |
           cd k8s/overlays/prod
-          kustomize edit set image gojira-app="$IMAGE:$GITHUB_REF_NAME"
+          # Pin the manifest to the digest the registry holds for this tag,
+          # not the tag alone: a re-run on an unchanged commit (the Redeploy
+          # button) rebuilds under the SAME tag, so a tag-only reference makes
+          # the apply a silent no-op while a different image sits in the
+          # registry. The digest rolls pods exactly when the built bytes
+          # changed; the tag stays in the ref for humans reading the cluster.
+          DIGEST=$(gcloud artifacts docker images describe "$IMAGE:$GITHUB_REF_NAME" --format='value(image_summary.digest)')
+          kustomize edit set image gojira-app="$IMAGE:$GITHUB_REF_NAME@$DIGEST"
 
           # Two-phase apply so the workload is not blocked by GMP's admission
           # webhook, which can be unavailable for several minutes on a cold
