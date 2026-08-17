@@ -25,6 +25,7 @@ class FakeGCPClient(GCPClient):
         self.project_bindings = set(e.get("project_bindings", []))  # (project, member, role)
         self.artifact_repos = set(e.get("artifact_repos", []))
         self.dns_access = set(e.get("dns_access", []))  # (project, location, cluster)
+        self.app_images = {k: list(v) for k, v in e.get("app_images", {}).items()}  # "{ar_repo}/{name}" -> [digests]
         self.calls: list[str] = []
 
     def project_number(self, project):
@@ -91,6 +92,28 @@ class FakeGCPClient(GCPClient):
     def enable_dns_access(self, project, location, cluster):
         self.calls.append(f"enable_dns:{cluster}")
         self.dns_access.add((project, location, cluster))
+
+    def remove_project_binding(self, project, member, role):
+        key = (project, member, role)
+        if key not in self.project_bindings:
+            return False
+        self.calls.append(f"remove_proj_bind:{project}:{role}")
+        self.project_bindings.discard(key)
+        return True
+
+    def delete_service_account(self, project, email):
+        if email not in self.service_accounts:
+            return False
+        self.calls.append(f"delete_sa:{email}")
+        self.service_accounts.discard(email)
+        return True
+
+    def delete_app_images(self, ar_repo, name):
+        key = f"{ar_repo}/{name}"
+        digests = self.app_images.pop(key, [])
+        if digests:
+            self.calls.append(f"delete_images:{key}:{len(digests)}")
+        return len(digests)
 
 
 class FakeKubectlClient(KubectlClient):
