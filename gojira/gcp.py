@@ -100,6 +100,30 @@ class GCPClient(ABC):
         """
         ...
 
+    # --- teardown --------------------------------------------------------
+
+    @abstractmethod
+    def remove_project_binding(self, project: str, member: str, role: str) -> bool:
+        """Remove a project-level IAM binding. False if it was already gone."""
+        ...
+
+    @abstractmethod
+    def delete_service_account(self, project: str, email: str) -> bool:
+        """Delete a service account. False if it was already gone.
+
+        No unbind-WIF-repo-member method exists on purpose: the principalSet
+        binding granting a repo impersonation of this GSA lives on the GSA's
+        own IAM policy (add_sa_binding), not on the pool or provider, so it
+        is destroyed along with the GSA by this call. Nothing else
+        references it.
+        """
+        ...
+
+    @abstractmethod
+    def delete_app_images(self, ar_repo: str, name: str) -> int:
+        """Delete every image digest under {ar_repo}/{name}; return the count deleted."""
+        ...
+
 
 class GcloudClient(GCPClient):
     """gcloud-backed GCPClient. Each method maps to one or two gcloud commands."""
@@ -118,12 +142,28 @@ class GcloudClient(GCPClient):
         return result.stdout
 
     def _exists(self, *args: str) -> bool:
-        """Run a describe-style command; True if it succeeds, False if not-found."""
+        """Run a command whose success/not-found is carried by exit code and
+        stderr text: True if it succeeds, False if the target is already
+        gone, raise otherwise. Covers both describe-style existence checks
+        and check-then-act teardown verbs (e.g. remove-iam-policy-binding),
+        which share the same not-found convention.
+        """
         result = self._run([self._gcloud, *args])
         if result.returncode == 0:
             return True
         if "NOT_FOUND" in result.stderr or "not found" in result.stderr.lower():
             return False
+        raise GCPError(f"gcloud {' '.join(args)} failed: {result.stderr}")
+
+    def _list_or_empty(self, *args: str) -> str:
+        """Run a list-style command; return stdout, or empty string if the
+        resource the list is scoped to is already gone (NOT_FOUND).
+        """
+        result = self._run([self._gcloud, *args])
+        if result.returncode == 0:
+            return result.stdout
+        if "NOT_FOUND" in result.stderr or "not found" in result.stderr.lower():
+            return ""
         raise GCPError(f"gcloud {' '.join(args)} failed: {result.stderr}")
 
     # --- project -------------------------------------------------------------
@@ -260,6 +300,39 @@ class GcloudClient(GCPClient):
             "container", "clusters", "update", cluster,
             f"--location={location}", f"--project={project}", "--enable-dns-access",
         )
+
+    # --- teardown --------------------------------------------------------
+
+    def remove_project_binding(self, project: str, member: str, role: str) -> bool:
+        # gcloud raises IamPolicyBindingNotFound ("Policy binding with the
+        # specified principal and role not found!") when there is nothing to
+        # remove; that message satisfies _exists's not-found substring match.
+        return self._exists(
+            "projects", "remove-iam-policy-binding", project,
+            f"--member={member}", f"--role={role}", "--quiet",
+        )
+
+    def delete_service_account(self, project: str, email: str) -> bool:
+        if not self.service_account_exists(project, email):
+            return False
+        self._exec(
+            "iam", "service-accounts", "delete", email,
+            f"--project={project}", "--quiet",
+        )
+        return True
+
+    def delete_app_images(self, ar_repo: str, name: str) -> int:
+        image = f"{ar_repo}/{name}"
+        out = self._list_or_empty(
+            "artifacts", "docker", "images", "list", image, "--format=value(DIGEST)",
+        )
+        digests = [line.strip() for line in out.splitlines() if line.strip()]
+        for digest in digests:
+            self._exec(
+                "artifacts", "docker", "images", "delete", f"{image}@{digest}",
+                "--delete-tags", "--quiet",
+            )
+        return len(digests)
 
 
 def _policy_has(policy_json: str, member: str, role: str) -> bool:
