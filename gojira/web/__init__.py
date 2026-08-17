@@ -226,6 +226,7 @@ def create_app(
         request: Request,
         session: Session = Depends(get_session),
         delete_namespaces: str | None = Form(None),
+        teardown_identity: str | None = Form(None),
     ):
         clients = request.app.state.clients
         service.delete_app(
@@ -234,6 +235,7 @@ def create_app(
             clients.kubectl_for,
             clients.gcp,
             delete_namespaces=bool(delete_namespaces),
+            teardown_identity=bool(teardown_identity),
         )
         return RedirectResponse("/", status_code=303)
 
@@ -446,6 +448,7 @@ def create_app(
 
     class DeleteAppIn(BaseModel):
         delete_namespaces: bool = True
+        teardown_identity: bool = True
 
     @app.delete("/api/v1/apps/{app_id}")
     def api_delete_app(
@@ -455,20 +458,24 @@ def create_app(
         body: DeleteAppIn | None = None,
     ):
         # The automation-tier twin of the UI's delete form: same bearer gate
-        # as the rest of /api/v1, same extended teardown underneath. Plain
-        # def (not async) — the teardown below runs real gcloud/kubectl
-        # subprocesses (15-60s realistic), and an async-def handler would run
-        # that inline on the event loop, stalling every other request for the
-        # duration. A plain-def handler gets Starlette's threadpool for free,
-        # same as /apps/{app_id}/delete's identical teardown and api_connect's
-        # own plain-def + Pydantic-body handler above.
+        # as the rest of /api/v1, same teardown underneath (identity removal
+        # opt-out via teardown_identity, image deletion coupled to
+        # delete_namespaces — see delete_app's own docstring). Plain def (not
+        # async) — the teardown below runs real gcloud/kubectl subprocesses
+        # (15-60s realistic), and an async-def handler would run that inline
+        # on the event loop, stalling every other request for the duration.
+        # A plain-def handler gets Starlette's threadpool for free, same as
+        # /apps/{app_id}/delete's identical teardown and api_connect's own
+        # plain-def + Pydantic-body handler above.
         if err := auth.api_token_error(request, request.app.state.config.auth):
             return err
         delete_namespaces = body.delete_namespaces if body is not None else True
+        teardown_identity = body.teardown_identity if body is not None else True
         clients = request.app.state.clients
         summary = service.delete_app(
             session, app_id, clients.kubectl_for, clients.gcp,
             delete_namespaces=delete_namespaces,
+            teardown_identity=teardown_identity,
         )
         if summary is None:
             return JSONResponse({"error": "not found"}, status_code=404)
