@@ -101,12 +101,6 @@ class GCPClient(ABC):
         ...
 
     # --- teardown --------------------------------------------------------
-    #
-    # No unbind-WIF-repo-member method exists on purpose: the principalSet
-    # binding granting a repo impersonation of the deploy GSA lives on that
-    # GSA's own IAM policy (add_sa_binding), not on the pool or provider, so
-    # it is destroyed along with the GSA by delete_service_account. Nothing
-    # else references it.
 
     @abstractmethod
     def remove_project_binding(self, project: str, member: str, role: str) -> bool:
@@ -115,7 +109,14 @@ class GCPClient(ABC):
 
     @abstractmethod
     def delete_service_account(self, project: str, email: str) -> bool:
-        """Delete a service account. False if it was already gone."""
+        """Delete a service account. False if it was already gone.
+
+        No unbind-WIF-repo-member method exists on purpose: the principalSet
+        binding granting a repo impersonation of this GSA lives on the GSA's
+        own IAM policy (add_sa_binding), not on the pool or provider, so it
+        is destroyed along with the GSA by this call. Nothing else
+        references it.
+        """
         ...
 
     @abstractmethod

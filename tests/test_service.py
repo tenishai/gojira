@@ -1,7 +1,7 @@
 """Service-layer tests: cluster registration, connect, provision, status reads."""
 
 import pytest
-from fakes import FakeGCPClient, FakeGitHubClient, KubectlFactory
+from fakes import FakeGCPClient, FakeGitHubClient, FakeKubectlClient, KubectlFactory
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -167,7 +167,7 @@ def test_delete_app_removes_rows_and_namespaces(session):
     service.run_provision(session, app, _clients(), Config())
     app_id = app.id
 
-    service.delete_app(session, app_id, kube, delete_namespaces=True)
+    service.delete_app(session, app_id, kube, FakeGCPClient(), delete_namespaces=True)
 
     assert service.app_by_repo(session, "shaz/clips-api") is None
     from gojira.models import Environment, Event, ProvisionStep
@@ -186,9 +186,175 @@ def test_delete_app_can_keep_namespaces(session):
         env_map={"dev": (clusters["dev"].id, "ns")},
     )
     kube = KubectlFactory()
-    service.delete_app(session, app.id, kube, delete_namespaces=False)
+    service.delete_app(session, app.id, kube, FakeGCPClient(), delete_namespaces=False)
     assert service.app_by_repo(session, "o/a") is None
     assert kube.by_cluster == {}  # no kubectl touched
+
+
+def test_delete_app_missing_returns_none(session):
+    assert service.delete_app(session, 999, KubectlFactory(), FakeGCPClient()) is None
+
+
+def test_delete_app_summary_shape(session):
+    clusters = _three_clusters(session)
+    app = service.connect_app(
+        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        env_map={"dev": (clusters["dev"].id, "clips")},
+    )
+    summary = service.delete_app(
+        session, app.id, KubectlFactory(), FakeGCPClient(), delete_namespaces=True
+    )
+    assert summary == {
+        "app": "clips-api",
+        "namespaces_deleted": ["clips"],
+        "namespace_failures": [],
+        "identity": {
+            "bindings_removed": 0,
+            "gsa_deleted": False,
+            "images_deleted": 0,
+            "failures": [],
+        },
+        "rows_deleted": True,
+    }
+
+
+def test_delete_app_removes_provisioned_identity(session):
+    from gojira.steps import DEPLOY_ROLES
+
+    clusters = _three_clusters(session)
+    app = service.connect_app(
+        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        env_map={"dev": (clusters["dev"].id, "clips")},
+    )
+    clients = _clients()
+    service.run_provision(session, app, clients, Config())
+    app_id = app.id
+
+    summary = service.delete_app(
+        session, app_id, KubectlFactory(), clients.gcp, delete_namespaces=False
+    )
+
+    assert summary["identity"]["bindings_removed"] == len(DEPLOY_ROLES)
+    assert summary["identity"]["gsa_deleted"] is True
+    assert summary["identity"]["failures"] == []
+    assert any(c.startswith("remove_proj_bind:") for c in clients.gcp.calls)
+    assert any(c.startswith("delete_sa:") for c in clients.gcp.calls)
+
+
+def test_delete_app_seven_tables_cleaned_up(session):
+    from gojira.models import (
+        DriftFinding,
+        DriftStatus,
+        Environment,
+        Event,
+        ProvisionStep,
+        RecommendationKind,
+        SizingRecommendation,
+        UsageProfileRow,
+        utcnow,
+    )
+
+    clusters = _three_clusters(session)
+    app = service.connect_app(
+        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        env_map={"dev": (clusters["dev"].id, "clips")},
+    )
+    app_id = app.id
+    service.run_provision(session, app, _clients(), Config())  # seeds ProvisionStep + Event
+
+    session.add(DriftFinding(
+        app_id=app_id, environment="dev", status=DriftStatus.OPEN, diff_json="[]",
+    ))
+    session.add(UsageProfileRow(
+        app_id=app_id, environment="dev", window_days=7, samples=10,
+        cpu_json="{}", memory_json="{}", reported_by="agent", reported_at=utcnow(),
+    ))
+    session.add(SizingRecommendation(
+        app_id=app_id, environment="dev", kind=RecommendationKind.OVERRIDE,
+        current_json="{}", proposed_json="{}", justification="because",
+    ))
+    session.commit()
+
+    summary = service.delete_app(
+        session, app_id, KubectlFactory(), FakeGCPClient(), delete_namespaces=False
+    )
+
+    assert summary is not None
+    assert summary["rows_deleted"] is True
+    assert service.app_by_repo(session, "shaz/clips-api") is None
+    for model in (
+        Environment, ProvisionStep, Event, DriftFinding, UsageProfileRow, SizingRecommendation,
+    ):
+        assert session.query(model).filter_by(app_id=app_id).count() == 0
+
+
+class _RaisingGCPClient(FakeGCPClient):
+    """A FakeGCPClient whose teardown calls always raise, for exercising
+    delete_app's best-effort failure handling (every GCP failure recorded,
+    teardown continues, rows still deleted)."""
+
+    def remove_project_binding(self, project, member, role):
+        raise RuntimeError("boom: remove_project_binding")
+
+    def delete_service_account(self, project, email):
+        raise RuntimeError("boom: delete_service_account")
+
+    def delete_app_images(self, ar_repo, name):
+        raise RuntimeError("boom: delete_app_images")
+
+
+def test_delete_app_gcp_failures_continue_and_rows_still_deleted(session):
+    clusters = _three_clusters(session)
+    app = service.connect_app(
+        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        env_map={"dev": (clusters["dev"].id, "clips")},
+    )
+    app_id = app.id
+
+    summary = service.delete_app(
+        session, app_id, KubectlFactory(), _RaisingGCPClient(), delete_namespaces=False
+    )
+
+    assert summary is not None
+    assert summary["rows_deleted"] is True
+    assert service.app_by_repo(session, "shaz/clips-api") is None
+    assert len(summary["identity"]["failures"]) > 0
+    assert all("boom" in f for f in summary["identity"]["failures"])
+
+
+class _RaisingKubectl(FakeKubectlClient):
+    def delete_namespace(self, namespace):
+        raise RuntimeError("cluster unreachable")
+
+
+class _RaisingKubectlFactory:
+    """kubectl_for that always raises on delete_namespace, for the
+    namespace-failure-still-recorded-in-summary test."""
+
+    def __init__(self):
+        self._kube = _RaisingKubectl()
+
+    def __call__(self, cluster):
+        return self._kube
+
+
+def test_delete_app_namespace_failure_recorded_in_summary(session):
+    clusters = _three_clusters(session)
+    app = service.connect_app(
+        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        env_map={"dev": (clusters["dev"].id, "clips")},
+    )
+    app_id = app.id
+
+    summary = service.delete_app(
+        session, app_id, _RaisingKubectlFactory(), FakeGCPClient(), delete_namespaces=True
+    )
+
+    assert summary["namespaces_deleted"] == []
+    assert summary["namespace_failures"] == [
+        {"namespace": "clips", "reason": "cluster unreachable"}
+    ]
+    assert service.app_by_repo(session, "shaz/clips-api") is None
 
 
 def test_cut_release_tags_head_and_normalizes_v():

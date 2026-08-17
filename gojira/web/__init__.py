@@ -21,12 +21,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from gojira import models, service, webhooks
 from gojira.config import Config, load_config
-from gojira.web import auth
+from gojira.opinions import WORKLOAD_CLASSES
+from gojira.service import ProvisionClients
 from gojira.sizing import agent_deploy
 from gojira.sizing import profile as sizing_profile
 from gojira.sizing import service as sizing_service
-from gojira.opinions import WORKLOAD_CLASSES
-from gojira.service import ProvisionClients
+from gojira.web import auth
 
 log = logging.getLogger(__name__)
 
@@ -227,10 +227,12 @@ def create_app(
         session: Session = Depends(get_session),
         delete_namespaces: str | None = Form(None),
     ):
+        clients = request.app.state.clients
         service.delete_app(
             session,
             app_id,
-            request.app.state.clients.kubectl_for,
+            clients.kubectl_for,
+            clients.gcp,
             delete_namespaces=bool(delete_namespaces),
         )
         return RedirectResponse("/", status_code=303)
@@ -441,6 +443,32 @@ def create_app(
             config=request.app.state.config,
         )
         return JSONResponse({"id": app_id, "status": "provisioning"}, status_code=202)
+
+    @app.delete("/api/v1/apps/{app_id}")
+    async def api_delete_app(
+        app_id: int, request: Request, session: Session = Depends(get_session)
+    ):
+        # The automation-tier twin of the UI's delete form: same bearer gate
+        # as the rest of /api/v1, same extended teardown underneath.
+        if err := auth.api_token_error(request, request.app.state.config.auth):
+            return err
+        delete_namespaces = True
+        body = await request.body()
+        if body:
+            try:
+                payload = json.loads(body)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict) and "delete_namespaces" in payload:
+                delete_namespaces = bool(payload["delete_namespaces"])
+        clients = request.app.state.clients
+        summary = service.delete_app(
+            session, app_id, clients.kubectl_for, clients.gcp,
+            delete_namespaces=delete_namespaces,
+        )
+        if summary is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse(summary, status_code=202)
 
     @app.post("/api/v1/usage")
     async def ingest_usage(request: Request, session: Session = Depends(get_session)):
