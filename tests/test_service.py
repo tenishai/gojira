@@ -214,6 +214,7 @@ def test_delete_app_summary_shape(session):
             "bindings_removed": 0,
             "gsa_deleted": False,
             "images_deleted": 0,
+            "images_skipped": None,
             "failures": [],
         },
         "rows_deleted": True,
@@ -278,8 +279,13 @@ def test_delete_app_removes_provisioned_identity_across_two_projects(session):
     assert gsa_a in gcp.service_accounts
     assert gsa_b in gcp.service_accounts
 
+    # delete_namespaces=True here (not False): image deletion is now coupled
+    # to namespace deletion (kept namespaces mean running pods, and yanking
+    # every digest they run from just delays their death). This test wants
+    # its images_deleted assertion below, so it exercises the namespaces-also
+    # -deleted path.
     summary = service.delete_app(
-        session, app_id, KubectlFactory(), gcp, delete_namespaces=False
+        session, app_id, KubectlFactory(), gcp, delete_namespaces=True
     )
 
     # 2 projects x DEPLOY_ROLES for each project's own GSA, plus the one
@@ -287,6 +293,7 @@ def test_delete_app_removes_provisioned_identity_across_two_projects(session):
     assert summary["identity"]["bindings_removed"] == 2 * len(DEPLOY_ROLES) + 1
     assert summary["identity"]["gsa_deleted"] is True
     assert summary["identity"]["images_deleted"] == 3
+    assert summary["identity"]["images_skipped"] is None
     assert summary["identity"]["failures"] == []
 
     # both projects' identity is gone — not just proj-a or just proj-b
@@ -303,6 +310,73 @@ def test_delete_app_removes_provisioned_identity_across_two_projects(session):
     ) not in gcp.project_bindings
     assert f"{ar_repo_a}/clips-api" not in gcp.app_images
     assert f"{ar_repo_b}/clips-api" not in gcp.app_images
+
+
+def test_delete_app_teardown_identity_false_skips_all_gcp_calls(session):
+    """teardown_identity=False must skip the ENTIRE identity loop — bindings,
+    GSA, images, and the promote-reader removal — not just some of it. Rows
+    still go; the identity sub-dict stays present but zeroed/False so the
+    summary shape is stable for callers that don't care about this flag."""
+    clusters = _three_clusters(session)
+    app = service.connect_app(
+        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        env_map={"dev": (clusters["dev"].id, "clips")},
+    )
+    clients = _clients()
+    service.run_provision(session, app, clients, Config())
+    app_id = app.id
+    clients.gcp.calls.clear()  # only care about calls made during delete itself
+
+    summary = service.delete_app(
+        session, app_id, KubectlFactory(), clients.gcp,
+        delete_namespaces=False, teardown_identity=False,
+    )
+
+    assert clients.gcp.calls == []
+    assert service.app_by_repo(session, "shaz/clips-api") is None
+    assert summary["identity"] == {
+        "bindings_removed": 0,
+        "gsa_deleted": False,
+        "images_deleted": 0,
+        "images_skipped": None,
+        "failures": [],
+    }
+
+
+def test_delete_app_keeps_namespaces_skips_image_deletion(session):
+    """Kept namespaces + deleted images = delayed pod death: with
+    delete_namespaces=False, workloads keep running while delete_app_images
+    would remove every digest they run from. So when namespaces are kept,
+    image deletion is skipped entirely (even though identity teardown still
+    runs), and the summary records why."""
+    clusters = _three_clusters(session)
+    app = service.connect_app(
+        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        env_map={"dev": (clusters["dev"].id, "clips")},
+    )
+    ar_repo = clusters["dev"].ar_repo
+    gcp = FakeGCPClient(existing={"app_images": {f"{ar_repo}/clips-api": ["sha256:aaa"]}})
+    clients = service.ProvisionClients(
+        gcp=gcp, github=FakeGitHubClient(), kubectl_for=KubectlFactory()
+    )
+    service.run_provision(session, app, clients, Config())
+    app_id = app.id
+
+    from gojira.steps import DEPLOY_ROLES
+
+    summary = service.delete_app(
+        session, app_id, KubectlFactory(), gcp,
+        delete_namespaces=False, teardown_identity=True,
+    )
+
+    assert summary["identity"]["bindings_removed"] == len(DEPLOY_ROLES)
+    assert summary["identity"]["gsa_deleted"] is True
+    assert summary["identity"]["images_deleted"] == 0
+    assert summary["identity"]["images_skipped"] == (
+        "namespaces kept, images left for running pods"
+    )
+    assert not any(c.startswith("delete_images:") for c in gcp.calls)
+    assert f"{ar_repo}/clips-api" in gcp.app_images  # images left untouched
 
 
 def test_delete_app_seven_tables_cleaned_up(session):

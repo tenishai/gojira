@@ -360,6 +360,30 @@ def test_delete_app_removes_it_from_dashboard(client, clients, session_factory):
     assert "delete_ns:goner" in clients.kubectl_for.by_cluster["dev"].calls
 
 
+def test_delete_app_form_unchecked_teardown_identity_leaves_gcp_untouched(
+    client, clients, session_factory
+):
+    _register_three(session_factory)
+    with session_factory() as s:
+        dev_id = next(c.id for c in service.list_clusters(s) if c.name == "dev")
+        app = service.connect_app(
+            s, name="keeper", repo_full_name="acme/keeper", workload_class="web",
+            env_map={"dev": (dev_id, "keeper")},
+        )
+        service.run_provision(s, app, clients, Config())
+        app_id = app.id
+
+    # Checkbox off means the browser omits the field entirely — same idiom
+    # as the delete_namespaces checkbox above.
+    r = client.post(
+        f"/apps/{app_id}/delete", data={"delete_namespaces": "1"}, follow_redirects=False
+    )
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    assert not any(c.startswith("delete_sa:") for c in clients.gcp.calls)
+    assert not any(c.startswith("remove_proj_bind:") for c in clients.gcp.calls)
+    assert not any(c.startswith("delete_images:") for c in clients.gcp.calls)
+
+
 def test_connect_skips_unmapped_env(client, session_factory):
     _register_three(session_factory)
     with session_factory() as s:
@@ -869,8 +893,36 @@ def test_api_delete_empty_body_defaults_to_delete_namespaces_true(client, sessio
 
     resp = client.request("DELETE", f"/api/v1/apps/{app_id}")  # no body at all
     assert resp.status_code == 202
-    assert resp.json()["namespaces_deleted"] == ["clio"]
+    body = resp.json()
+    assert body["namespaces_deleted"] == ["clio"]
     assert "delete_ns:clio" in clients.kubectl_for.by_cluster["dev"].calls
+    # teardown_identity defaults true too — full identity teardown, no skip.
+    assert body["identity"]["gsa_deleted"] is True
+    assert body["identity"]["images_skipped"] is None
+
+
+def test_api_delete_teardown_identity_false_skips_identity_and_images(
+    client, session_factory, clients
+):
+    _register_three(session_factory)
+    app_id = client.post("/api/v1/apps", json=_api_body(
+        environments=[{"name": "dev", "cluster": "dev", "namespace": "clio"}]
+    )).json()["id"]
+    _settle(client, app_id)
+    clients.gcp.calls.clear()
+
+    resp = client.request(
+        "DELETE", f"/api/v1/apps/{app_id}", json={"teardown_identity": False}
+    )
+    assert resp.status_code == 202
+    assert resp.json()["identity"] == {
+        "bindings_removed": 0,
+        "gsa_deleted": False,
+        "images_deleted": 0,
+        "images_skipped": None,
+        "failures": [],
+    }
+    assert clients.gcp.calls == []
 
 
 def test_api_delete_requires_configured_token(session_factory, clients):
