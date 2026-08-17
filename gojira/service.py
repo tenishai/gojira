@@ -391,22 +391,36 @@ def delete_app(
     kubectl_for: Callable[[Cluster], KubectlClient],
     gcp: GCPClient,
     delete_namespaces: bool = True,
+    teardown_identity: bool = True,
 ) -> dict | None:
-    """Tear an app down whole: namespaces, per-project identity, images, then
-    every ledger table, then the app row itself. None if the app is gone.
+    """Tear an app down: namespaces, per-project identity, images, then every
+    ledger table, then the app row itself. None if the app is gone.
 
-    Unlike the old app-only teardown, per-project identity (deploy GSA, its
-    project IAM bindings, and its pushed images) is now removed too — the
-    same real-gate names provisioning used to create them (DEPLOY_ROLES,
-    Names.for_project, distinct_projects), so teardown addresses exactly
-    what provisioning built. It also mirrors GrantPromoteSourceReader's own
-    pair-derivation (promotion_plan, PROMOTE_READER_ROLE) to remove the
-    cross-project reader binding a copy-target env's GSA holds on its source
-    env's project — a pair the per-project loop can't reach on its own, since
-    it lives under a different project x member combination. Every GCP call
-    is best-effort: a failure is appended to identity["failures"] and
-    teardown continues, so a stuck binding or an already-gone resource never
-    blocks the DB cleanup.
+    Per-project identity (deploy GSA, its project IAM bindings, and its
+    pushed images) is removed too by default — the same real-gate names
+    provisioning used to create them (DEPLOY_ROLES, Names.for_project,
+    distinct_projects), so teardown addresses exactly what provisioning
+    built. It also mirrors GrantPromoteSourceReader's own pair-derivation
+    (promotion_plan, PROMOTE_READER_ROLE) to remove the cross-project reader
+    binding a copy-target env's GSA holds on its source env's project — a
+    pair the per-project loop can't reach on its own, since it lives under a
+    different project x member combination. Every GCP call is best-effort: a
+    failure is appended to identity["failures"] and teardown continues, so a
+    stuck binding or an already-gone resource never blocks the DB cleanup.
+
+    Two flags temper that default:
+
+    - teardown_identity=False skips the identity loop entirely (bindings,
+      GSA, images, promote-reader removal) — the disconnect-only mode the
+      delete+reconnect flow relies on to keep cloud identity alive across a
+      UI-side delete. The identity sub-dict in the summary is still present,
+      just zeroed/False, so callers get a stable shape either way.
+    - teardown_identity=True with delete_namespaces=False still tears down
+      bindings/GSA/promote-reader, but skips delete_app_images: kept
+      namespaces mean the workloads are still running, and deleting every
+      digest they run from just delays their death until the next
+      reschedule ImagePullBackOffs. The skip (and why) is recorded in
+      identity["images_skipped"].
     """
     app = session.get(App, app_id)
     if app is None:
@@ -428,59 +442,64 @@ def delete_app(
     bindings_removed = 0
     gsa_deleted = False
     images_deleted = 0
+    images_skipped: str | None = None
     failures: list[str] = []
-    for scope in distinct_projects(app.environments):
-        names = Names.for_project(app, scope.project, scope.ar_repo)
-        for role in DEPLOY_ROLES:
+    if teardown_identity:
+        if not delete_namespaces:
+            images_skipped = "namespaces kept, images left for running pods"
+        for scope in distinct_projects(app.environments):
+            names = Names.for_project(app, scope.project, scope.ar_repo)
+            for role in DEPLOY_ROLES:
+                try:
+                    if gcp.remove_project_binding(scope.project, names.gsa_member, role):
+                        bindings_removed += 1
+                except Exception as exc:
+                    log.warning(
+                        "could not remove binding %s for app %s on %s: %s",
+                        role, app.name, scope.project, exc,
+                    )
+                    failures.append(str(exc))
             try:
-                if gcp.remove_project_binding(scope.project, names.gsa_member, role):
+                if gcp.delete_service_account(scope.project, names.gsa_email):
+                    gsa_deleted = True
+            except Exception as exc:
+                log.warning(
+                    "could not delete GSA %s for app %s on %s: %s",
+                    names.gsa_email, app.name, scope.project, exc,
+                )
+                failures.append(str(exc))
+            if delete_namespaces:
+                try:
+                    images_deleted += gcp.delete_app_images(scope.ar_repo, app.name)
+                except Exception as exc:
+                    log.warning(
+                        "could not delete images for app %s on %s: %s",
+                        app.name, scope.project, exc,
+                    )
+                    failures.append(str(exc))
+
+        # GrantPromoteSourceReader (steps.py) grants a cross-project reader binding
+        # on the SOURCE env's project for the copy-TARGET env's GSA — a pair the
+        # per-project loop above can't reach (different member x project than its
+        # own DEPLOY_ROLES bindings). Mirror the grant's own pair-derivation so
+        # teardown addresses exactly what provisioning built.
+        plan = promotion_plan(app.environments)
+        for env in app.environments:
+            source = plan[env.id].copy_from
+            if source is None or source.cluster.gcp_project == env.cluster.gcp_project:
+                continue
+            names = Names.for_project(app, env.cluster.gcp_project, env.cluster.ar_repo)
+            try:
+                if gcp.remove_project_binding(
+                    source.cluster.gcp_project, names.gsa_member, PROMOTE_READER_ROLE
+                ):
                     bindings_removed += 1
             except Exception as exc:
                 log.warning(
-                    "could not remove binding %s for app %s on %s: %s",
-                    role, app.name, scope.project, exc,
+                    "could not remove promote-reader binding for app %s on %s: %s",
+                    app.name, source.cluster.gcp_project, exc,
                 )
                 failures.append(str(exc))
-        try:
-            if gcp.delete_service_account(scope.project, names.gsa_email):
-                gsa_deleted = True
-        except Exception as exc:
-            log.warning(
-                "could not delete GSA %s for app %s on %s: %s",
-                names.gsa_email, app.name, scope.project, exc,
-            )
-            failures.append(str(exc))
-        try:
-            images_deleted += gcp.delete_app_images(scope.ar_repo, app.name)
-        except Exception as exc:
-            log.warning(
-                "could not delete images for app %s on %s: %s",
-                app.name, scope.project, exc,
-            )
-            failures.append(str(exc))
-
-    # GrantPromoteSourceReader (steps.py) grants a cross-project reader binding
-    # on the SOURCE env's project for the copy-TARGET env's GSA — a pair the
-    # per-project loop above can't reach (different member x project than its
-    # own DEPLOY_ROLES bindings). Mirror the grant's own pair-derivation so
-    # teardown addresses exactly what provisioning built.
-    plan = promotion_plan(app.environments)
-    for env in app.environments:
-        source = plan[env.id].copy_from
-        if source is None or source.cluster.gcp_project == env.cluster.gcp_project:
-            continue
-        names = Names.for_project(app, env.cluster.gcp_project, env.cluster.ar_repo)
-        try:
-            if gcp.remove_project_binding(
-                source.cluster.gcp_project, names.gsa_member, PROMOTE_READER_ROLE
-            ):
-                bindings_removed += 1
-        except Exception as exc:
-            log.warning(
-                "could not remove promote-reader binding for app %s on %s: %s",
-                app.name, source.cluster.gcp_project, exc,
-            )
-            failures.append(str(exc))
 
     name = app.name
     session.execute(delete(ProvisionStep).where(ProvisionStep.app_id == app_id))
@@ -490,7 +509,10 @@ def delete_app(
     session.execute(delete(SizingRecommendation).where(SizingRecommendation.app_id == app_id))
     session.delete(app)  # environments cascade via App.environments delete-orphan
     session.commit()
-    log.info("deleted app %s (namespaces removed=%s)", name, delete_namespaces)
+    log.info(
+        "deleted app %s (namespaces removed=%s, identity torn down=%s)",
+        name, delete_namespaces, teardown_identity,
+    )
     return {
         "app": name,
         "namespaces_deleted": namespaces_deleted,
@@ -499,6 +521,7 @@ def delete_app(
             "bindings_removed": bindings_removed,
             "gsa_deleted": gsa_deleted,
             "images_deleted": images_deleted,
+            "images_skipped": images_skipped,
             "failures": failures,
         },
         "rows_deleted": True,
