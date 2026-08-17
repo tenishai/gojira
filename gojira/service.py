@@ -10,16 +10,16 @@ import logging
 import shutil
 import tempfile
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from gojira import drift_scan
 from gojira.config import Config
-from gojira.gcp import GCPClient, GcloudClient
+from gojira.gcp import GcloudClient, GCPClient
 from gojira.github import CI_WORKFLOW, GhCLI, GitHubAppClient, GitHubClient
 from gojira.installations import DbInstallationResolver
 from gojira.k8s import KubectlCLI, KubectlClient
@@ -31,8 +31,11 @@ from gojira.models import (
     Environment,
     Event,
     ProvisionStep,
+    SizingRecommendation,
+    UsageProfileRow,
 )
-from gojira.provisioner import provision_app
+from gojira.provisioner import distinct_projects, provision_app
+from gojira.steps import DEPLOY_ROLES, PROMOTE_READER_ROLE, Names, promotion_plan
 
 log = logging.getLogger(__name__)
 
@@ -386,30 +389,143 @@ def delete_app(
     session: Session,
     app_id: int,
     kubectl_for: Callable[[Cluster], KubectlClient],
+    gcp: GCPClient,
     delete_namespaces: bool = True,
-) -> None:
-    """Remove an app from Gojira (app + envs + ledger + events).
+    teardown_identity: bool = True,
+) -> dict | None:
+    """Tear an app down: namespaces, per-project identity, images, then every
+    ledger table, then the app row itself. None if the app is gone.
 
-    Optionally best-effort deletes each environment's namespace on its cluster.
-    Per-project identity (deploy GSA, WIF, Artifact Registry) is intentionally
-    left in place — it is shared across apps in the project.
+    Per-project identity (deploy GSA, its project IAM bindings, and its
+    pushed images) is removed too by default — the same real-gate names
+    provisioning used to create them (DEPLOY_ROLES, Names.for_project,
+    distinct_projects), so teardown addresses exactly what provisioning
+    built. It also mirrors GrantPromoteSourceReader's own pair-derivation
+    (promotion_plan, PROMOTE_READER_ROLE) to remove the cross-project reader
+    binding a copy-target env's GSA holds on its source env's project — a
+    pair the per-project loop can't reach on its own, since it lives under a
+    different project x member combination. Every GCP call is best-effort: a
+    failure is appended to identity["failures"] and teardown continues, so a
+    stuck binding or an already-gone resource never blocks the DB cleanup.
+
+    Two flags temper that default:
+
+    - teardown_identity=False skips the identity loop entirely (bindings,
+      GSA, images, promote-reader removal) — the disconnect-only mode the
+      delete+reconnect flow relies on to keep cloud identity alive across a
+      UI-side delete. The identity sub-dict in the summary is still present,
+      just zeroed/False, so callers get a stable shape either way.
+    - teardown_identity=True with delete_namespaces=False still tears down
+      bindings/GSA/promote-reader, but skips delete_app_images: kept
+      namespaces mean the workloads are still running, and deleting every
+      digest they run from just delays their death until the next
+      reschedule ImagePullBackOffs. The skip (and why) is recorded in
+      identity["images_skipped"].
     """
     app = session.get(App, app_id)
     if app is None:
-        return
+        return None
+
+    namespaces_deleted: list[str] = []
+    namespace_failures: list[dict] = []
     if delete_namespaces:
         for env in app.environments:
             try:
                 kubectl_for(env.cluster).delete_namespace(env.namespace)
+                namespaces_deleted.append(env.namespace)
             except Exception as exc:  # cluster unreachable etc — don't block the delete
                 log.warning(
                     "could not delete ns %s on %s: %s", env.namespace, env.cluster.name, exc
                 )
+                namespace_failures.append({"namespace": env.namespace, "reason": str(exc)})
+
+    bindings_removed = 0
+    gsa_deleted = False
+    images_deleted = 0
+    images_skipped: str | None = None
+    failures: list[str] = []
+    if teardown_identity:
+        if not delete_namespaces:
+            images_skipped = "namespaces kept, images left for running pods"
+        for scope in distinct_projects(app.environments):
+            names = Names.for_project(app, scope.project, scope.ar_repo)
+            for role in DEPLOY_ROLES:
+                try:
+                    if gcp.remove_project_binding(scope.project, names.gsa_member, role):
+                        bindings_removed += 1
+                except Exception as exc:
+                    log.warning(
+                        "could not remove binding %s for app %s on %s: %s",
+                        role, app.name, scope.project, exc,
+                    )
+                    failures.append(str(exc))
+            try:
+                if gcp.delete_service_account(scope.project, names.gsa_email):
+                    gsa_deleted = True
+            except Exception as exc:
+                log.warning(
+                    "could not delete GSA %s for app %s on %s: %s",
+                    names.gsa_email, app.name, scope.project, exc,
+                )
+                failures.append(str(exc))
+            if delete_namespaces:
+                try:
+                    images_deleted += gcp.delete_app_images(scope.ar_repo, app.name)
+                except Exception as exc:
+                    log.warning(
+                        "could not delete images for app %s on %s: %s",
+                        app.name, scope.project, exc,
+                    )
+                    failures.append(str(exc))
+
+        # GrantPromoteSourceReader (steps.py) grants a cross-project reader binding
+        # on the SOURCE env's project for the copy-TARGET env's GSA — a pair the
+        # per-project loop above can't reach (different member x project than its
+        # own DEPLOY_ROLES bindings). Mirror the grant's own pair-derivation so
+        # teardown addresses exactly what provisioning built.
+        plan = promotion_plan(app.environments)
+        for env in app.environments:
+            source = plan[env.id].copy_from
+            if source is None or source.cluster.gcp_project == env.cluster.gcp_project:
+                continue
+            names = Names.for_project(app, env.cluster.gcp_project, env.cluster.ar_repo)
+            try:
+                if gcp.remove_project_binding(
+                    source.cluster.gcp_project, names.gsa_member, PROMOTE_READER_ROLE
+                ):
+                    bindings_removed += 1
+            except Exception as exc:
+                log.warning(
+                    "could not remove promote-reader binding for app %s on %s: %s",
+                    app.name, source.cluster.gcp_project, exc,
+                )
+                failures.append(str(exc))
+
+    name = app.name
     session.execute(delete(ProvisionStep).where(ProvisionStep.app_id == app_id))
     session.execute(delete(Event).where(Event.app_id == app_id))
+    session.execute(delete(DriftFinding).where(DriftFinding.app_id == app_id))
+    session.execute(delete(UsageProfileRow).where(UsageProfileRow.app_id == app_id))
+    session.execute(delete(SizingRecommendation).where(SizingRecommendation.app_id == app_id))
     session.delete(app)  # environments cascade via App.environments delete-orphan
     session.commit()
-    log.info("deleted app %s (namespaces removed=%s)", app.name, delete_namespaces)
+    log.info(
+        "deleted app %s (namespaces removed=%s, identity torn down=%s)",
+        name, delete_namespaces, teardown_identity,
+    )
+    return {
+        "app": name,
+        "namespaces_deleted": namespaces_deleted,
+        "namespace_failures": namespace_failures,
+        "identity": {
+            "bindings_removed": bindings_removed,
+            "gsa_deleted": gsa_deleted,
+            "images_deleted": images_deleted,
+            "images_skipped": images_skipped,
+            "failures": failures,
+        },
+        "rows_deleted": True,
+    }
 
 
 def activate_app(session: Session, app: App) -> bool:

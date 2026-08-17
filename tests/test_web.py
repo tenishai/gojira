@@ -1,6 +1,7 @@
 """Web smoke tests: routes render and the connect→provision→watch flow works
 end to end against in-memory fakes (no gcloud/git/kubectl)."""
 
+import inspect
 import time
 
 import pytest
@@ -357,6 +358,30 @@ def test_delete_app_removes_it_from_dashboard(client, clients, session_factory):
     with session_factory() as s:
         assert service.app_by_repo(s, "acme/goner") is None
     assert "delete_ns:goner" in clients.kubectl_for.by_cluster["dev"].calls
+
+
+def test_delete_app_form_unchecked_teardown_identity_leaves_gcp_untouched(
+    client, clients, session_factory
+):
+    _register_three(session_factory)
+    with session_factory() as s:
+        dev_id = next(c.id for c in service.list_clusters(s) if c.name == "dev")
+        app = service.connect_app(
+            s, name="keeper", repo_full_name="acme/keeper", workload_class="web",
+            env_map={"dev": (dev_id, "keeper")},
+        )
+        service.run_provision(s, app, clients, Config())
+        app_id = app.id
+
+    # Checkbox off means the browser omits the field entirely — same idiom
+    # as the delete_namespaces checkbox above.
+    r = client.post(
+        f"/apps/{app_id}/delete", data={"delete_namespaces": "1"}, follow_redirects=False
+    )
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    assert not any(c.startswith("delete_sa:") for c in clients.gcp.calls)
+    assert not any(c.startswith("remove_proj_bind:") for c in clients.gcp.calls)
+    assert not any(c.startswith("delete_images:") for c in clients.gcp.calls)
 
 
 def test_connect_skips_unmapped_env(client, session_factory):
@@ -786,5 +811,143 @@ def test_api_provision_fails_closed_iap_enabled_no_token(session_factory, client
     cfg.auth.enabled = True
     client = TestClient(create_app(session_factory, clients=clients, config=cfg))
     resp = client.post("/api/v1/apps/1/provision")
+    assert resp.status_code == 401
+    assert "api_token" in resp.json()["error"]
+
+
+# --- DELETE /api/v1/apps/{id} (programmatic teardown) -----------------------
+
+
+def test_api_delete_route_does_not_block_the_event_loop(client):
+    # api_delete_app runs the whole blocking teardown (gcloud/kubectl
+    # subprocesses, realistically 15-60s) inline. An async-def handler runs
+    # that on the event loop itself, stalling every other request for the
+    # duration — the route must instead be a plain-def handler (or otherwise
+    # dispatch the blocking work off-loop) so Starlette's threadpool absorbs
+    # it, same as its UI twin (/apps/{id}/delete) already does.
+    routes = [
+        r
+        for r in client.app.routes
+        if getattr(r, "path", None) == "/api/v1/apps/{app_id}"
+        and "DELETE" in getattr(r, "methods", set())
+    ]
+    assert len(routes) == 1, "expected exactly one DELETE route for /api/v1/apps/{app_id}"
+    assert not inspect.iscoroutinefunction(routes[0].endpoint), (
+        "api_delete_app must not be async def — it runs blocking gcloud/kubectl "
+        "teardown inline, which would stall the event loop for every other request"
+    )
+
+
+def test_api_delete_removes_app_returns_202_and_summary(client, session_factory, clients):
+    _register_three(session_factory)
+    app_id = client.post("/api/v1/apps", json=_api_body()).json()["id"]
+    _settle(client, app_id)
+
+    resp = client.request("DELETE", f"/api/v1/apps/{app_id}")
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["app"] == "clio"
+    assert body["rows_deleted"] is True
+    assert "identity" in body
+
+    assert client.get(f"/api/v1/apps/{app_id}").status_code == 404
+
+
+def test_api_delete_unknown_id_404(client, session_factory):
+    _register_three(session_factory)
+    resp = client.request("DELETE", "/api/v1/apps/999")
+    assert resp.status_code == 404
+    assert resp.json() == {"error": "not found"}
+
+
+def test_api_delete_repeat_returns_404(client, session_factory):
+    _register_three(session_factory)
+    app_id = client.post("/api/v1/apps", json=_api_body()).json()["id"]
+    _settle(client, app_id)
+
+    assert client.request("DELETE", f"/api/v1/apps/{app_id}").status_code == 202
+    assert client.request("DELETE", f"/api/v1/apps/{app_id}").status_code == 404
+
+
+def test_api_delete_body_flag_honored(client, session_factory, clients):
+    _register_three(session_factory)
+    app_id = client.post("/api/v1/apps", json=_api_body(
+        environments=[{"name": "dev", "cluster": "dev", "namespace": "clio"}]
+    )).json()["id"]
+    _settle(client, app_id)
+
+    resp = client.request(
+        "DELETE", f"/api/v1/apps/{app_id}", json={"delete_namespaces": False}
+    )
+    assert resp.status_code == 202
+    assert resp.json()["namespaces_deleted"] == []
+    assert "delete_ns:clio" not in clients.kubectl_for.by_cluster["dev"].calls
+
+
+def test_api_delete_empty_body_defaults_to_delete_namespaces_true(client, session_factory, clients):
+    _register_three(session_factory)
+    app_id = client.post("/api/v1/apps", json=_api_body(
+        environments=[{"name": "dev", "cluster": "dev", "namespace": "clio"}]
+    )).json()["id"]
+    _settle(client, app_id)
+
+    resp = client.request("DELETE", f"/api/v1/apps/{app_id}")  # no body at all
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["namespaces_deleted"] == ["clio"]
+    assert "delete_ns:clio" in clients.kubectl_for.by_cluster["dev"].calls
+    # teardown_identity defaults true too — full identity teardown, no skip.
+    assert body["identity"]["gsa_deleted"] is True
+    assert body["identity"]["images_skipped"] is None
+
+
+def test_api_delete_teardown_identity_false_skips_identity_and_images(
+    client, session_factory, clients
+):
+    _register_three(session_factory)
+    app_id = client.post("/api/v1/apps", json=_api_body(
+        environments=[{"name": "dev", "cluster": "dev", "namespace": "clio"}]
+    )).json()["id"]
+    _settle(client, app_id)
+    clients.gcp.calls.clear()
+
+    resp = client.request(
+        "DELETE", f"/api/v1/apps/{app_id}", json={"teardown_identity": False}
+    )
+    assert resp.status_code == 202
+    assert resp.json()["identity"] == {
+        "bindings_removed": 0,
+        "gsa_deleted": False,
+        "images_deleted": 0,
+        "images_skipped": None,
+        "failures": [],
+    }
+    assert clients.gcp.calls == []
+
+
+def test_api_delete_requires_configured_token(session_factory, clients):
+    cfg = Config()
+    cfg.auth.api_token = "s3cr3t"
+    client = TestClient(create_app(session_factory, clients=clients, config=cfg))
+    _register_three(session_factory)
+    ok = {"Authorization": "Bearer s3cr3t"}
+    app_id = client.post("/api/v1/apps", json=_api_body(), headers=ok).json()["id"]
+    _settle(client, app_id, headers=ok)
+
+    assert client.request("DELETE", f"/api/v1/apps/{app_id}").status_code == 401
+    assert (
+        client.request(
+            "DELETE", f"/api/v1/apps/{app_id}", headers={"Authorization": "Bearer nope"}
+        ).status_code
+        == 401
+    )
+    assert client.request("DELETE", f"/api/v1/apps/{app_id}", headers=ok).status_code == 202
+
+
+def test_api_delete_fails_closed_iap_enabled_no_token(session_factory, clients):
+    cfg = Config()
+    cfg.auth.enabled = True
+    client = TestClient(create_app(session_factory, clients=clients, config=cfg))
+    resp = client.request("DELETE", "/api/v1/apps/1")
     assert resp.status_code == 401
     assert "api_token" in resp.json()["error"]
