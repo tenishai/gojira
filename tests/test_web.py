@@ -1,6 +1,7 @@
 """Web smoke tests: routes render and the connect→provision→watch flow works
 end to end against in-memory fakes (no gcloud/git/kubectl)."""
 
+import inspect
 import time
 
 import pytest
@@ -791,6 +792,26 @@ def test_api_provision_fails_closed_iap_enabled_no_token(session_factory, client
 
 
 # --- DELETE /api/v1/apps/{id} (programmatic teardown) -----------------------
+
+
+def test_api_delete_route_does_not_block_the_event_loop(client):
+    # api_delete_app runs the whole blocking teardown (gcloud/kubectl
+    # subprocesses, realistically 15-60s) inline. An async-def handler runs
+    # that on the event loop itself, stalling every other request for the
+    # duration — the route must instead be a plain-def handler (or otherwise
+    # dispatch the blocking work off-loop) so Starlette's threadpool absorbs
+    # it, same as its UI twin (/apps/{id}/delete) already does.
+    routes = [
+        r
+        for r in client.app.routes
+        if getattr(r, "path", None) == "/api/v1/apps/{app_id}"
+        and "DELETE" in getattr(r, "methods", set())
+    ]
+    assert len(routes) == 1, "expected exactly one DELETE route for /api/v1/apps/{app_id}"
+    assert not inspect.iscoroutinefunction(routes[0].endpoint), (
+        "api_delete_app must not be async def — it runs blocking gcloud/kubectl "
+        "teardown inline, which would stall the event loop for every other request"
+    )
 
 
 def test_api_delete_removes_app_returns_202_and_summary(client, session_factory, clients):

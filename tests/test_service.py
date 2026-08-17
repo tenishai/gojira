@@ -1,5 +1,7 @@
 """Service-layer tests: cluster registration, connect, provision, status reads."""
 
+import logging
+
 import pytest
 from fakes import FakeGCPClient, FakeGitHubClient, FakeKubectlClient, KubectlFactory
 from sqlalchemy import create_engine
@@ -365,7 +367,7 @@ class _RaisingGCPClient(FakeGCPClient):
         raise RuntimeError("boom: delete_app_images")
 
 
-def test_delete_app_gcp_failures_continue_and_rows_still_deleted(session):
+def test_delete_app_gcp_failures_continue_and_rows_still_deleted(session, caplog):
     clusters = _three_clusters(session)
     app = service.connect_app(
         session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
@@ -373,15 +375,26 @@ def test_delete_app_gcp_failures_continue_and_rows_still_deleted(session):
     )
     app_id = app.id
 
-    summary = service.delete_app(
-        session, app_id, KubectlFactory(), _RaisingGCPClient(), delete_namespaces=False
-    )
+    with caplog.at_level(logging.WARNING, logger="gojira.service"):
+        summary = service.delete_app(
+            session, app_id, KubectlFactory(), _RaisingGCPClient(), delete_namespaces=False
+        )
 
     assert summary is not None
     assert summary["rows_deleted"] is True
     assert service.app_by_repo(session, "shaz/clips-api") is None
     assert len(summary["identity"]["failures"]) > 0
     assert all("boom" in f for f in summary["identity"]["failures"])
+
+    # Spec: identity teardown failures must be logged AND recorded — not just
+    # appended to the summary's failures list (namespace failures already get
+    # a log.warning; identity failures didn't). One warning per caught GCP
+    # exception, each naming the app and the project it failed against.
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == len(summary["identity"]["failures"])
+    for record in warnings:
+        assert "clips-api" in record.message
+        assert "proj-a" in record.message
 
 
 class _RaisingKubectl(FakeKubectlClient):
