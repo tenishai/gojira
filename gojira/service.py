@@ -436,15 +436,27 @@ def delete_app(
                 if gcp.remove_project_binding(scope.project, names.gsa_member, role):
                     bindings_removed += 1
             except Exception as exc:
+                log.warning(
+                    "could not remove binding %s for app %s on %s: %s",
+                    role, app.name, scope.project, exc,
+                )
                 failures.append(str(exc))
         try:
             if gcp.delete_service_account(scope.project, names.gsa_email):
                 gsa_deleted = True
         except Exception as exc:
+            log.warning(
+                "could not delete GSA %s for app %s on %s: %s",
+                names.gsa_email, app.name, scope.project, exc,
+            )
             failures.append(str(exc))
         try:
             images_deleted += gcp.delete_app_images(scope.ar_repo, app.name)
         except Exception as exc:
+            log.warning(
+                "could not delete images for app %s on %s: %s",
+                app.name, scope.project, exc,
+            )
             failures.append(str(exc))
 
     # GrantPromoteSourceReader (steps.py) grants a cross-project reader binding
@@ -464,6 +476,10 @@ def delete_app(
             ):
                 bindings_removed += 1
         except Exception as exc:
+            log.warning(
+                "could not remove promote-reader binding for app %s on %s: %s",
+                app.name, source.cluster.gcp_project, exc,
+            )
             failures.append(str(exc))
 
     name = app.name
