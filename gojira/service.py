@@ -10,16 +10,16 @@ import logging
 import shutil
 import tempfile
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from gojira import drift_scan
 from gojira.config import Config
-from gojira.gcp import GCPClient, GcloudClient
+from gojira.gcp import GcloudClient, GCPClient
 from gojira.github import CI_WORKFLOW, GhCLI, GitHubAppClient, GitHubClient
 from gojira.installations import DbInstallationResolver
 from gojira.k8s import KubectlCLI, KubectlClient
@@ -31,8 +31,11 @@ from gojira.models import (
     Environment,
     Event,
     ProvisionStep,
+    SizingRecommendation,
+    UsageProfileRow,
 )
-from gojira.provisioner import provision_app
+from gojira.provisioner import distinct_projects, provision_app
+from gojira.steps import DEPLOY_ROLES, Names
 
 log = logging.getLogger(__name__)
 
@@ -386,30 +389,80 @@ def delete_app(
     session: Session,
     app_id: int,
     kubectl_for: Callable[[Cluster], KubectlClient],
+    gcp: GCPClient,
     delete_namespaces: bool = True,
-) -> None:
-    """Remove an app from Gojira (app + envs + ledger + events).
+) -> dict | None:
+    """Tear an app down whole: namespaces, per-project identity, images, then
+    every ledger table, then the app row itself. None if the app is gone.
 
-    Optionally best-effort deletes each environment's namespace on its cluster.
-    Per-project identity (deploy GSA, WIF, Artifact Registry) is intentionally
-    left in place — it is shared across apps in the project.
+    Unlike the old app-only teardown, per-project identity (deploy GSA, its
+    project IAM bindings, and its pushed images) is now removed too — the
+    same real-gate names provisioning used to create them (DEPLOY_ROLES,
+    Names.for_project, distinct_projects), so teardown addresses exactly
+    what provisioning built. Every GCP call is best-effort: a failure is
+    appended to identity["failures"] and teardown continues, so a stuck
+    binding or an already-gone resource never blocks the DB cleanup.
     """
     app = session.get(App, app_id)
     if app is None:
-        return
+        return None
+
+    namespaces_deleted: list[str] = []
+    namespace_failures: list[dict] = []
     if delete_namespaces:
         for env in app.environments:
             try:
                 kubectl_for(env.cluster).delete_namespace(env.namespace)
+                namespaces_deleted.append(env.namespace)
             except Exception as exc:  # cluster unreachable etc — don't block the delete
                 log.warning(
                     "could not delete ns %s on %s: %s", env.namespace, env.cluster.name, exc
                 )
+                namespace_failures.append({"namespace": env.namespace, "reason": str(exc)})
+
+    bindings_removed = 0
+    gsa_deleted = False
+    images_deleted = 0
+    failures: list[str] = []
+    for scope in distinct_projects(app.environments):
+        names = Names.for_project(app, scope.project, scope.ar_repo)
+        for role in DEPLOY_ROLES:
+            try:
+                if gcp.remove_project_binding(scope.project, names.gsa_member, role):
+                    bindings_removed += 1
+            except Exception as exc:
+                failures.append(str(exc))
+        try:
+            if gcp.delete_service_account(scope.project, names.gsa_email):
+                gsa_deleted = True
+        except Exception as exc:
+            failures.append(str(exc))
+        try:
+            images_deleted += gcp.delete_app_images(scope.ar_repo, app.name)
+        except Exception as exc:
+            failures.append(str(exc))
+
+    name = app.name
     session.execute(delete(ProvisionStep).where(ProvisionStep.app_id == app_id))
     session.execute(delete(Event).where(Event.app_id == app_id))
+    session.execute(delete(DriftFinding).where(DriftFinding.app_id == app_id))
+    session.execute(delete(UsageProfileRow).where(UsageProfileRow.app_id == app_id))
+    session.execute(delete(SizingRecommendation).where(SizingRecommendation.app_id == app_id))
     session.delete(app)  # environments cascade via App.environments delete-orphan
     session.commit()
-    log.info("deleted app %s (namespaces removed=%s)", app.name, delete_namespaces)
+    log.info("deleted app %s (namespaces removed=%s)", name, delete_namespaces)
+    return {
+        "app": name,
+        "namespaces_deleted": namespaces_deleted,
+        "namespace_failures": namespace_failures,
+        "identity": {
+            "bindings_removed": bindings_removed,
+            "gsa_deleted": gsa_deleted,
+            "images_deleted": images_deleted,
+            "failures": failures,
+        },
+        "rows_deleted": True,
+    }
 
 
 def activate_app(session: Session, app: App) -> bool:

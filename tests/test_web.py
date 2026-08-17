@@ -788,3 +788,93 @@ def test_api_provision_fails_closed_iap_enabled_no_token(session_factory, client
     resp = client.post("/api/v1/apps/1/provision")
     assert resp.status_code == 401
     assert "api_token" in resp.json()["error"]
+
+
+# --- DELETE /api/v1/apps/{id} (programmatic teardown) -----------------------
+
+
+def test_api_delete_removes_app_returns_202_and_summary(client, session_factory, clients):
+    _register_three(session_factory)
+    app_id = client.post("/api/v1/apps", json=_api_body()).json()["id"]
+    _settle(client, app_id)
+
+    resp = client.request("DELETE", f"/api/v1/apps/{app_id}")
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["app"] == "clio"
+    assert body["rows_deleted"] is True
+    assert "identity" in body
+
+    assert client.get(f"/api/v1/apps/{app_id}").status_code == 404
+
+
+def test_api_delete_unknown_id_404(client, session_factory):
+    _register_three(session_factory)
+    resp = client.request("DELETE", "/api/v1/apps/999")
+    assert resp.status_code == 404
+    assert resp.json() == {"error": "not found"}
+
+
+def test_api_delete_repeat_returns_404(client, session_factory):
+    _register_three(session_factory)
+    app_id = client.post("/api/v1/apps", json=_api_body()).json()["id"]
+    _settle(client, app_id)
+
+    assert client.request("DELETE", f"/api/v1/apps/{app_id}").status_code == 202
+    assert client.request("DELETE", f"/api/v1/apps/{app_id}").status_code == 404
+
+
+def test_api_delete_body_flag_honored(client, session_factory, clients):
+    _register_three(session_factory)
+    app_id = client.post("/api/v1/apps", json=_api_body(
+        environments=[{"name": "dev", "cluster": "dev", "namespace": "clio"}]
+    )).json()["id"]
+    _settle(client, app_id)
+
+    resp = client.request(
+        "DELETE", f"/api/v1/apps/{app_id}", json={"delete_namespaces": False}
+    )
+    assert resp.status_code == 202
+    assert resp.json()["namespaces_deleted"] == []
+    assert "delete_ns:clio" not in clients.kubectl_for.by_cluster["dev"].calls
+
+
+def test_api_delete_empty_body_defaults_to_delete_namespaces_true(client, session_factory, clients):
+    _register_three(session_factory)
+    app_id = client.post("/api/v1/apps", json=_api_body(
+        environments=[{"name": "dev", "cluster": "dev", "namespace": "clio"}]
+    )).json()["id"]
+    _settle(client, app_id)
+
+    resp = client.request("DELETE", f"/api/v1/apps/{app_id}")  # no body at all
+    assert resp.status_code == 202
+    assert resp.json()["namespaces_deleted"] == ["clio"]
+    assert "delete_ns:clio" in clients.kubectl_for.by_cluster["dev"].calls
+
+
+def test_api_delete_requires_configured_token(session_factory, clients):
+    cfg = Config()
+    cfg.auth.api_token = "s3cr3t"
+    client = TestClient(create_app(session_factory, clients=clients, config=cfg))
+    _register_three(session_factory)
+    ok = {"Authorization": "Bearer s3cr3t"}
+    app_id = client.post("/api/v1/apps", json=_api_body(), headers=ok).json()["id"]
+    _settle(client, app_id, headers=ok)
+
+    assert client.request("DELETE", f"/api/v1/apps/{app_id}").status_code == 401
+    assert (
+        client.request(
+            "DELETE", f"/api/v1/apps/{app_id}", headers={"Authorization": "Bearer nope"}
+        ).status_code
+        == 401
+    )
+    assert client.request("DELETE", f"/api/v1/apps/{app_id}", headers=ok).status_code == 202
+
+
+def test_api_delete_fails_closed_iap_enabled_no_token(session_factory, clients):
+    cfg = Config()
+    cfg.auth.enabled = True
+    client = TestClient(create_app(session_factory, clients=clients, config=cfg))
+    resp = client.request("DELETE", "/api/v1/apps/1")
+    assert resp.status_code == 401
+    assert "api_token" in resp.json()["error"]
