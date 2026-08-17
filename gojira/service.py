@@ -35,7 +35,7 @@ from gojira.models import (
     UsageProfileRow,
 )
 from gojira.provisioner import distinct_projects, provision_app
-from gojira.steps import DEPLOY_ROLES, Names
+from gojira.steps import DEPLOY_ROLES, PROMOTE_READER_ROLE, Names, promotion_plan
 
 log = logging.getLogger(__name__)
 
@@ -399,9 +399,14 @@ def delete_app(
     project IAM bindings, and its pushed images) is now removed too — the
     same real-gate names provisioning used to create them (DEPLOY_ROLES,
     Names.for_project, distinct_projects), so teardown addresses exactly
-    what provisioning built. Every GCP call is best-effort: a failure is
-    appended to identity["failures"] and teardown continues, so a stuck
-    binding or an already-gone resource never blocks the DB cleanup.
+    what provisioning built. It also mirrors GrantPromoteSourceReader's own
+    pair-derivation (promotion_plan, PROMOTE_READER_ROLE) to remove the
+    cross-project reader binding a copy-target env's GSA holds on its source
+    env's project — a pair the per-project loop can't reach on its own, since
+    it lives under a different project x member combination. Every GCP call
+    is best-effort: a failure is appended to identity["failures"] and
+    teardown continues, so a stuck binding or an already-gone resource never
+    blocks the DB cleanup.
     """
     app = session.get(App, app_id)
     if app is None:
@@ -439,6 +444,25 @@ def delete_app(
             failures.append(str(exc))
         try:
             images_deleted += gcp.delete_app_images(scope.ar_repo, app.name)
+        except Exception as exc:
+            failures.append(str(exc))
+
+    # GrantPromoteSourceReader (steps.py) grants a cross-project reader binding
+    # on the SOURCE env's project for the copy-TARGET env's GSA — a pair the
+    # per-project loop above can't reach (different member x project than its
+    # own DEPLOY_ROLES bindings). Mirror the grant's own pair-derivation so
+    # teardown addresses exactly what provisioning built.
+    plan = promotion_plan(app.environments)
+    for env in app.environments:
+        source = plan[env.id].copy_from
+        if source is None or source.cluster.gcp_project == env.cluster.gcp_project:
+            continue
+        names = Names.for_project(app, env.cluster.gcp_project, env.cluster.ar_repo)
+        try:
+            if gcp.remove_project_binding(
+                source.cluster.gcp_project, names.gsa_member, PROMOTE_READER_ROLE
+            ):
+                bindings_removed += 1
         except Exception as exc:
             failures.append(str(exc))
 
