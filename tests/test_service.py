@@ -241,6 +241,68 @@ def test_delete_app_removes_provisioned_identity(session):
     assert any(c.startswith("delete_sa:") for c in clients.gcp.calls)
 
 
+def test_delete_app_removes_provisioned_identity_across_two_projects(session):
+    """The multi-project path in distinct_projects(app.environments) is real:
+    prove teardown covers BOTH proj-a (dev+qa) and proj-b (prod), not just the
+    single-project case test_delete_app_removes_provisioned_identity covers.
+    Also proves the cross-project promote-reader grant (GrantPromoteSourceReader,
+    prod's GSA reading qa's proj-a registry) dies with the app — it lives on the
+    SOURCE project under the copy-TARGET's GSA, so the plain per-project
+    DEPLOY_ROLES loop can't reach it on its own."""
+    from gojira.steps import DEPLOY_ROLES, PROMOTE_READER_ROLE
+
+    clusters = _three_clusters(session)  # dev+qa on proj-a, prod on proj-b
+    app = service.connect_app(
+        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        env_map={n: (c.id, "clips") for n, c in clusters.items()},
+    )
+    ar_repo_a = clusters["dev"].ar_repo
+    ar_repo_b = clusters["prod"].ar_repo
+    gcp = FakeGCPClient(existing={
+        "app_images": {
+            f"{ar_repo_a}/clips-api": ["sha256:aaa", "sha256:bbb"],
+            f"{ar_repo_b}/clips-api": ["sha256:ccc"],
+        },
+    })
+    clients = service.ProvisionClients(
+        gcp=gcp, github=FakeGitHubClient(), kubectl_for=KubectlFactory()
+    )
+    service.run_provision(session, app, clients, Config())
+    app_id = app.id
+
+    gsa_a = "clips-api-deploy@proj-a.iam.gserviceaccount.com"
+    gsa_b = "clips-api-deploy@proj-b.iam.gserviceaccount.com"
+    # sanity: provisioning actually reached both projects before we tear down
+    assert gsa_a in gcp.service_accounts
+    assert gsa_b in gcp.service_accounts
+
+    summary = service.delete_app(
+        session, app_id, KubectlFactory(), gcp, delete_namespaces=False
+    )
+
+    # 2 projects x DEPLOY_ROLES for each project's own GSA, plus the one
+    # cross-project promote-reader binding prod's GSA held on proj-a.
+    assert summary["identity"]["bindings_removed"] == 2 * len(DEPLOY_ROLES) + 1
+    assert summary["identity"]["gsa_deleted"] is True
+    assert summary["identity"]["images_deleted"] == 3
+    assert summary["identity"]["failures"] == []
+
+    # both projects' identity is gone — not just proj-a or just proj-b
+    assert gsa_a not in gcp.service_accounts
+    assert gsa_b not in gcp.service_accounts
+    assert not any(b[0] == "proj-a" for b in gcp.project_bindings)
+    assert not any(b[0] == "proj-b" for b in gcp.project_bindings)
+    # the orphan this test guards against: prod's GSA could read qa's
+    # proj-a registry forever if teardown only walked distinct_projects.
+    assert (
+        clusters["dev"].gcp_project,
+        f"serviceAccount:{gsa_b}",
+        PROMOTE_READER_ROLE,
+    ) not in gcp.project_bindings
+    assert f"{ar_repo_a}/clips-api" not in gcp.app_images
+    assert f"{ar_repo_b}/clips-api" not in gcp.app_images
+
+
 def test_delete_app_seven_tables_cleaned_up(session):
     from gojira.models import (
         DriftFinding,
