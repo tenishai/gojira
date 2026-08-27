@@ -19,12 +19,15 @@ permissions:
 
 env:
   IMAGE: {{ env.ar_repo }}/{{ spec.app }}
+  GOJIRA_CONTRACT: {{ contract_sha }}
 
 jobs:
   build-and-deploy-{{ env.name }}:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+{{ d.contract_check() }}
 
       - id: auth
         uses: google-github-actions/auth@v2
