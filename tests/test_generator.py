@@ -227,3 +227,65 @@ def test_agent_class_renders_service():
     assert "k8s/base/service.yaml" in files
     assert "readinessProbe" in files["k8s/base/deployment.yaml"]
     assert "/healthz" in files["k8s/base/deployment.yaml"]
+
+
+# --- finding #20: CI refuses a contract/manifest mismatch -------------------
+
+def test_fingerprint_ignores_formatting_but_not_meaning():
+    from gojira.generator import contract_fingerprint
+
+    a = "app: x\nsecrets_from: [one, two]\nenv:\n  A: \"1\"\n"
+    b = "# reformatted by a machine\nenv:\n  A: '1'\napp: x\nsecrets_from:\n- one\n- two\n"
+    c = "app: x\nsecrets_from: [one, two, three]\nenv:\n  A: \"1\"\n"
+    assert contract_fingerprint(a) == contract_fingerprint(b)
+    assert contract_fingerprint(a) != contract_fingerprint(c)
+
+
+def test_workflows_stamped_with_their_contracts_fingerprint():
+    from gojira.generator import contract_fingerprint
+
+    files = render(make_spec())
+    sha = contract_fingerprint(files["gojira.yaml"])
+    for wf in (".github/workflows/gojira-ci.yaml", ".github/workflows/gojira-promote.yaml"):
+        assert f"GOJIRA_CONTRACT: {sha}" in files[wf]
+        assert "Verify manifests match gojira.yaml" in files[wf]
+
+
+def test_ci_check_computes_the_same_hash_as_the_generator(tmp_path):
+    """Run the generated step's shell for real: a stale contract fails it,
+    the rendered one passes. Guards the 'same algorithm on both sides' claim."""
+    import subprocess
+
+    from gojira.generator import contract_fingerprint
+
+    files = render(make_spec())
+    wf = yaml.safe_load(files[".github/workflows/gojira-ci.yaml"])
+    step = next(s for s in wf["jobs"]["build-and-deploy-dev"]["steps"]
+                if s.get("name") == "Verify manifests match gojira.yaml")
+    sha = wf["env"]["GOJIRA_CONTRACT"]
+    assert sha == contract_fingerprint(files["gojira.yaml"])
+
+    def run(contract: str) -> int:
+        (tmp_path / "gojira.yaml").write_text(contract)
+        return subprocess.run(
+            ["bash", "-e", "-c", step["run"]], cwd=tmp_path,
+            env={"PATH": os.environ["PATH"], "GOJIRA_CONTRACT": sha}, capture_output=True,
+        ).returncode
+
+    assert run(files["gojira.yaml"]) == 0
+    assert run("# comment only, keys reordered\n" + files["gojira.yaml"].replace(
+        "class: web\napp: clips-api", "app: clips-api\nclass: web")) == 0
+    assert run(files["gojira.yaml"] + "secrets_from: [added-later]\n") == 1
+
+
+def test_stamp_contract_rewrites_only_the_fingerprint():
+    from gojira.generator import contract_fingerprint, stamp_contract
+
+    files = render(make_spec())
+    edited = files["gojira.yaml"] + "secrets_from: [clio-slack]\n"
+    stamped = stamp_contract(files[".github/workflows/gojira-ci.yaml"], edited)
+    assert f"GOJIRA_CONTRACT: {contract_fingerprint(edited)}" in stamped
+    assert stamped.replace(contract_fingerprint(edited), "X") == \
+        files[".github/workflows/gojira-ci.yaml"].replace(contract_fingerprint(files["gojira.yaml"]), "X")
+    with pytest.raises(ValueError):
+        stamp_contract("name: hand-written\n", edited)
