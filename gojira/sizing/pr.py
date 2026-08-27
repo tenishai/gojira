@@ -17,7 +17,7 @@ from pathlib import Path
 import yaml
 from sqlalchemy.orm import Session
 
-from gojira.generator import apply_resource_overrides
+from gojira.generator import apply_resource_overrides, stamp_contract
 from gojira.github import GitHubClient
 from gojira.models import App, RecommendationStatus, SizingRecommendation
 
@@ -96,6 +96,7 @@ def open_override_pr(
     proposed = json.loads(rec.proposed_json)
     block = render_overrides_block(proposed, rec.justification)
     spec_path.write_text(apply_overrides(spec_path.read_text(), block))
+    restamp_workflows(workdir)
 
     # The manifest moves in the same PR as the contract — merging it is what
     # actually resizes the workload (CI applies k8s/, not gojira.yaml).
@@ -134,6 +135,20 @@ def open_override_pr(
     session.commit()
     log.info("sizing PR opened for %s/%s: %s", app.name, rec.environment, url)
     return url
+
+
+def restamp_workflows(workdir: Path) -> None:
+    """Re-stamp GOJIRA_CONTRACT in the generated workflows after a textual
+    edit of gojira.yaml, so CI's stale-manifests check (finding #20) keeps
+    telling the truth: this PR moves contract and manifest together."""
+    for name in ("gojira-ci.yaml", "gojira-promote.yaml"):
+        wf = workdir / ".github" / "workflows" / name
+        if not wf.exists():
+            continue
+        try:
+            wf.write_text(stamp_contract(wf.read_text(), (workdir / "gojira.yaml").read_text()))
+        except ValueError:  # pre-fingerprint workflow: nothing to keep true yet
+            log.info("%s carries no GOJIRA_CONTRACT — regenerate to enable the CI check", name)
 
 
 def retire_superseded_drift(overlay_dir: Path, app_name: str, resources: set[str]) -> bool:
