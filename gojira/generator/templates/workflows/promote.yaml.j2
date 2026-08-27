@@ -21,6 +21,9 @@ permissions:
   contents: read
   id-token: write
 
+env:
+  GOJIRA_CONTRACT: {{ contract_sha }}
+
 jobs:
 {% for env in spec.promote_envs %}
 {% set source = (spec.environments | selectattr('name', 'equalto', env.copy_from) | first) if env.copy_from else none %}
@@ -37,6 +40,8 @@ jobs:
       IMAGE: {{ env.ar_repo }}/{{ spec.app }}
     steps:
       - uses: actions/checkout@v4
+
+{{ d.contract_check() }}
 
       - id: auth
         uses: google-github-actions/auth@v2

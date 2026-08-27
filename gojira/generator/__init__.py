@@ -14,7 +14,10 @@ Opinion: every Gojira app listens on port 8080 and serves /health and
 work without per-app configuration.
 """
 
+import hashlib
+import json
 import logging
+import re
 
 import yaml
 from jinja2 import Environment, PackageLoader, StrictUndefined
@@ -411,6 +414,39 @@ def preserve_generators(existing_text: str, rendered_text: str) -> str:
     return f"{rendered_text}{sep}# app-authored generators, preserved by Gojira:\n{block}"
 
 
+def contract_fingerprint(gojira_yaml_text: str) -> str:
+    """sha256 of gojira.yaml's MEANING: parsed, then dumped as sorted JSON.
+
+    Reformatting, reordering keys, or editing comments leaves it unchanged;
+    any change the generator would act on changes it. CI recomputes this
+    with the same one-liner (see workflows/_deploy.j2) and refuses to
+    deploy when it differs from the value stamped into the workflow at
+    render time — finding #20: a gojira.yaml push and its setup PR land as
+    two commits, and the first one deploys a new image against stale
+    manifests.
+    """
+    doc = yaml.safe_load(gojira_yaml_text)
+    canon = json.dumps(doc, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canon.encode()).hexdigest()
+
+
+_CONTRACT_LINE = re.compile(r"^(\s*GOJIRA_CONTRACT:\s*)[0-9a-f]{64}$", re.MULTILINE)
+
+
+def stamp_contract(workflow_text: str, gojira_yaml_text: str) -> str:
+    """Rewrite a generated workflow's GOJIRA_CONTRACT to match gojira.yaml.
+
+    For paths that edit the contract textually instead of re-rendering
+    (the sizing PR) — otherwise their merge would fail every deploy with a
+    stale-manifests error that is a lie.
+    """
+    sha = contract_fingerprint(gojira_yaml_text)
+    updated, n = _CONTRACT_LINE.subn(lambda m: f"{m.group(1)}{sha}", workflow_text)
+    if n == 0:
+        raise ValueError("workflow carries no GOJIRA_CONTRACT line — regenerate it")
+    return updated
+
+
 def render(spec: GeneratorSpec) -> dict[str, str]:
     """Render all artifacts for an app. Returns {repo-relative path: content}."""
     sizing = load_sizing()
@@ -435,10 +471,13 @@ def render(spec: GeneratorSpec) -> dict[str, str]:
     }
 
     files: dict[str, str] = {}
+    files["gojira.yaml"] = _t("gojira.yaml.j2", ctx)
+    # The workflows carry the fingerprint of the contract they were rendered
+    # from; CI refuses to deploy a repo whose gojira.yaml no longer matches.
+    ctx["contract_sha"] = contract_fingerprint(files["gojira.yaml"])
     files[".github/workflows/gojira-ci.yaml"] = _t("workflows/ci.yaml.j2", ctx)
     if spec.promote_envs:
         files[".github/workflows/gojira-promote.yaml"] = _t("workflows/promote.yaml.j2", ctx)
-    files["gojira.yaml"] = _t("gojira.yaml.j2", ctx)
 
     base = "k8s/base"
     if spec.workload_class == "cron":

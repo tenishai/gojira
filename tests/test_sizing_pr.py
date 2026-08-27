@@ -103,9 +103,11 @@ class SpecRepoGitHub(FakeGitHubClient):
                 gsa_email="d@p.iam.gserviceaccount.com",
             )],
         )
-        target = workdir / "k8s" / "base" / "deployment.yaml"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(render(spec)["k8s/base/deployment.yaml"])
+        files = render(spec)
+        for path in ("k8s/base/deployment.yaml", ".github/workflows/gojira-ci.yaml"):
+            target = workdir / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(files[path])
 
 
 def test_open_pr_flow(session, app_rec, tmp_path):
@@ -125,6 +127,11 @@ def test_open_pr_flow(session, app_rec, tmp_path):
     res = dep["spec"]["template"]["spec"]["containers"][0]["resources"]
     assert res["requests"]["cpu"] == "800m" and res["limits"]["cpu"] == "1250m"
     assert res["requests"]["memory"] == "256Mi"  # untouched
+    # Finding #20: the contract changed textually, so the workflow's stamp
+    # must follow — or merging this PR fails every deploy as "stale".
+    from gojira.generator import contract_fingerprint
+    wf = (tmp_path / ".github" / "workflows" / "gojira-ci.yaml").read_text()
+    assert f"GOJIRA_CONTRACT: {contract_fingerprint(edited)}" in wf
 
 
 def test_existing_pr_reused_not_reauthored(session, app_rec, tmp_path):
