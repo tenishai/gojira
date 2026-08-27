@@ -17,12 +17,29 @@ permissions:
 
 env:
   IMAGE: us-central1-docker.pkg.dev/example-project/apps/clips-api
+  GOJIRA_CONTRACT: 81728c9ce7002a26b9bb2277123f37948a998a78efa7b975035c361d3411c4b0
 
 jobs:
   build-and-deploy-dev:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify manifests match gojira.yaml
+        # gojira.yaml and the manifests it implies can land in two commits
+        # (a contract push, then Gojira's setup PR). Deploying the first
+        # one ships a new image against stale manifests (finding #20:
+        # clio's slack transport with no slack secret, ten minutes of
+        # crashloop). GOJIRA_CONTRACT is the fingerprint of the contract
+        # these manifests were rendered from — same canonical hash as
+        # gojira.generator.contract_fingerprint. Fail here, before a build.
+        run: |
+          python3 -c 'import yaml' 2>/dev/null || pip install -q pyyaml
+          actual=$(python3 -c 'import hashlib, json, yaml; doc = yaml.safe_load(open("gojira.yaml")); print(hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest())')
+          if [ "$actual" != "$GOJIRA_CONTRACT" ]; then
+            echo "::error::k8s/ and workflows are stale for this gojira.yaml (contract $actual, manifests rendered from $GOJIRA_CONTRACT). Merge Gojira's setup PR, or press Provision again, then redeploy."
+            exit 1
+          fi
 
       - id: auth
         uses: google-github-actions/auth@v2
