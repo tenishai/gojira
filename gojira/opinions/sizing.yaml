@@ -28,6 +28,20 @@ classes:
     probes:
       liveness: { type: tcp }
 
+  # Policy/credential gateways (liminal-shaped): a data plane on the app
+  # port plus a separable admin plane. SQLite-backed policy state means
+  # exactly one replica -- no HPA, Recreate so two pods never share the
+  # db file. Probes /healthz: the gateway reports per-target catalog
+  # health there, so readiness degrades loudly with its upstreams.
+  gateway:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+    hpa: null
+    strategy: Recreate
+    probes:
+      readiness: { type: http, path: /healthz }
+      liveness: { type: http, path: /healthz }
+
   # Slack-resident agents: single Socket Mode consumer per token, so
   # Recreate (no surge double-consumer) and never HPA. Sized like a small
   # worker; the rightsizing loop refines from evidence.

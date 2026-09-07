@@ -442,3 +442,60 @@ configMapGenerator:
     # no generators → untouched; junk → untouched
     assert preserve_generators("resources: [x.yaml]", rendered) == rendered
     assert preserve_generators(":::bad", rendered) == rendered
+
+
+# --- gateway class + admin_port (liminal-shaped apps, 2026-09-07) -------------
+
+
+def _gw(**over) -> GeneratorSpec:
+    """The spec() fixture with the gateway class -- model_copy because the
+    helper hardcodes workload_class and pydantic refuses the duplicate."""
+    return spec().model_copy(update={"workload_class": "gateway", **over})
+
+
+def test_admin_port_renders_second_port_and_its_own_service():
+    files = render(_gw(admin_port=9101))
+    dep = yaml.safe_load(files["k8s/base/deployment.yaml"])
+    ports = dep["spec"]["template"]["spec"]["containers"][0]["ports"]
+    assert {"name": "admin", "containerPort": 9101} in ports
+    assert {"name": "http", "containerPort": 8080} in ports
+
+    admin = yaml.safe_load(files["k8s/base/admin-service.yaml"])
+    assert admin["metadata"]["name"] == "iris-admin"
+    assert admin["spec"]["ports"] == [
+        {"name": "admin", "port": 80, "targetPort": "admin"}
+    ]
+    # The data-plane Service is untouched: one http port, nothing admin.
+    svc = yaml.safe_load(files["k8s/base/service.yaml"])
+    assert [p["name"] for p in svc["spec"]["ports"]] == ["http"]
+    # kustomization lists the new manifest.
+    kust = yaml.safe_load(files["k8s/base/kustomization.yaml"])
+    assert "admin-service.yaml" in kust["resources"]
+
+
+def test_admin_port_round_trips_through_the_contract():
+    files = render(_gw(admin_port=9101))
+    assert read_app_needs(files["gojira.yaml"]).get("admin_port") == 9101
+
+
+def test_gateway_class_opinions_single_replica_healthz():
+    files = render(_gw())
+    dep = yaml.safe_load(files["k8s/base/deployment.yaml"])
+    assert dep["spec"]["strategy"] == {"type": "Recreate"}
+    probe = dep["spec"]["template"]["spec"]["containers"][0]["readinessProbe"]
+    assert probe["httpGet"]["path"] == "/healthz"
+    assert "k8s/base/hpa.yaml" not in files
+    assert "k8s/base/service.yaml" in files  # http readiness => a Service
+
+
+def test_no_admin_port_renders_no_admin_artifacts():
+    files = render(_gw())
+    assert "k8s/base/admin-service.yaml" not in files
+    dep = yaml.safe_load(files["k8s/base/deployment.yaml"])
+    ports = dep["spec"]["template"]["spec"]["containers"][0]["ports"]
+    assert [p["name"] for p in ports] == ["http"]
+
+
+def test_admin_port_ignores_nonsense_values():
+    assert "admin_port" not in read_app_needs("admin_port: 99999")
+    assert "admin_port" not in read_app_needs('admin_port: "9101"')

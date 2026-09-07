@@ -119,6 +119,9 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
         needs["service_account"] = str(doc["service_account"])
     if isinstance(doc.get("env"), dict):
         needs["env_vars"] = {str(k): str(v) for k, v in doc["env"].items()}
+    raw_admin = doc.get("admin_port")
+    if isinstance(raw_admin, int) and 0 < raw_admin < 65536:
+        needs["admin_port"] = raw_admin
     mount = doc.get("data_mount")
     if isinstance(mount, dict) and mount.get("pvc") and mount.get("path"):
         needs["data_mount"] = DataMount(
@@ -232,6 +235,12 @@ class GeneratorSpec(BaseModel):
     # inline into the deployment: config changes stay reviewed git commits,
     # not secret-store writes (Rook's finding).
     env_vars: dict[str, str] = {}
+    # A second listener beside the app port (gateway-shaped apps: liminal's
+    # separable admin plane). Renders a named containerPort plus its own
+    # ClusterIP Service ({app}-admin) so reachability is a NetworkPolicy /
+    # caller decision, never a shared-listener accident. The app port stays
+    # the only port the main Service routes.
+    admin_port: int | None = None
 
     @model_validator(mode="after")
     def validate_spec(self):
@@ -449,6 +458,8 @@ def render(spec: GeneratorSpec) -> dict[str, str]:
         files[f"{base}/rules.yaml"] = _t("k8s/rules.yaml.j2", ctx)
     if ctx["has_service"]:
         files[f"{base}/service.yaml"] = _t("k8s/service.yaml.j2", ctx)
+    if spec.admin_port and not ctx["is_cron"]:
+        files[f"{base}/admin-service.yaml"] = _t("k8s/admin-service.yaml.j2", ctx)
     if cls.hpa:
         files[f"{base}/hpa.yaml"] = _t("k8s/hpa.yaml.j2", ctx)
         files[f"{base}/pdb.yaml"] = _t("k8s/pdb.yaml.j2", ctx)

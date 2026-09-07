@@ -58,4 +58,4 @@ def load_sizing() -> SizingOpinions:
     return SizingOpinions(ephemeral_storage=raw["ephemeral_storage"], classes=classes)
 
 
-WORKLOAD_CLASSES = ("web", "worker", "cron", "heavy", "gpu", "agent")
+WORKLOAD_CLASSES = ("web", "worker", "cron", "heavy", "gpu", "agent", "gateway")
