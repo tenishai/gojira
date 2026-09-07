@@ -42,6 +42,10 @@ spec:
           ports:
             - name: http
               containerPort: {{ port }}
+{% if spec.admin_port %}
+            - name: admin
+              containerPort: {{ spec.admin_port }}
+{% endif %}
 {% if spec.env_vars %}
           env:
 {% for k, v in spec.env_vars | dictsort %}
