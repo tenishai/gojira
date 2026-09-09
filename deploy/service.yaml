@@ -3,6 +3,11 @@ kind: Service
 metadata:
   name: gojira
   namespace: gojira
+  labels:
+    # The observability layer's ServiceMonitor selects services by this label;
+    # an unlabeled Service object is invisible to it (selector matches labels,
+    # not the selector field).
+    app.kubernetes.io/name: gojira
 spec:
   selector:
     app.kubernetes.io/name: gojira
