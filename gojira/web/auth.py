@@ -31,7 +31,9 @@ log = logging.getLogger(__name__)
 IAP_HEADER = "x-goog-authenticated-user-email"
 # /healthz: kubelet probes carry no identity — finding #17: the auth gate
 # 401'd Gojira's own readiness probe and the pod could never become Ready.
-EXEMPT_PREFIXES = ("/webhook/", "/api/v1/", "/healthz")
+# /metrics: the in-cluster scraper reaches the Service directly, below IAP;
+# the exposition is request counts and durations only.
+EXEMPT_PREFIXES = ("/webhook/", "/api/v1/", "/healthz", "/metrics")
 
 
 def identity_from(request: Request) -> str:
