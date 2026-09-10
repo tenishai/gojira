@@ -51,3 +51,22 @@ def test_two_apps_coexist(tmp_path):
     )
     create_app(sf, clients=clients, config=Config())
     create_app(sf, clients=clients, config=Config())
+
+
+def test_metrics_exempt_from_identity_gate(tmp_path):
+    # The in-cluster scraper carries no IAP identity - /metrics answers anyway.
+    engine = create_engine(
+        f"sqlite:///{tmp_path}/gojira.db", connect_args={"check_same_thread": False}
+    )
+    Base.metadata.create_all(engine)
+    sf = sessionmaker(bind=engine, expire_on_commit=False)
+    cfg = Config()
+    cfg.auth.enabled = True
+    cfg.auth.allowed_domain = "fubo.tv"
+    clients = service.ProvisionClients(
+        gcp=FakeGCPClient(), github=FakeGitHubClient(), kubectl_for=KubectlFactory()
+    )
+    c = TestClient(create_app(sf, clients=clients, config=cfg))
+    r = c.get("/metrics", follow_redirects=True)
+    assert r.status_code == 200
+    assert "http_request_duration_seconds" in r.text
