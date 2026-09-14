@@ -499,3 +499,8 @@ def test_no_admin_port_renders_no_admin_artifacts():
 def test_admin_port_ignores_nonsense_values():
     assert "admin_port" not in read_app_needs("admin_port: 99999")
     assert "admin_port" not in read_app_needs('admin_port: "9101"')
+    # bool is an int: `true` must not render containerPort: True
+    assert "admin_port" not in read_app_needs("admin_port: true")
+    # equal to the app port: a duplicate containerPort whose admin Service
+    # would route to the data-plane listener
+    assert "admin_port" not in read_app_needs("admin_port: 8080")
