@@ -26,10 +26,15 @@ class FakeGCPClient(GCPClient):
         self.artifact_repos = set(e.get("artifact_repos", []))
         self.dns_access = set(e.get("dns_access", []))  # (project, location, cluster)
         self.app_images = {k: list(v) for k, v in e.get("app_images", {}).items()}  # "{ar_repo}/{name}" -> [digests]
+        self.image_digests = dict(e.get("image_digests", {}))  # "image:tag" -> "sha256:..."
         self.calls: list[str] = []
 
     def project_number(self, project):
         return self._num
+
+    def image_digest(self, image, tag):
+        self.calls.append(f"image_digest:{image}:{tag}")
+        return self.image_digests.get(f"{image}:{tag}")
 
     def api_enabled(self, project, api):
         return api in self.enabled_apis
@@ -165,7 +170,8 @@ class FakeGitHubClient(GitHubClient):
     """In-memory git/GitHub. Tracks the repo flow; preset an existing PR."""
 
     def __init__(self, *, default_branch="main", existing_pr=None, repos=None,
-                 dockerfile=True, pr_merged=False, merged_urls=None, installation_id=0):
+                 dockerfile=True, pr_merged=False, merged_urls=None, installation_id=0,
+                 deploy_history=None):
         self._default_branch = default_branch
         self.dockerfile = dockerfile
         # Repo-history default for setup_pr_merged() (see that method's
@@ -183,6 +189,8 @@ class FakeGitHubClient(GitHubClient):
         self.pushed = None
         self.tags: list[tuple[str, str, str]] = []  # (repo, tag, sha)
         self.dispatched: list[tuple[str, str, str]] = []  # (repo, workflow, ref)
+        self._deploy_history = list(deploy_history or [])
+        self.checked_out_sha: str | None = None
         self.dispatch_error: str | None = None
         self.merged: list[str] = []
         self.calls: list[str] = []
@@ -235,6 +243,14 @@ class FakeGitHubClient(GitHubClient):
     def checkout_branch(self, workdir, branch):
         self.calls.append(f"checkout:{branch}")
         self.branch = branch
+
+    def checkout_sha(self, workdir, sha):
+        self.calls.append(f"checkout_sha:{sha[:12]}")
+        self.checked_out_sha = sha
+
+    def deploy_history(self, repo, workflow, branch, limit=10):
+        self.calls.append(f"history:{workflow}@{branch}")
+        return list(self._deploy_history)[:limit]
 
     def commit_all(self, workdir, message):
         self.calls.append("commit")
