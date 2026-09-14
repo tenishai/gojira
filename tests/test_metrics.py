@@ -70,3 +70,26 @@ def test_metrics_exempt_from_identity_gate(tmp_path):
     r = c.get("/metrics", follow_redirects=True)
     assert r.status_code == 200
     assert "http_request_duration_seconds" in r.text
+
+
+def test_unhandled_exception_counts_as_500(tmp_path):
+    # An unhandled crash produces no response object - it must still reach
+    # http_requests_total or a crashing app looks healthy to 5xx alerts.
+    engine = create_engine(
+        f"sqlite:///{tmp_path}/gojira.db", connect_args={"check_same_thread": False}
+    )
+    Base.metadata.create_all(engine)
+    sf = sessionmaker(bind=engine, expire_on_commit=False)
+    clients = service.ProvisionClients(
+        gcp=FakeGCPClient(), github=FakeGitHubClient(), kubectl_for=KubectlFactory()
+    )
+    app = create_app(sf, clients=clients, config=Config())
+
+    @app.get("/boom")
+    def boom():
+        raise RuntimeError("unhandled")
+
+    c = TestClient(app, raise_server_exceptions=False)
+    assert c.get("/boom").status_code == 500
+    text = c.get("/metrics").text
+    assert 'http_requests_total{method="GET",status="500"} 1.0' in text
