@@ -81,3 +81,12 @@ def test_healthz_exempt_from_identity(client):
     """Finding #17: kubelet probes carry no IAP header — the auth gate must
     never make the platform unready under its own protection."""
     assert client.get("/healthz").status_code == 200
+
+
+def test_exempt_paths_match_on_segment_boundaries():
+    from gojira.web.auth import _exempt
+
+    assert _exempt("/metrics") and _exempt("/healthz") and _exempt("/webhook/x")
+    assert _exempt("/metrics/") and _exempt("/api/v1/usage")
+    # lookalikes never slip the identity gate
+    assert not _exempt("/metricsfoo") and not _exempt("/healthzz")
