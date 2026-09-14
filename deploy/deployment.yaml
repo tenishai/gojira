@@ -29,9 +29,19 @@ spec:
         runAsUser: 10001
         runAsGroup: 10001
         fsGroup: 10001
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: gojira
           image: gojira  # set by kustomize (images:) to the AR path + tag
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            # Root FS sealed; the two paths that genuinely write are emptyDirs:
+            # /home/gojira (gcloud config + the kubeconfigs get-credentials
+            # builds) and /tmp (ephemeral clone workdirs). SQLite lives on the
+            # /data PVC. Nothing else on this image writes at runtime.
+            readOnlyRootFilesystem: true
           # The dev tag is mutable — without Always, a node that cached an old
           # (e.g. wrong-arch) image under the same tag will keep running it.
           imagePullPolicy: Always
@@ -61,6 +71,8 @@ spec:
             - { name: config, mountPath: /config, readOnly: true }
             - { name: github-app, mountPath: /secrets, readOnly: true }
             - { name: data, mountPath: /data }
+            - { name: home, mountPath: /home/gojira }
+            - { name: tmp, mountPath: /tmp }
       volumes:
         - name: config
           configMap: { name: gojira-config }
@@ -71,3 +83,7 @@ spec:
               - { key: private_key, path: github-app.pem }
         - name: data
           persistentVolumeClaim: { claimName: gojira-data }
+        - name: home
+          emptyDir: { sizeLimit: 256Mi }
+        - name: tmp
+          emptyDir: { sizeLimit: 1Gi }
