@@ -13,7 +13,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 # git (clone/push), plus the Google Cloud CLI repo for gcloud + kubectl +
 # the GKE auth plugin that `get-credentials` needs to build a working kubeconfig.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# upgrade first: the base image lags Debian security releases by days —
+# long enough for a scanner to be right about it (Wiz 2026-09-12, libc6).
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
         git curl gnupg ca-certificates apt-transport-https \
     && curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
         | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg \
