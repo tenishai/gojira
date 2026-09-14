@@ -4,6 +4,7 @@
   <h1>{{ v.app.name }} <span class="badge b-{{ v.app.status }}">{{ v.app.status }}</span></h1>
   <p class="muted mono">{{ v.app.repo_full_name }} · {{ v.app.workload_class }}</p>
   {% if error %}<div class="card err">{{ error }}</div>{% endif %}
+  {% if notice %}<div class="card">{{ notice }}</div>{% endif %}
 
   <h2>Environments</h2>
   <table>
@@ -28,6 +29,40 @@
       <button type="submit">Redeploy</button>
     </form>
   </div>
+
+  <h2>Deploy history</h2>
+  {% if not show_history %}
+  <div class="card">
+    <p class="muted">Every green CI run is a receipt — its manifests plus the exact image
+      digest built for that commit. <a href="/apps/{{ v.app.id }}?history=1">Show recent deploys</a>
+      to roll back to one.</p>
+  </div>
+  {% else %}
+  {% if history_error %}<div class="card err">{{ history_error }}</div>{% endif %}
+  {% if not deploys and not history_error %}
+  <p class="muted">No successful deploys on record yet.</p>
+  {% endif %}
+  {% for d in deploys %}
+  <div class="card">
+    <p><span class="mono">{{ d.sha[:12] }}</span> {{ d.title }}
+      <span class="muted">{{ d.finished_at }}</span>
+      · <a href="{{ d.run_url }}">run</a>
+      {% if loop.first %}
+      <span class="badge b-active">latest</span>
+      {% else %}
+      <form method="post" action="/apps/{{ v.app.id }}/rollback" style="display:inline">
+        <input type="hidden" name="sha" value="{{ d.sha }}">
+        <button type="submit" style="margin:0 0 0 8px;font-size:0.8em;padding:4px 10px">Roll back to this</button>
+      </form>
+      {% endif %}</p>
+  </div>
+  {% endfor %}
+  {% if deploys %}
+  <p class="muted">Rollback re-applies that commit's manifests with its image digest — no
+    rebuild, seconds not minutes. Git keeps pointing at the newer commit (drift scan
+    will say so); open a revert PR to make it durable.</p>
+  {% endif %}
+  {% endif %}
 
   <h2>Drift
     <form method="post" action="/apps/{{ v.app.id }}/scan-drift" style="display:inline">

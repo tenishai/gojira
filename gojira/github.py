@@ -12,6 +12,7 @@ Steps depend on the GitHubClient ABC. Two backends implement it:
 Both share the auth-free local git mechanics in _LocalGit.
 """
 
+import json
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -92,6 +93,20 @@ class GitHubClient(ABC):
     def checkout_branch(self, workdir: Path, branch: str) -> None: ...
 
     @abstractmethod
+    def checkout_sha(self, workdir: Path, sha: str) -> None:
+        """Detached checkout of an exact commit — rollback's time travel."""
+        ...
+
+    @abstractmethod
+    def deploy_history(self, repo: str, workflow: str, branch: str, limit: int = 10) -> list[dict]:
+        """Successful completed runs of `workflow` on `branch`, newest first:
+        {"sha", "title", "finished_at", "run_url"} each. The receipts the
+        rollback picker offers — read from GitHub, not our webhook Events,
+        so the list has no gaps from webhook downtime and predates the
+        feature."""
+        ...
+
+    @abstractmethod
     def commit_all(self, workdir: Path, message: str) -> bool:
         """Stage and commit everything. Returns False if there was nothing to commit."""
         ...
@@ -134,6 +149,9 @@ class _LocalGit:
 
     def checkout_branch(self, workdir: Path, branch: str) -> None:
         self._git_in(workdir, "checkout", "-B", branch)
+
+    def checkout_sha(self, workdir: Path, sha: str) -> None:
+        self._git_in(workdir, "checkout", "--detach", sha)
 
     def commit_all(self, workdir: Path, message: str) -> bool:
         self._git_in(workdir, "add", "-A")
@@ -218,6 +236,18 @@ class GhCLI(_LocalGit, GitHubClient):
         self._exec(
             [self._gh, "workflow", "run", workflow, "--repo", repo, "--ref", ref]
         )
+
+    def deploy_history(self, repo: str, workflow: str, branch: str, limit: int = 10) -> list[dict]:
+        out = self._exec(
+            [self._gh, "run", "list", "--repo", repo, "--workflow", workflow,
+             "--branch", branch, "--status", "success", "--limit", str(limit),
+             "--json", "headSha,displayTitle,updatedAt,url"]
+        )
+        return [
+            {"sha": r.get("headSha", ""), "title": r.get("displayTitle", ""),
+             "finished_at": r.get("updatedAt", ""), "run_url": r.get("url", "")}
+            for r in (json.loads(out) if out.strip() else [])
+        ]
 
     def clone(self, repo: str, workdir: Path) -> None:
         self._exec([self._gh, "repo", "clone", repo, str(workdir)])
@@ -397,6 +427,18 @@ class GitHubAppClient(_LocalGit, GitHubClient):
             json={"ref": ref},
         )
         self._check(r, f"dispatch {workflow} in {repo}")
+
+    def deploy_history(self, repo: str, workflow: str, branch: str, limit: int = 10) -> list[dict]:
+        r = self._request(
+            "GET", f"/repos/{repo}/actions/workflows/{workflow}/runs", repo,
+            params={"status": "success", "branch": branch, "per_page": limit},
+        )
+        self._check(r, f"deploy history for {repo}")
+        return [
+            {"sha": run.get("head_sha", ""), "title": run.get("display_title", ""),
+             "finished_at": run.get("updated_at", ""), "run_url": run.get("html_url", "")}
+            for run in (r.json().get("workflow_runs") or [])
+        ]
 
     def existing_pr(self, repo: str, head: str) -> str | None:
         owner = repo.split("/")[0]

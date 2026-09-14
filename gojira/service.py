@@ -7,12 +7,15 @@ thread, and exposes read models over the ledger/events for the UI to poll.
 
 import json
 import logging
+import re
 import shutil
 import tempfile
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import yaml
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -22,7 +25,7 @@ from gojira.config import Config
 from gojira.gcp import GcloudClient, GCPClient
 from gojira.github import CI_WORKFLOW, GhCLI, GitHubAppClient, GitHubClient
 from gojira.installations import DbInstallationResolver
-from gojira.k8s import KubectlCLI, KubectlClient
+from gojira.k8s import KubectlCLI, KubectlClient, kustomize_build
 from gojira.models import (
     App,
     AppStatus,
@@ -560,6 +563,93 @@ def sync_app(session: Session, app_id: int, github: GitHubClient) -> bool:
     if not github.setup_pr_merged(app.repo_full_name):
         return False
     return activate_app(session, app)
+
+
+def deploy_history(
+    session: Session, app_id: int, github: GitHubClient, limit: int = 10
+) -> list[dict]:
+    """The app's successful CI deploys, newest first — the rollback picker.
+
+    CI deploys the first environment; promote runs (later envs) are a
+    follow-up surface."""
+    app = session.get(App, app_id)
+    if app is None:
+        raise ValueError(f"no such app: {app_id}")
+    branch = github.default_branch(app.repo_full_name)
+    return github.deploy_history(app.repo_full_name, CI_WORKFLOW, branch, limit=limit)
+
+
+_FULL_SHA = re.compile(r"[0-9a-f]{40}")
+
+
+def rollback_app(
+    session: Session,
+    app_id: int,
+    sha: str,
+    actor: str,
+    clients: ProvisionClients,
+    render=None,
+) -> str:
+    """Re-apply the manifests of a previously deployed commit — no rebuild.
+
+    Digest-pinned deploys make every past green run a receipt: check the
+    commit out, point its overlay at the digest the registry holds for its
+    tag (the git copy deliberately says `newTag: latest` — CI pins in its
+    own workspace, so we pin in ours), build, apply to the env's cluster.
+
+    Git does NOT move: main still points at the newer commit, so the next
+    drift scan will honestly show the cluster behind git, and the next push
+    or Redeploy re-advances it. Rollback is the fast lever for a bad deploy;
+    the durable fix is a revert PR — the returned message says so.
+
+    First environment only (the one CI deploys); rolling back promote envs
+    is a follow-up.
+    """
+    render = render or kustomize_build
+    app = session.get(App, app_id)
+    if app is None:
+        raise ValueError(f"no such app: {app_id}")
+    if app.status != AppStatus.ACTIVE:
+        raise ValueError(f"app is {app.status}, not active — nothing to roll back")
+    if not _FULL_SHA.fullmatch(sha):
+        raise ValueError(f"not a full commit sha: {sha!r}")
+    env = app.environments[0]
+    image = f"{env.cluster.ar_repo}/{app.name}"
+    tag = sha[:12]
+    digest = clients.gcp.image_digest(image, tag)
+    if digest is None:
+        raise ValueError(
+            f"the registry holds no image for {tag} — that commit was never built here"
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        workdir = Path(tmp) / "repo"
+        clients.github.clone(app.repo_full_name, workdir)
+        clients.github.checkout_sha(workdir, sha)
+        overlay = workdir / "k8s" / "overlays" / env.name
+        kust_path = overlay / "kustomization.yaml"
+        if not kust_path.is_file():
+            raise ValueError(f"commit {tag} has no k8s/overlays/{env.name} — can't roll back to it")
+        # The same override CI applies at deploy time. Comments in the
+        # workspace copy don't survive the round-trip; the file in git does.
+        kust = yaml.safe_load(kust_path.read_text()) or {}
+        kust["images"] = [{"name": "gojira-app", "newName": image, "newTag": tag, "digest": digest}]
+        kust_path.write_text(yaml.safe_dump(kust, sort_keys=False))
+        docs = render(overlay)
+        if not docs:
+            raise ValueError(f"commit {tag} renders no objects — refusing an empty apply")
+        clients.kubectl_for(env.cluster).apply(yaml.safe_dump_all(docs, sort_keys=False))
+
+    session.add(Event(app_id=app.id, type="app.rolled_back", payload_json=json.dumps({
+        "environment": env.name, "sha": sha,
+        "image": f"{image}:{tag}@{digest}", "actor": actor,
+    })))
+    session.commit()
+    log.info("rollback applied for %s (%s -> %s) by %s", app.name, env.name, tag, actor or "?")
+    return (
+        f"{env.name} now runs {tag}. Git still points at the newer commit — "
+        "open a revert PR to make this stick; the next push or Redeploy re-advances."
+    )
 
 
 def redeploy_app(session: Session, app_id: int, github: GitHubClient) -> str:

@@ -23,6 +23,7 @@ from gojira import models, service, webhooks
 from gojira.config import Config, load_config
 from gojira.opinions import WORKLOAD_CLASSES
 from gojira.service import ProvisionClients
+from gojira.web.auth import identity_from
 from gojira.sizing import agent_deploy
 from gojira.sizing import profile as sizing_profile
 from gojira.sizing import service as sizing_service
@@ -206,11 +207,49 @@ def create_app(
 
     @app.get("/apps/{app_id}", response_class=HTMLResponse)
     def app_detail(
-        app_id: int, request: Request, session: Session = Depends(get_session), error: str = ""
+        app_id: int,
+        request: Request,
+        session: Session = Depends(get_session),
+        error: str = "",
+        notice: str = "",
+        history: int = 0,
     ):
         view = service.app_status(session, app_id)
+        deploys, history_error = [], ""
+        if history:  # fetched only on request — a GitHub call per page view is rude
+            try:
+                deploys = service.deploy_history(
+                    session, app_id, request.app.state.clients.github
+                )
+            except Exception as exc:
+                log.warning("deploy history failed for app %s: %s", app_id, exc)
+                history_error = "couldn't read the deploy history from GitHub"
         return TEMPLATES.TemplateResponse(
-            request, "app_detail.html", {"v": view, "error": error}
+            request, "app_detail.html",
+            {"v": view, "error": error, "notice": notice, "show_history": bool(history),
+             "deploys": deploys, "history_error": history_error},
+        )
+
+    @app.post("/apps/{app_id}/rollback")
+    def rollback(
+        app_id: int,
+        request: Request,
+        sha: str = Form(""),
+        session: Session = Depends(get_session),
+    ):
+        try:
+            msg = service.rollback_app(
+                session, app_id, sha=sha,
+                actor=identity_from(request),
+                clients=request.app.state.clients,
+            )
+        except Exception as exc:
+            log.warning("rollback failed for app %s: %s", app_id, exc)
+            return RedirectResponse(
+                f"/apps/{app_id}?history=1&error={quote(str(exc)[:300])}", status_code=303
+            )
+        return RedirectResponse(
+            f"/apps/{app_id}?history=1&notice={quote(msg)}", status_code=303
         )
 
     @app.get("/apps/{app_id}/status", response_class=HTMLResponse)
