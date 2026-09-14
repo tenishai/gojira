@@ -120,7 +120,18 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
     if isinstance(doc.get("env"), dict):
         needs["env_vars"] = {str(k): str(v) for k, v in doc["env"].items()}
     raw_admin = doc.get("admin_port")
-    if isinstance(raw_admin, int) and 0 < raw_admin < 65536:
+    # bool is an int in Python, so `admin_port: true` would render
+    # `containerPort: True` and break every apply until hand-fixed; and an
+    # admin port equal to the app port would render a duplicate containerPort
+    # whose {app}-admin Service routes to the data-plane listener - the
+    # shared-listener accident this field exists to prevent. Both get the
+    # absent/unusable -> ignore treatment (review findings on #43).
+    if (
+        isinstance(raw_admin, int)
+        and not isinstance(raw_admin, bool)
+        and 0 < raw_admin < 65536
+        and raw_admin != APP_PORT
+    ):
         needs["admin_port"] = raw_admin
     mount = doc.get("data_mount")
     if isinstance(mount, dict) and mount.get("pvc") and mount.get("path"):
