@@ -31,7 +31,22 @@ log = logging.getLogger(__name__)
 IAP_HEADER = "x-goog-authenticated-user-email"
 # /healthz: kubelet probes carry no identity — finding #17: the auth gate
 # 401'd Gojira's own readiness probe and the pod could never become Ready.
-EXEMPT_PREFIXES = ("/webhook/", "/api/v1/", "/healthz")
+# /metrics: the in-cluster scraper reaches the Service directly, below IAP;
+# the exposition is request counts and durations only.
+EXEMPT_PREFIXES = ("/webhook/", "/api/v1/", "/healthz", "/metrics")
+
+
+def _exempt(path: str) -> bool:
+    """Segment-boundary matching: /metrics exempts /metrics and /metrics/,
+    never a lookalike like /metricsfoo (review nit on #44 - the same latent
+    shape /healthz always had). Entries ending in / stay plain prefixes."""
+    for p in EXEMPT_PREFIXES:
+        if p.endswith("/"):
+            if path.startswith(p):
+                return True
+        elif path == p or path.startswith(p + "/"):
+            return True
+    return False
 
 
 def identity_from(request: Request) -> str:
@@ -92,7 +107,7 @@ def install(app, auth: AuthConfig) -> None:
 
     @app.middleware("http")
     async def iap_gate(request: Request, call_next):
-        if request.url.path.startswith(EXEMPT_PREFIXES):
+        if _exempt(request.url.path):
             return await call_next(request)
         email = identity_from(request)
         if not email:

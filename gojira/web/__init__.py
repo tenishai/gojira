@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from gojira import models, service, webhooks
+from gojira.web import metrics, tracing
 from gojira.config import Config, load_config
 from gojira.opinions import WORKLOAD_CLASSES
 from gojira.service import ProvisionClients
@@ -45,6 +46,8 @@ def create_app(
     config: Config | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Gojira")
+    metrics.install(app)
+    tracing.install(app)
     app.state.session_factory = session_factory
     app.state.config = config or Config()
     app.state.clients = clients or ProvisionClients.real(
