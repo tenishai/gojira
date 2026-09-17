@@ -287,15 +287,21 @@ class GcloudClient(GCPClient):
 
 
     def image_digest(self, image: str, tag: str) -> str | None:
+        # tags list, NOT images describe: describe also queries Container
+        # Analysis for its vulnerability summary, which needs
+        # containeranalysis.occurrences.list — a permission no Artifact
+        # Registry role carries. We asked for a digest and got a security
+        # report's ACL instead (first rollback dogfood, 2026-09-17). tags
+        # list answers from AR alone, covered by reader and up.
         result = self._run([
-            self._gcloud, "artifacts", "docker", "images", "describe", f"{image}:{tag}",
-            "--format=value(image_summary.digest)",
+            self._gcloud, "artifacts", "docker", "tags", "list", image,
+            f"--filter=tag:{tag}", "--format=value(version)",
         ])
         if result.returncode != 0:
             err = result.stderr or ""
             if "not found" in err.lower() or "NOT_FOUND" in err:
                 return None
-            raise GCPError(f"describe {image}:{tag} failed: {err}")
+            raise GCPError(f"tags list {image}:{tag} failed: {err}")
         return result.stdout.strip() or None
     def get_gke_credentials(self, project: str, location: str, cluster: str) -> str:
         # The pipeline has already ensured DNS access (ensure_cluster_dns_access);

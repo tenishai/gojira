@@ -179,3 +179,33 @@ def test_delete_app_images_repo_not_found_returns_zero():
 
     assert count == 0
     assert len(runner.calls) == 1
+
+
+# --- image_digest: tags list, never images describe ---------------------------
+
+
+def test_image_digest_uses_tags_list_not_describe():
+    """images describe smuggles a Container Analysis call
+    (containeranalysis.occurrences.list) into a digest lookup — a permission
+    no AR role carries. First rollback dogfood finding, 2026-09-17."""
+    runner = FakeRunner(CommandResult(0, "sha256:abc123\n", ""))
+    client = GcloudClient(runner=runner)
+
+    digest = client.image_digest("us-east4-docker.pkg.dev/p/apps/web", "cafe12")
+
+    args = runner.calls[0][0]
+    assert args[:5] == ["gcloud", "artifacts", "docker", "tags", "list"]
+    assert "describe" not in args
+    assert "--filter=tag:cafe12" in args and "--format=value(version)" in args
+    assert digest == "sha256:abc123"
+
+
+def test_image_digest_not_found_returns_none():
+    runner = FakeRunner(CommandResult(1, "", "NOT_FOUND: no such repo"))
+    assert GcloudClient(runner=runner).image_digest("r/x", "t") is None
+
+
+def test_image_digest_other_failure_raises():
+    runner = FakeRunner(CommandResult(1, "", "PERMISSION_DENIED"))
+    with pytest.raises(GCPError, match="tags list"):
+        GcloudClient(runner=runner).image_digest("r/x", "t")
