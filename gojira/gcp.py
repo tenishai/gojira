@@ -124,6 +124,14 @@ class GCPClient(ABC):
         """Delete every image digest under {ar_repo}/{name}; return the count deleted."""
         ...
 
+    @abstractmethod
+    def image_digest(self, image: str, tag: str) -> str | None:
+        """The sha256 digest the registry holds for image:tag, or None when the
+        tag doesn't exist (that commit was never built and pushed here). The
+        receipt the rollback path pins to — same lookup the generated CI does
+        at deploy time."""
+        ...
+
 
 class GcloudClient(GCPClient):
     """gcloud-backed GCPClient. Each method maps to one or two gcloud commands."""
@@ -277,6 +285,18 @@ class GcloudClient(GCPClient):
 
     # --- gke -----------------------------------------------------------------
 
+
+    def image_digest(self, image: str, tag: str) -> str | None:
+        result = self._run([
+            self._gcloud, "artifacts", "docker", "images", "describe", f"{image}:{tag}",
+            "--format=value(image_summary.digest)",
+        ])
+        if result.returncode != 0:
+            err = result.stderr or ""
+            if "not found" in err.lower() or "NOT_FOUND" in err:
+                return None
+            raise GCPError(f"describe {image}:{tag} failed: {err}")
+        return result.stdout.strip() or None
     def get_gke_credentials(self, project: str, location: str, cluster: str) -> str:
         # The pipeline has already ensured DNS access (ensure_cluster_dns_access);
         # the default endpoint form writes a private IP that is unreachable
