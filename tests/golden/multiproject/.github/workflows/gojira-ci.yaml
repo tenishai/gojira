@@ -81,7 +81,11 @@ jobs:
           # the apply a silent no-op while a different image sits in the
           # registry. The digest rolls pods exactly when the built bytes
           # changed; the tag stays in the ref for humans reading the cluster.
-          DIGEST=$(gcloud artifacts docker images describe "$IMAGE:${GITHUB_SHA::12}" --format='value(image_summary.digest)')
+          # tags list, not images describe: describe also queries Container
+          # Analysis (containeranalysis.occurrences.list), which no AR role
+          # grants — it works here only while the runner's gcloud happens not
+          # to make that call. tags list answers from AR alone.
+          DIGEST=$(gcloud artifacts docker tags list "$IMAGE" --filter="tag:${GITHUB_SHA::12}" --format='value(version)')
           kustomize edit set image gojira-app="$IMAGE:${GITHUB_SHA::12}@$DIGEST"
 
           # Two-phase apply so the workload is not blocked by GMP's admission
