@@ -252,8 +252,13 @@ class FakeGitHubClient(GitHubClient):
         self.calls.append(f"history:{workflow}@{branch}")
         return list(self._deploy_history)[:limit]
 
+    def restore_tree(self, workdir, sha):
+        self.calls.append(f"restore_tree:{sha}")
+
     def commit_all(self, workdir, message):
         self.calls.append("commit")
+        if getattr(self, "nothing_to_commit", False):
+            return False
         self.committed = True
         return True
 
