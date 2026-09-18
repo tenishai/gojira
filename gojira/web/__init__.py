@@ -255,6 +255,28 @@ def create_app(
             f"/apps/{app_id}?history=1&notice={quote(msg)}", status_code=303
         )
 
+    @app.post("/apps/{app_id}/revert-pr")
+    def revert_pr(
+        app_id: int,
+        request: Request,
+        sha: str = Form(""),
+        session: Session = Depends(get_session),
+    ):
+        # The durable half of rollback: git catches up to the cluster through
+        # review. The rollback banner is the only caller today.
+        try:
+            msg = service.open_revert_pr(
+                session, app_id, sha=sha,
+                github=request.app.state.clients.github,
+                actor=identity_from(request),
+            )
+        except Exception as exc:
+            log.warning("revert PR failed for app %s: %s", app_id, exc)
+            return RedirectResponse(
+                f"/apps/{app_id}?error={quote(str(exc)[:300])}", status_code=303
+            )
+        return RedirectResponse(f"/apps/{app_id}?notice={quote(msg)}", status_code=303)
+
     @app.get("/apps/{app_id}/status", response_class=HTMLResponse)
     def app_status_partial(
         app_id: int, request: Request, session: Session = Depends(get_session)
