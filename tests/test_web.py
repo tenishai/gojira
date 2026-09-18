@@ -951,3 +951,26 @@ def test_api_delete_fails_closed_iap_enabled_no_token(session_factory, clients):
     resp = client.request("DELETE", "/api/v1/apps/1")
     assert resp.status_code == 401
     assert "api_token" in resp.json()["error"]
+
+
+def test_rollback_banner_renders_with_revert_button(client, session_factory):
+    import json as _json
+    from gojira.models import App, AppStatus, Event
+
+    with session_factory() as s:
+        a = App(name="rb", repo_full_name="acme/rb", installation_id=1,
+                workload_class="web", status=AppStatus.ACTIVE)
+        s.add(a)
+        s.commit()
+        s.add(Event(app_id=a.id, type="app.rolled_back", payload_json=_json.dumps(
+            {"environment": "dev", "sha": "c" * 40, "image": "img", "actor": "op@x.tv"}
+        )))
+        s.commit()
+        app_id = a.id
+
+    r = client.get(f"/apps/{app_id}")
+    assert r.status_code == 200
+    assert "was rolled back to" in r.text
+    assert "Open revert PR" in r.text
+    assert f"/apps/{app_id}/revert-pr" in r.text
+    assert ("c" * 12) in r.text
