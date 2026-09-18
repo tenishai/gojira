@@ -1,0 +1,18 @@
+# The cross-repo canonicalization vector (gojira <-> argus).
+# Both repos hash this file's MEANING — yaml.safe_load, then
+# json.dumps(doc, sort_keys=True, separators=(",", ":"), default=str),
+# then sha256 — and must produce the value in expected_sha256.
+# Comments, key order, and formatting are deliberately adversarial:
+# none of them may change the fingerprint.
+app: vector-app
+class: agent
+environments:
+  - namespace: vector-app
+    cluster: ai-agents-us-east4-dev
+    name: dev
+service_account: vector-sa
+secrets_from: [vector-secrets]
+env:
+  B_SECOND: "2"
+  A_FIRST: "1"
+data_mount: { pvc: vector-data, path: /data, fs_group: 999 }
