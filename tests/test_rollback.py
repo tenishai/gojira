@@ -242,3 +242,69 @@ def test_rollback_route_surfaces_errors_on_the_history_page(tmp_path):
     r = web.post(f"/apps/{app_id}/rollback", data={"sha": SHA}, follow_redirects=True)
     assert r.status_code == 200
     assert "never built" in r.text
+
+
+# --- open_revert_pr: the durable half ------------------------------------------
+
+
+TARGET = "b" * 40
+
+
+def test_revert_pr_restores_tree_and_opens_pr(session):
+    app, _ = _active_app(session)
+    gh = FakeGitHubClient()
+
+    msg = service.open_revert_pr(session, app.id, TARGET, gh, actor="op@x.tv")
+
+    assert f"restore_tree:{TARGET}" in gh.calls
+    assert gh.branch == f"gojira/revert-{TARGET[:12]}"
+    assert gh.pushed == gh.branch
+    assert "revert PR opened:" in msg
+    view = service.app_status(session, app.id)
+    assert any(e.type == "app.revert_pr_opened" for e in view.events)
+
+
+def test_revert_pr_is_idempotent_per_target(session):
+    app, _ = _active_app(session)
+    gh = FakeGitHubClient(existing_pr="https://github.com/o/a/pull/9")
+    gh.prs[f"gojira/revert-{TARGET[:12]}"] = "https://github.com/o/a/pull/9"
+
+    msg = service.open_revert_pr(session, app.id, TARGET, gh)
+
+    assert "already open" in msg
+    assert "commit" not in gh.calls  # never cloned into a second PR
+
+
+def test_revert_pr_nothing_to_revert_when_git_matches(session):
+    """Rolling back to the current tip (cinder's first live rollback) leaves
+    git already correct — say so instead of opening an empty PR."""
+    app, _ = _active_app(session)
+    gh = FakeGitHubClient()
+    gh.nothing_to_commit = True
+
+    msg = service.open_revert_pr(session, app.id, TARGET, gh)
+
+    assert "nothing to revert" in msg
+    assert gh.pushed is None
+    view = service.app_status(session, app.id)
+    assert not any(e.type == "app.revert_pr_opened" for e in view.events)
+
+
+def test_rollback_state_feeds_view_until_superseded(session):
+    """The banner's state: latest rolled_back payload wins, until a redeploy
+    or an opened revert PR supersedes it."""
+    app, cluster = _active_app(session)
+    gh = RepoTreeGitHub()
+    gcp = FakeGCPClient(existing={"image_digests": {f"{cluster.ar_repo}/a:{TARGET[:12]}": "sha256:d"}})
+    render = lambda overlay: [{"kind": "Deployment", "metadata": {"name": "a", "namespace": "ns"}}]  # noqa: E731
+    service.rollback_app(
+        session, app.id, sha=TARGET, actor="op@x.tv",
+        clients=_clients(gh, gcp), render=render,
+    )
+
+    view = service.app_status(session, app.id)
+    assert view.rollback and view.rollback["sha"] == TARGET
+    assert view.rollback["actor"] == "op@x.tv"
+
+    service.open_revert_pr(session, app.id, TARGET, FakeGitHubClient())
+    assert service.app_status(session, app.id).rollback is None

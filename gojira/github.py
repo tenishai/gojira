@@ -107,6 +107,13 @@ class GitHubClient(ABC):
         ...
 
     @abstractmethod
+    def restore_tree(self, workdir: Path, sha: str) -> None:
+        """Make the working tree exactly match sha's tree (adds, edits, AND
+        deletions), staged, without moving the current branch — the revert
+        PR's one honest git operation."""
+        ...
+
+    @abstractmethod
     def commit_all(self, workdir: Path, message: str) -> bool:
         """Stage and commit everything. Returns False if there was nothing to commit."""
         ...
@@ -152,6 +159,12 @@ class _LocalGit:
 
     def checkout_sha(self, workdir: Path, sha: str) -> None:
         self._git_in(workdir, "checkout", "--detach", sha)
+
+    def restore_tree(self, workdir: Path, sha: str) -> None:
+        # read-tree -u --reset makes index AND worktree exactly match sha's
+        # tree — including deleting files added since. `checkout <sha> -- .`
+        # would silently keep those, reverting only half the history.
+        self._git_in(workdir, "read-tree", "-u", "--reset", sha)
 
     def commit_all(self, workdir: Path, message: str) -> bool:
         self._git_in(workdir, "add", "-A")

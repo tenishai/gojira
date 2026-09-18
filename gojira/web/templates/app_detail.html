@@ -31,6 +31,20 @@
   </div>
 
   <h2>Deploy history</h2>
+  {% if v.rollback %}
+  <div class="card" style="border-left:4px solid #d97706">
+    <p><strong>{{ v.rollback.environment }}</strong> was rolled back to
+      <span class="mono">{{ v.rollback.sha[:12] }}</span>
+      {% if v.rollback.actor %}by {{ v.rollback.actor }}{% endif %}
+      <span class="muted">({{ v.rollback.at }})</span> — git still points at the newer commit.</p>
+    <form method="post" action="/apps/{{ v.app.id }}/revert-pr" style="display:inline">
+      <input type="hidden" name="sha" value="{{ v.rollback.sha }}">
+      <button type="submit" style="margin:0">Open revert PR to make it durable</button>
+    </form>
+    <p class="muted" style="margin-top:8px">A later push or Redeploy re-advances the cluster.
+      Drift won't flag an image-only difference — this banner is the record.</p>
+  </div>
+  {% endif %}
   {% if not show_history %}
   <div class="card">
     <p class="muted">Every green CI run is a receipt — its manifests plus the exact image
@@ -59,8 +73,9 @@
   {% endfor %}
   {% if deploys %}
   <p class="muted">Rollback re-applies that commit's manifests with its image digest — no
-    rebuild, seconds not minutes. Git keeps pointing at the newer commit (drift scan
-    will say so); open a revert PR to make it durable.</p>
+    rebuild, seconds not minutes. Git keeps pointing at the newer commit — and drift
+    won't flag an image-only difference — so the banner above is the record; its
+    revert PR makes the rollback durable.</p>
   {% endif %}
   {% endif %}
 
