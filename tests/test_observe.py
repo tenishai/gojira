@@ -6,6 +6,7 @@ provision), and the cross-repo canonicalization vector argus asserts against.
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from gojira import service
 from gojira.config import Config, ObserveClusterConfig, ObserveConfig
 from gojira.generator import contract_fingerprint
 from gojira.models import AppStatus, Base
+from gojira.steps import _observe_job_name
 
 VECTOR_DIR = Path(__file__).parent / "fixtures" / "contract_vector"
 JOB_IMAGE = "us-east4-docker.pkg.dev/p/apps/argus@sha256:" + "a" * 64
@@ -119,7 +121,7 @@ def test_observe_failure_is_loud_but_isolated(session):
 
         def __call__(self, cluster):
             k = inner(cluster)
-            k.job_completes = False
+            k.job_failure = "BackoffLimitExceeded"
             k.job_log_text = "ARGUS_SUMMARY observe failed: perses unreachable"
             return k
 
@@ -132,6 +134,42 @@ def test_observe_failure_is_loud_but_isolated(session):
     assert steps["observe@dev"].status == "failed"
     assert "perses unreachable" in (steps["observe@dev"].error or "")
     assert app.status in (AppStatus.AWAITING_PR, AppStatus.ACTIVE)  # never FAILED by observe
+
+
+def test_observe_failure_without_summary_names_the_job_reason(session):
+    """argus never got to print (image pull failure, deadline): the row
+    carries the Job's failure reason instead of a bare 'did not complete'."""
+    app = _app(session)
+    inner = KubectlFactory()
+
+    class FailingFactory:
+        by_cluster = inner.by_cluster
+
+        def __call__(self, cluster):
+            k = inner(cluster)
+            k.job_failure = "DeadlineExceeded"
+            k.job_log_text = ""
+            return k
+
+    clients2 = service.ProvisionClients(
+        gcp=FakeGCPClient(), github=FakeGitHubClient(), kubectl_for=FailingFactory()
+    )
+    service.run_provision(session, app, clients2, _config(_observe_config()))
+
+    assert "DeadlineExceeded" in (_step_rows(session, app)["observe@dev"].error or "")
+
+
+def test_observe_job_name_keeps_uniqueness_under_the_dns_cut():
+    """A 60-char app name would otherwise push the epoch suffix past 63 and
+    two runs inside the ttl would collide on an immutable Job."""
+    app = "a" * 60
+    n1 = _observe_job_name(app, "dev", 1_700_000_000)
+    n2 = _observe_job_name(app, "dev", 1_700_000_001)
+    assert n1 != n2
+    for n in (n1, n2):
+        assert len(n) <= 63
+        assert re.fullmatch(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?", n), n
+    assert _observe_job_name("short", "dev", 5) == "argus-observe-5-dev-short"
 
 
 def test_observe_reruns_on_reprovision(session):
