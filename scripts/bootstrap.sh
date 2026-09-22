@@ -13,12 +13,15 @@
 # the auth: block in your config (enabled + allowed_domain/allowed_emails).
 #
 # What it does, in order (each step idempotent — rerun freely):
+#   0. preflight                  (scripts/preflight.sh --fix: tools, project,
+#                                  cluster DNS access, App id + pem)
 #   1. cluster credentials        (gcloud get-credentials)
 #   2. build + push the image     (Cloud Build — works from ARM machines too)
-#   3. namespace + GitHub App secret
+#   3. namespace + Gojira secret  (App id + pem you supply; webhook secret and
+#                                  API token minted here, preserved on rerun)
 #   4. render + apply deploy/     (placeholders filled in a temp copy; your
 #                                  working tree stays clean)
-#   5. wait for the pod, print how to reach the UI
+#   5. wait for the pod, print how to reach the UI + the minted secrets
 #   6. (only with GOJIRA_HOSTNAME) static IP, IAP OAuth client, ingress
 #
 # It deliberately does NOT read terraform state: every value is derived from
@@ -44,9 +47,12 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
-for tool in gcloud kubectl; do
+for tool in gcloud kubectl openssl; do
   command -v "$tool" >/dev/null || { echo "error: $tool not installed" >&2; exit 1; }
 done
+
+step "0/5 preflight"
+PROJECT="$PROJECT" REGION="$REGION" CLUSTER="$CLUSTER" "$REPO_ROOT/scripts/preflight.sh" --fix
 
 step "1/5 cluster credentials ($CLUSTER @ $PROJECT/$REGION)"
 # GOJIRA_DNS_ENDPOINT=1: reach a private-endpoint cluster over GKE's
@@ -60,15 +66,19 @@ step "2/5 build + push image via Cloud Build (avoids the ARM/amd64 trap)"
 gcloud services enable cloudbuild.googleapis.com --project "$PROJECT" --quiet
 gcloud builds submit --tag "${AR_PATH}/gojira:dev" --project "$PROJECT" "$REPO_ROOT"
 
-step "3/5 namespace + GitHub App secret"
+step "3/5 namespace + Gojira secret"
 kubectl create namespace gojira --dry-run=client -o yaml | kubectl apply -f -
-# Preserve an existing webhook secret across reruns; mint one on first run.
-WEBHOOK_SECRET="$(kubectl -n gojira get secret gojira-github-app \
-  -o jsonpath='{.data.webhook_secret}' 2>/dev/null | base64 -d || true)"
-WEBHOOK_SECRET="${WEBHOOK_SECRET:-$(openssl rand -hex 32)}"
+# Two secrets Gojira mints for you, preserved across reruns: the webhook
+# secret (you paste it into the GitHub App) and the API token that gates the
+# /api/v1 onboarding API (the pod refuses to boot without one — configmap.yaml).
+# tests/test_deploy_contract.py keeps this list in step with deployment.yaml.
+existing_key() { kubectl -n gojira get secret gojira-github-app -o jsonpath="{.data.$1}" 2>/dev/null | base64 -d || true; }
+WEBHOOK_SECRET="$(existing_key webhook_secret)"; WEBHOOK_SECRET="${WEBHOOK_SECRET:-$(openssl rand -hex 32)}"
+API_TOKEN="$(existing_key api_token)";           API_TOKEN="${API_TOKEN:-$(openssl rand -hex 32)}"
 kubectl -n gojira create secret generic gojira-github-app \
   --from-literal=app_id="$APP_ID" \
   --from-literal=webhook_secret="$WEBHOOK_SECRET" \
+  --from-literal=api_token="$API_TOKEN" \
   --from-file=private_key="$PEM" \
   --dry-run=client -o yaml | kubectl apply -f -
 
@@ -133,6 +143,7 @@ front door provisioning (cert takes ~15-60 min after DNS resolves):
   2. Watch: kubectl -n gojira get managedcertificate gojira-cert
   3. Enable app auth in your config.yaml:  auth: { enabled: true, allowed_domain: ... }
   4. Point your GitHub App webhook at https://${GOJIRA_HOSTNAME}/webhook/github
+     and set its secret to the minted webhook secret (printed below).
 EOI
 fi
 
@@ -147,4 +158,10 @@ Then register your cluster (Clusters page):
   name: sandbox   gcp_project: ${PROJECT}   location: ${REGION}   gke_cluster: ${CLUSTER}
 
 and connect a repo (Connect page). Full walkthrough: docs/dogfood.md
+
+Secrets minted for you (stable across reruns):
+  webhook secret — set it on the GitHub App's webhook (Settings → Webhook):
+    kubectl -n gojira get secret gojira-github-app -o jsonpath='{.data.webhook_secret}' | base64 -d; echo
+  API token — Authorization: Bearer <token> for the /api/v1 onboarding API:
+    kubectl -n gojira get secret gojira-github-app -o jsonpath='{.data.api_token}' | base64 -d; echo
 EOF
