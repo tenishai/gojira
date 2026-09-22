@@ -65,3 +65,68 @@ def test_secret_example_matches_bootstrap():
 
 def test_bootstrap_runs_preflight_first():
     assert "scripts/preflight.sh" in BOOTSTRAP or "preflight.sh" in BOOTSTRAP
+
+
+# --- the committed configmap must load with exactly the env the pod gets ------
+
+CONFIGMAP = ROOT / "deploy" / "configmap.yaml"
+DEPLOYMENT = ROOT / "deploy" / "deployment.yaml"
+ENV_REF = re.compile(r"\$\{([A-Z0-9_]+)(?::-([^}]*))?\}")
+
+
+def _pod_env_names() -> set[str]:
+    (dep,) = [d for d in _manifest_docs(DEPLOYMENT) if d["kind"] == "Deployment"]
+    (container,) = dep["spec"]["template"]["spec"]["containers"]
+    return {e["name"] for e in container.get("env", [])}
+
+
+def _install_configmap_keys() -> set[str]:
+    lines = BOOTSTRAP.splitlines()
+    (start,) = [i for i, line in enumerate(lines) if "create configmap gojira-install " in line]
+    block, i = [], start
+    while lines[i].rstrip().endswith("\\"):
+        i += 1
+        block.append(lines[i])
+    return set(re.findall(r"--from-literal=(\w+)=", "\n".join(block)))
+
+
+def test_configmap_env_refs_are_all_provided():
+    """A ${VAR} without a default must be in the pod's env: (fail-closed
+    knobs). A ${VAR:-default} must be a key bootstrap puts in the
+    gojira-install ConfigMap, or nothing in gojira.env can ever reach it."""
+    config_yaml = yaml.safe_load(CONFIGMAP.read_text())["data"]["config.yaml"]
+    refs = [(m.group(1), m.group(2)) for m in ENV_REF.finditer(config_yaml)]
+    required = {var for var, default in refs if default is None and var.startswith("GOJIRA_")}
+    optional = {var for var, default in refs if default is not None}
+    assert required <= _pod_env_names(), required - _pod_env_names()
+    assert optional == _install_configmap_keys(), optional ^ _install_configmap_keys()
+
+
+def test_example_values_cover_every_install_knob():
+    example = (ROOT / "gojira.env.example").read_text()
+    derived = {"GOJIRA_AUTH_ENABLED"}  # bootstrap computes it from hostname + allowlist
+    for key in _install_configmap_keys() - derived:
+        assert re.search(rf"^{key}=", example, re.M), f"{key} missing from gojira.env.example"
+
+
+def test_committed_configmap_loads_like_the_pod(monkeypatch, tmp_path):
+    from gojira.config import load_config
+
+    for var in ("GOJIRA_API_TOKEN", "GOJIRA_GITHUB_APP_ID", "GOJIRA_WEBHOOK_SECRET"):
+        monkeypatch.setenv(var, "x")
+    for var in _install_configmap_keys():
+        monkeypatch.delenv(var, raising=False)
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_load(CONFIGMAP.read_text())["data"]["config.yaml"])
+    cfg = load_config(path)  # defaults: no front door, no labels, no agent
+    assert cfg.auth.enabled is False and cfg.defaults.namespace_labels == {}
+    assert cfg.sizing.agent_image == "" and cfg.drift.enabled is True
+
+    monkeypatch.setenv("GOJIRA_AUTH_ENABLED", "true")
+    monkeypatch.setenv("GOJIRA_ALLOWED_DOMAIN", "example.com")
+    monkeypatch.setenv("GOJIRA_NAMESPACE_LABELS", "{example.com/team: sre}")
+    monkeypatch.setenv("GOJIRA_SIZING_AGENT_IMAGE", "img:dev")
+    cfg = load_config(path)
+    assert cfg.auth.enabled is True and cfg.auth.allowed_domain == "example.com"
+    assert cfg.defaults.namespace_labels == {"example.com/team": "sre"}
+    assert cfg.sizing.agent_image == "img:dev"
