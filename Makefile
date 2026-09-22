@@ -1,4 +1,4 @@
-.PHONY: venv install test lint build run clean
+.PHONY: venv install test lint check build run preflight clean
 
 VENV := venv
 # env -u PYTHONPATH: a globally-set PYTHONPATH leaks foreign packages into
@@ -17,8 +17,16 @@ test:
 lint:
 	env -u PYTHONPATH $(VENV)/bin/ruff check gojira tests
 
+check: lint test
+
+# GKE nodes are amd64; an ARM laptop's plain `docker build` makes an image
+# that dies with `exec format error` on the cluster. bootstrap.sh sidesteps
+# this with Cloud Build; this target is for local runs.
 build:
-	docker build -t gojira:dev .
+	docker build --platform linux/amd64 -t gojira:dev .
+
+preflight:
+	./scripts/preflight.sh
 
 run:
 	$(PY) -m gojira.web

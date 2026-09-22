@@ -3,7 +3,7 @@
 **Status:** Approved — phase 1 in development
 **Date:** 2026-06-12
 **Authors:** Shaz + Ember (SRE AI)
-**License:** Apache-2.0
+**License:** AGPL-3.0-or-later
 
 ---
 
@@ -102,9 +102,11 @@ artifact), applies the QA overlay, then the prod job waits on a GitHub
 reviewers) — a native Approve button in the Actions run.
 
 Caveat: environment protection rules require a public repo or a paid GitHub
-plan on private repos. The generator detects this at onboard time and falls
-back to a separate `workflow_dispatch`-triggered prod deploy for plans
-without it.
+plan on private repos. The generator does **not** detect this: on a private
+repo without them the `production` environment exists but has no required
+reviewers, so the prod job runs ungated on merge. Check the environment's
+protection rules after the setup PR merges. A `workflow_dispatch` fallback
+for such plans is designed, not built.
 
 ### gojira.yaml — the app's contract
 
@@ -165,8 +167,8 @@ Principles:
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-Single container. Runs anywhere the operator has gcloud ADC — laptop, VM,
-or in-cluster with Workload Identity.
+Single container. Runs anywhere `gcloud` has an identity — a laptop's
+`gcloud auth login`, a VM, or in-cluster with Workload Identity.
 
 ### Data model (first cut)
 
@@ -221,7 +223,6 @@ database:
   url: sqlite:///gojira.db        # or postgresql://...
 
 defaults:
-  ar_location: us-central1
   environments: [dev, qa, prod]
 ```
 
@@ -265,8 +266,8 @@ default implementation. Phase 4 works as a per-service thermostat without it.
   core.
 - CI on the repo itself: pytest + ruff + a golden-file test suite for the
   generator (template output is the product — snapshot-test it).
-- `Makefile` with `build` / `run` / `test` targets; Dockerfile; docker-compose
-  for the Postgres variant.
+- `Makefile` with `build` / `run` / `test` targets; Dockerfile. Postgres is a
+  `DATABASE_URL` away (`pip install -e ".[postgres]"`); no compose file.
 
 ## Out of scope (explicitly)
 
@@ -292,4 +293,4 @@ default implementation. Phase 4 works as a per-service thermostat without it.
    probe (`get-credentials` + `kubectl auth can-i`) before accepting the
    cluster. A cluster Gojira can't reach is a registration error, not a
    deploy-time surprise.
-5. **License** — Apache-2.0. Patent grant matters for infra tooling.
+5. **License** — AGPL-3.0-or-later (relicensed from the Apache-2.0 draft in PR #7).
