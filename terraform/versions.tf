@@ -3,7 +3,7 @@ terraform {
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = ">= 5.0"
+      version = ">= 6.11" # control_plane_endpoints_config (DNS endpoint) landed in 6.11.0
     }
   }
 }

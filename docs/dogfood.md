@@ -84,7 +84,7 @@ In the UI → **Clusters** → add:
 | location | `$REGION` |
 | gke_cluster | `gojira-sandbox` |
 
-Registration probes connectivity (`get-credentials` + `kubectl auth can-i`); a
+Registration probes connectivity (`get-credentials` over the DNS endpoint, enabling it on the cluster first if off); a
 green result means Gojira (via Workload Identity) can reach the cluster.
 
 ## 5 — Connect gojira-demo

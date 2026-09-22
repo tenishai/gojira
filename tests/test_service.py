@@ -72,6 +72,25 @@ def test_register_cluster_validates_connectivity(session):
     assert "get_creds:dev-gke" in gcp.calls  # connectivity check ran
 
 
+def test_register_cluster_enables_dns_access_first(session):
+    """The probe goes over the DNS endpoint, so a cluster without it gets it
+    enabled at registration — before the probe, not at first provision."""
+    gcp = FakeGCPClient()
+    service.register_cluster(
+        session, name="dev", gcp_project="proj-a", location="us-central1",
+        gke_cluster="dev-gke", gcp=gcp,
+    )
+    assert gcp.calls.index("enable_dns:dev-gke") < gcp.calls.index("get_creds:dev-gke")
+    assert ("proj-a", "us-central1", "dev-gke") in gcp.dns_access
+
+    already = FakeGCPClient(existing={"dns_access": [("proj-a", "us-central1", "gke-2")]})
+    service.register_cluster(
+        session, name="dev2", gcp_project="proj-a", location="us-central1",
+        gke_cluster="gke-2", gcp=already,
+    )
+    assert "enable_dns:gke-2" not in already.calls  # already on: no cluster update
+
+
 # --- connect_app -------------------------------------------------------------
 
 
