@@ -15,11 +15,11 @@ merge** and **Scan now** buttons instead.
 
 - A **sandbox GCP project** with billing (throwaway — Gojira gets broad IAM in it).
 - `gcloud` authed as a principal who can apply the Terraform (project IAM admin).
-- `terraform`, `docker`, `kubectl` locally.
+- `terraform`, `kubectl`, `openssl` locally (no docker: images build in Cloud
+  Build). `./scripts/preflight.sh` checks the lot.
 - A **GitHub App** (see [github-app-setup.md](github-app-setup.md)) installed on
-  `shaz/gojira-demo`. You need its **App ID**, a **private key** (`.pem`), and a
-  **webhook secret** string (any random value — we don't wire webhooks, but the
-  config field is required).
+  the repo you'll deploy. You need its **App ID** and a **private key** (`.pem`).
+  The webhook secret and the API token are minted by bootstrap.
 
 ```bash
 export PROJECT=your-sandbox-project
@@ -59,8 +59,8 @@ GOJIRA_GITHUB_APP_PEM=./github-app.pem \
 ./scripts/bootstrap.sh
 ```
 
-Idempotent — rerun it freely (it preserves the existing webhook secret and
-re-applies everything else). Prefer the manual steps? They live in the
+Idempotent — rerun it freely (it preserves the minted webhook secret and API
+token and re-applies everything else; it prints how to read both at the end). Prefer the manual steps? They live in the
 script, in order, with comments.
 
 ## 3 — Open the UI
