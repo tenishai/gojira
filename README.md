@@ -15,8 +15,8 @@ and your pods change shape.
 
 > **Status:** working, and aggressively dogfooded. Gojira deploys itself,
 > caught its own drift, and rightsized its own demo app from 750m/768Mi down
-> to a measured 50m/64Mi — live, on a real GKE Autopilot cluster. Ten
-> findings from that dogfooding are fixed in this repo, each documented in
+> to a measured 50m/64Mi — live, on a real GKE Autopilot cluster. Every
+> finding from that dogfooding is fixed in this repo, each documented in
 > the commit that tells its story (`git log -i --grep=dogfood --grep=finding`).
 
 ## Why
@@ -77,6 +77,7 @@ the next CI run deploys the new size.
 | `web` | 250m / 256Mi | 500m / 512Mi | 70% CPU, 2–10 | readiness + liveness HTTP `/health` |
 | `worker` | 500m / 512Mi | 1 / 1Gi | — | liveness TCP |
 | `agent` | 250m / 512Mi | 1 / 1Gi | — (Recreate, single consumer) | liveness TCP |
+| `gateway` | 250m / 256Mi | 500m / 512Mi | — (Recreate, single replica) | readiness + liveness HTTP `/healthz` |
 | `cron` | 250m / 256Mi | 1 / 1Gi | — | — |
 | `heavy` | 1 / 1Gi | 2 / 2Gi | 70% CPU, 2–6 | readiness + liveness |
 | `gpu` | 1 / 4Gi + 1 GPU | 2 / 8Gi + 1 GPU | — | liveness |
@@ -95,8 +96,9 @@ per-app configuration.
 ## Quickstart
 
 **Prereqs:** a GCP project you can create resources in, a GKE cluster,
-`gcloud` (authed), `kubectl`, Python 3.11+, and the [`gh`](https://cli.github.com)
-CLI (authed) for laptop mode.
+`gcloud` (authed, with `gke-gcloud-auth-plugin`), `kubectl`, `openssl`,
+Python 3.11+, and the [`gh`](https://cli.github.com) CLI (authed) for laptop
+mode. `./scripts/preflight.sh` checks all of it, plus the cluster, in seconds.
 
 ### Laptop mode (~5 minutes)
 
@@ -183,7 +185,7 @@ first sweep). Anything else that can compute a p95 can feed the loop too.
 
 Python · FastAPI · SQLAlchemy (SQLite default, Postgres supported) ·
 Jinja2 + htmx · GitHub App · GCP (`gcloud`/`kubectl`, Workload Identity
-in-cluster) · 213 tests, golden-file snapshots for everything generated.
+in-cluster) · a test suite with golden-file snapshots for everything generated.
 
 ## Docs
 

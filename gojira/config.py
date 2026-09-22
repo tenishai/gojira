@@ -24,7 +24,6 @@ class DatabaseConfig(BaseModel):
 
 
 class DefaultsConfig(BaseModel):
-    ar_location: str = "us-central1"
     environments: list[str] = ["dev", "qa", "prod"]
     # Stamped on every namespace Gojira creates (and re-asserted on
     # re-onboard). Secrets infrastructure commonly gates on namespace labels

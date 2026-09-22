@@ -23,7 +23,6 @@ data:
       enabled: true
       interval_seconds: 900
     defaults:
-      ar_location: us-central1
       environments: [dev, qa, prod]
       # Labels stamped on every namespace Gojira creates — secrets infra
       # (e.g. an ESO ClusterSecretStore) often gates on these:
