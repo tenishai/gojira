@@ -119,15 +119,18 @@ it opens → push to main. Your app deploys.
 ### Production-shaped sandbox (~20 minutes)
 
 Runs Gojira *in-cluster* under Workload Identity with a GitHub App — the way
-you'd run it for a team. Two commands stand up everything:
+you'd run it for a team. One values file, then two commands:
 
 ```bash
 cd terraform && terraform apply        # Autopilot cluster + Gojira's identity
-cd .. && PROJECT=<your-project> \
-  GOJIRA_GITHUB_APP_ID=<app id> \
-  GOJIRA_GITHUB_APP_PEM=./github-app.pem \
-  ./scripts/bootstrap.sh               # image, secret, manifests, rollout
+cd .. && cp gojira.env.example gojira.env   # fill in project, App id, pem path
+make install                           # preflight, image, secrets, manifests, rollout
 ```
+
+Every optional knob — front door hostname and IAP members, Gojira's own
+allowlist, namespace labels, the sizing agent image — lives in `gojira.env`
+too; nothing under `deploy/` is edited by hand, and rerunning `make install`
+applies changes.
 
 The full walkthrough — GitHub App setup, connecting a demo app, exercising
 drift capture and the rightsizing loop end to end — is in
@@ -144,10 +147,8 @@ existing project, then `bootstrap.sh` proceeds unchanged with `CLUSTER`
 pointed at your cluster:
 
 ```bash
-PROJECT=<your-project> REGION=<region> ./scripts/prepare-project.sh
-PROJECT=<your-project> REGION=<region> CLUSTER=<your-cluster> \
-  GOJIRA_GITHUB_APP_ID=<app id> GOJIRA_GITHUB_APP_PEM=./github-app.pem \
-  ./scripts/bootstrap.sh
+# in gojira.env: CLUSTER=<your-cluster>  GOJIRA_PREPARE_PROJECT=1
+make install
 ```
 
 ## Feeding the rightsizing loop
