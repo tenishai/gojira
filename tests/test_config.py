@@ -16,7 +16,7 @@ def test_loads_file_values(tmp_path):
     path.write_text("database:\n  url: postgresql://localhost/gojira\n")
     cfg = load_config(path)
     assert cfg.database.url == "postgresql://localhost/gojira"
-    assert cfg.defaults.ar_location == "us-central1"  # defaults still apply
+    assert cfg.defaults.environments == ["dev", "qa", "prod"]  # defaults still apply
 
 
 def test_env_interpolation(tmp_path, monkeypatch):
