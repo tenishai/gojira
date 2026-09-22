@@ -12,10 +12,12 @@ evidence for prod apps elsewhere.
 """
 
 import hashlib
+import json
 import logging
 import secrets
 import shutil
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 
 from sqlalchemy import select
@@ -35,7 +37,7 @@ from gojira.models import (
 from gojira.sizing.pr import open_override_pr
 from gojira.sizing.profile import UsageProfile
 from gojira.sizing.recommender import recompute_for_app
-from gojira.sizing.store import DbSizingStore
+from gojira.sizing.store import DbSizingStore, _row_to_profile
 
 log = logging.getLogger(__name__)
 
@@ -98,6 +100,67 @@ def open_pr_for(session: Session, app_id: int, env: str, github) -> str | None:
         return open_override_pr(session, app, rec, github, workdir)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+def usage_history(
+    session: Session, app_id: int, *, env: str | None = None, since_days: int = 30,
+) -> dict | None:
+    """The read side of /api/v1/usage: the evidence ledger and live
+    recommendation per environment, in the same wire shape the agent POSTed.
+
+    Built for the argus parity window (agora#14): a second producer diffs
+    its own summary against what the sizing agent reported AND against the
+    call the recommender made from it. Every environment the app has is
+    listed, so "no evidence yet" is an explicit empty list, not an absence.
+    None for an unknown app; an unknown env (when given) reads as None too.
+    """
+    app = session.get(App, app_id)
+    if app is None:
+        return None
+    envs = {e.name: e.cluster.name for e in app.environments}
+    if env is not None:
+        if env not in envs:
+            return None
+        envs = {env: envs[env]}
+    cutoff = utcnow().replace(tzinfo=None) - timedelta(days=since_days)
+    out: dict[str, dict] = {}
+    for name, cluster_name in sorted(envs.items()):
+        rows = session.scalars(
+            select(UsageProfileRow)
+            .where(
+                UsageProfileRow.app_id == app_id,
+                UsageProfileRow.environment == name,
+                UsageProfileRow.reported_at >= cutoff,
+            )
+            .order_by(UsageProfileRow.reported_at.desc())
+        ).all()
+        rec = session.scalar(
+            select(SizingRecommendation).where(
+                SizingRecommendation.app_id == app_id,
+                SizingRecommendation.environment == name,
+                SizingRecommendation.kind == RecommendationKind.OVERRIDE,
+            )
+        )
+        out[name] = {
+            "cluster": cluster_name,
+            "profiles": [
+                {
+                    "profile_id": r.id,
+                    "received_at": r.received_at.isoformat() if r.received_at else None,
+                    **json.loads(_row_to_profile(app.name, cluster_name, r).model_dump_json()),
+                }
+                for r in rows
+            ],
+            "recommendation": None if rec is None else {
+                "status": str(rec.status),
+                "current": json.loads(rec.current_json),
+                "proposed": json.loads(rec.proposed_json),
+                "justification": rec.justification,
+                "pr_url": rec.pr_url,
+                "based_on_profile_id": rec.based_on_profile_id,
+            },
+        }
+    return {"id": app.id, "name": app.name, "since_days": since_days, "environments": out}
 
 
 def ingest_usage(
