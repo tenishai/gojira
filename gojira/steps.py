@@ -745,24 +745,32 @@ class ObserveApp:
         # Same canonicalization the generated CI stamps (#42); argus refuses
         # to apply anything when its own recomputation disagrees.
         sha = contract_fingerprint(contract)
-        # Unique per run: a lingering completed Job (ttl not yet elapsed)
-        # would reject an apply that changes immutable fields.
-        job_name = f"argus-observe-{ctx.app.name}-{ctx.environment.name}-{int(time.time())}"[:63]
+        job_name = _observe_job_name(ctx.app.name, ctx.environment.name, int(time.time()))
         kubectl = _kubectl(ctx)
         kubectl.apply(yaml.safe_dump(
             _observe_job(job_name, ocfg, cfg, contract, sha, ctx.environment.name),
             sort_keys=False,
         ))
-        ok = kubectl.wait_job(ocfg.namespace, job_name, cfg.active_deadline_seconds + 60)
+        failure = kubectl.wait_job(ocfg.namespace, job_name, cfg.active_deadline_seconds + 60)
         logs = kubectl.job_logs(ocfg.namespace, job_name)
         summary = ""
         for line in reversed(logs.splitlines()):
             if line.startswith(OBSERVE_SUMMARY_PREFIX):
                 summary = line[len(OBSERVE_SUMMARY_PREFIX):].strip()
                 break
-        if not ok:
-            raise RuntimeError(summary or f"observe job {job_name} did not complete")
+        if failure:
+            # argus's own line when it got that far; else the Job's failure
+            # reason, so a row for a pull failure or deadline still explains itself.
+            raise RuntimeError(summary or f"observe job {job_name} did not complete: {failure}")
         return summary or f"{job_name} complete (no summary line)"
+
+
+def _observe_job_name(app: str, env: str, epoch: int) -> str:
+    """Unique per run — a lingering completed Job (ttl not yet elapsed) would
+    reject an apply that changes immutable fields. The epoch leads and the
+    variable-length app name trails, so the 63-char DNS-label cut trims the
+    app name, never the uniqueness (Kai's review of #49)."""
+    return f"argus-observe-{epoch}-{env}-{app}"[:63].rstrip("-")
 
 
 def _observe_job(name, ocfg, cfg, contract_yaml, sha, env_name) -> dict:
