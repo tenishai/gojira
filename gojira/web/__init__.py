@@ -490,6 +490,33 @@ def create_app(
             }
         )
 
+    @app.get("/api/v1/apps/{app_id}/usage")
+    def api_app_usage(
+        app_id: int,
+        request: Request,
+        session: Session = Depends(get_session),
+        env: str | None = None,
+        since_days: int | None = None,
+    ):
+        # The read twin of POST /api/v1/usage, for the argus parity window:
+        # a second evidence producer diffs its summaries against the ledger
+        # and against the recommender's call. Platform bearer gate (same as
+        # the other onboarding routes) — the cluster tokens are write
+        # credentials scoped to one cluster, and this reads across them.
+        if err := auth.api_token_error(request, request.app.state.config.auth):
+            return err
+        if since_days is None:
+            since_days = request.app.state.config.sizing.history_days
+        if not 0 < since_days <= sizing_profile.MAX_WINDOW_DAYS:
+            return JSONResponse(
+                {"error": f"since_days must be 1..{sizing_profile.MAX_WINDOW_DAYS}"},
+                status_code=422,
+            )
+        body = sizing_service.usage_history(session, app_id, env=env, since_days=since_days)
+        if body is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse(body)
+
     @app.post("/api/v1/apps/{app_id}/provision")
     def api_provision(app_id: int, request: Request, session: Session = Depends(get_session)):
         # The automation-tier twin of the UI's Provision-again button: that

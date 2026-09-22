@@ -166,6 +166,15 @@ in-cluster agent Gojira deploys from the Clusters page ("Deploy agent": mints
 the cluster token, applies RBAC + CronJob, grants metrics access, runs a
 first sweep). Anything else that can compute a p95 can feed the loop too.
 
+The ledger reads back the same way, per environment, with the recommender's
+live call alongside — so a second evidence producer can diff itself against
+what the loop saw and what it decided:
+
+```bash
+curl http://<gojira>/api/v1/apps/<id>/usage?env=dev&since_days=30 \
+  -H "Authorization: Bearer $GOJIRA_API_TOKEN"   # the platform token, not a cluster's
+```
+
 ## What's built, what's next
 
 | | |
