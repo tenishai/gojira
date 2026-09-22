@@ -45,3 +45,17 @@ def test_config_is_pure_defaults():
     cfg = Config()
     assert cfg.github.app_id == ""
     assert cfg.defaults.environments == ["dev", "qa", "prod"]
+
+
+def test_namespace_labels_and_emails_accept_install_value_strings():
+    """The in-cluster configmap hands both knobs over as single env strings
+    (GOJIRA_NAMESPACE_LABELS is a YAML flow map, GOJIRA_ALLOWED_EMAILS a
+    comma list); empty strings mean 'none'."""
+    cfg = Config.model_validate({
+        "defaults": {"namespace_labels": "{example.com/team: sre}"},
+        "auth": {"allowed_emails": "a@x.com, b@x.com,"},
+    })
+    assert cfg.defaults.namespace_labels == {"example.com/team": "sre"}
+    assert cfg.auth.allowed_emails == ["a@x.com", "b@x.com"]
+    empty = Config.model_validate({"defaults": {"namespace_labels": ""}, "auth": {"allowed_emails": ""}})
+    assert empty.defaults.namespace_labels == {} and empty.auth.allowed_emails == []

@@ -26,8 +26,9 @@
 # project will need cross-project grants this script does not attempt.
 
 set -euo pipefail
+. "$(cd "$(dirname "$0")" && pwd)/env.sh"
 
-PROJECT="${PROJECT:?set PROJECT to the GCP project that will host Gojira}"
+PROJECT="${PROJECT:?set PROJECT in gojira.env (or the environment)}"
 REGION="${REGION:-us-central1}"
 
 GSA="gojira@${PROJECT}.iam.gserviceaccount.com"
