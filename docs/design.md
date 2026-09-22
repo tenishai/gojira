@@ -290,7 +290,7 @@ default implementation. Phase 4 works as a per-service thermostat without it.
    Onboarding validates it exists and fails with a clear message if not.
    Buildpacks are a possible later fallback, not phase 1.
 4. **Cluster registration validates connectivity** — registration runs a
-   probe (`get-credentials` + `kubectl auth can-i`) before accepting the
+   probe (`get-credentials` over the DNS endpoint, enabling it first if off) before accepting the
    cluster. A cluster Gojira can't reach is a registration error, not a
    deploy-time surprise.
 5. **License** — AGPL-3.0-or-later (relicensed from the Apache-2.0 draft in PR #7).
