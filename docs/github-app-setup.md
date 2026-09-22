@@ -1,97 +1,102 @@
 # Standing up the Gojira GitHub App
 
-What it takes to run Gojira App-backed (the hosted, webhook-driven path) instead
-of the operator's local `gh auth` session. Do this once per environment.
+Gojira acts on your repos as a GitHub App: it clones, pushes the setup branch,
+opens PRs and receives webhooks. Do this once per Gojira install. Ten minutes.
 
-## 1. Register the App
+## 1. Create the App — in your organization, not your user account
 
-Create a GitHub App in the **example** org (Settings → Developer settings → GitHub
-Apps → New). Org-owned, not user-owned, so it survives any one person leaving.
+Go to **`https://github.com/organizations/<your-org>/settings/apps/new`**
+(Organization settings → Developer settings → GitHub Apps → New GitHub App).
 
-- **Homepage URL:** the Gojira URL (e.g. `https://gojira.example.net`).
-- **Webhook URL:** `https://<gojira-host>/webhook/github`
-- **Webhook secret:** generate a strong random value — this is `webhook_secret`.
-  Gojira HMAC-verifies every delivery against it (fail-closed).
+> **Org-owned matters.** A GitHub App created under a personal account can only
+> be installed on that account's own repos — it cannot be installed into an
+> organization, and the failure is silent: the org just never appears in the
+> install picker. It also survives any one person leaving.
+
+Fill in:
+
+| Field | Value |
+|---|---|
+| GitHub App name | `gojira-<org>` (must be globally unique) |
+| Homepage URL | your Gojira URL, or the repo URL if you have no front door yet |
+| Webhook → Active | on if Gojira has a public HTTPS hostname; **off** for a port-forward install (you'll use the in-UI check buttons instead) |
+| Webhook URL | `https://<gojira-host>/webhook/github` |
+| Webhook secret | leave blank for now — bootstrap mints one and tells you how to read it (step 4) |
+| Where can this App be installed? | Only on this account |
 
 ### Repository permissions
 
-The minimum the backend needs:
-
 | Permission | Level | Why |
 |---|---|---|
-| Contents | Read & write | clone, push the `gojira/setup` branch, create release tags |
+| Contents | Read & write | clone, push the `gojira/setup` branch, tag releases |
 | Pull requests | Read & write | open the setup PR, detect merge |
-| Workflows | Read & write | the setup branch adds `.github/workflows/*.yaml` — GitHub rejects the push without this, separately from Contents |
-| Metadata | Read | repo info, default branch (mandatory) |
-| Actions | Read | required to subscribe to the `workflow_run` event |
+| Workflows | Read & write | the setup branch adds `.github/workflows/*.yaml`; GitHub rejects that push without this, separately from Contents |
+| Metadata | Read | repo info, default branch (GitHub sets it for you) |
+| Actions | Read | needed to subscribe to `workflow_run` |
 
-No organization or account permissions are required.
+No organization or account permissions.
 
 ### Subscribe to events
 
-- **Pull request** — drives `awaiting_pr` → `active` on setup-PR merge.
-- **Workflow run** — records CI / Promote outcomes in the UI.
+- **Pull request** — setup-PR merge flips the app from `awaiting_pr` to `active`.
+- **Workflow run** — CI and promotion outcomes show up in the UI.
 
-`installation` and `installation_repositories` are delivered to an App's webhook
-automatically (no checkbox) and keep the repo→installation cache current.
+(`installation` events are delivered to every App automatically; they keep
+Gojira's repo→installation cache current.)
 
-## 2. Private key + secrets
+Click **Create GitHub App**. Note the **App ID** shown at the top of the App's
+page — that is `GOJIRA_GITHUB_APP_ID`.
 
-Generate a private key in the App settings (downloads a `.pem`). Store it and the
-webhook secret in **GCP Secret Manager** (example-prod), never in git:
+## 2. Private key
 
-```bash
-gcloud secrets create gojira-github-app-key --data-file=github-app.pem --project=example-prod
-printf '%s' "$WEBHOOK_SECRET" | gcloud secrets create gojira-webhook-secret --data-file=- --project=example-prod
-```
-
-Mount the key at `private_key_path` and inject the secret as `GOJIRA_WEBHOOK_SECRET`
-(External Secrets Operator → a mounted file + env var is the example-standard pattern).
+On the App's page, scroll to **Private keys → Generate a private key**. A
+`.pem` downloads. Move it next to your Gojira checkout and point
+`GOJIRA_GITHUB_APP_PEM` at it in `gojira.env`. `*.pem` is gitignored; bootstrap
+puts it in a Kubernetes Secret and nowhere else.
 
 ## 3. Install the App
 
-Install it on the repos (or the whole org) Gojira should deploy. Each install
-fires an `installation` webhook that seeds the `installation_repos` cache, so the
-connect picker lists those repos and token minting works without a cold API call.
+App page → **Install App** → your org → choose **Only select repositories** and
+pick the repos Gojira should deploy (start with
+[examples/hello-app](../examples/hello-app/README.md) pushed to a repo of your
+own). You can add repos later from the same page.
 
-## 4. Configure Gojira
+If you changed the App's permissions after installing, GitHub asks the org
+to **accept** the new permissions on the installation page; until it's
+accepted, Gojira's tokens keep the old scopes.
 
-```yaml
-github:
-  app_id: ${GOJIRA_GITHUB_APP_ID}
-  private_key_path: /secrets/github-app.pem
-  webhook_secret: ${GOJIRA_WEBHOOK_SECRET}
-database:
-  url: postgresql://gojira:${DB_PASSWORD}@.../gojira   # Postgres for a hosted run
+## 4. Run the install, then hand GitHub the webhook secret
+
+```bash
+cp gojira.env.example gojira.env   # PROJECT, GOJIRA_GITHUB_APP_ID, GOJIRA_GITHUB_APP_PEM, …
+make install
 ```
 
-With `app_id` + `private_key_path` set, Gojira selects the App backend; omit them
-and it falls back to `gh auth` (local dev). The webhook endpoint verifies as soon
-as `webhook_secret` is set — unset means every delivery is rejected (fail-closed).
+Bootstrap mints the webhook secret and, at the end, prints the command that
+reads it back:
 
-## 5. GCP identity for the provisioner (separate from the App)
+```bash
+kubectl -n gojira get secret gojira-github-app -o jsonpath='{.data.webhook_secret}' | base64 -d; echo
+```
 
-The App handles GitHub; the **provisioner still talks to GCP** by shelling out to
-`gcloud`. In-cluster that means binding Gojira's KSA to a GCP service account via
-Workload Identity. That GSA needs enough IAM to create the per-project deploy
-identity Gojira provisions — service accounts, WIF pools/providers, Artifact
-Registry, project-level role bindings, and GKE access.
+If your App's webhook is active, paste that value into the App's **Webhook
+secret** field and save. Gojira HMAC-verifies every delivery against it and
+rejects everything otherwise (fail-closed).
 
-> **example gotcha:** project-level IAM on `example-prod` (and creating SAs / WIF) must
-> go through the **access-request channel**, not be granted directly. Scope the
-> Gojira controller GSA's request deliberately — it's a privileged identity.
+## 5. Verify
 
-## 6. Reachability
+1. **Install event landed**: Gojira's log shows `installation` for your org
+   (or the connect picker lists the repos you selected).
+2. **Connect a repo** in the UI → the app row shows an installation id, not `0`.
+3. **Setup PR opens** on the repo; merge it. With a live webhook the app flips
+   to `active` on its own; without one, click **I merged the PR — check**.
+4. Push to main → the generated CI builds, pins the digest, deploys.
 
-GitHub must reach `POST /webhook/github` over the public internet. Front Gojira
-with an HTTPS load balancer (or IAP-exempt the webhook path if behind IAP — the
-HMAC secret is the auth there, IAP would block GitHub's unauthenticated POST).
+## What the App does not cover
 
-## Verify
-
-1. Install on a test repo → confirm an `installation` event lands (an
-   `installation_repos` row appears).
-2. Connect the repo in the UI → `App.installation_id` is set (not `0`).
-3. Watch provisioning open the setup PR; merge it → the `pull_request` webhook
-   flips the app to `active` with no manual "check PR merge".
-4. Cut a release → the `workflow_run` webhook records `promote.success` / `.failure`.
+The App is Gojira's GitHub identity. Its **GCP** identity is separate: in-cluster
+Gojira runs as a Kubernetes service account bound through Workload Identity to
+the `gojira@<project>` service account that `terraform/` or
+`scripts/prepare-project.sh` creates. That GSA is privileged — it creates
+per-app deploy identities, Workload Identity pools, Artifact Registry repos and
+project role bindings — so grant it to a project you mean Gojira to run.
