@@ -63,8 +63,10 @@ class KubectlClient(ABC):
         """Apply a YAML manifest (may hold multiple documents). Idempotent."""
 
     @abstractmethod
-    def wait_job(self, namespace: str, name: str, timeout_seconds: int) -> bool:
-        """Block until the Job reaches Complete (True) or Failed/timeout (False)."""
+    def wait_job(self, namespace: str, name: str, timeout_seconds: int) -> str | None:
+        """Block until the Job reaches Complete (None) or fails: then the
+        failure reason (the Job's condition reason, e.g. DeadlineExceeded,
+        or a timeout note)."""
         ...
 
     @abstractmethod
@@ -134,7 +136,7 @@ class KubectlCLI(KubectlClient):
         if result.returncode != 0:
             raise K8sError(f"kubectl apply failed: {result.stderr}")
 
-    def wait_job(self, namespace: str, name: str, timeout_seconds: int) -> bool:
+    def wait_job(self, namespace: str, name: str, timeout_seconds: int) -> str | None:
         # Poll rather than `kubectl wait --for=condition=complete`: wait can
         # only watch ONE condition, so a failed Job would hang the full
         # timeout instead of returning promptly.
@@ -149,11 +151,11 @@ class KubectlCLI(KubectlClient):
                     if c.get("status") != "True":
                         continue
                     if c.get("type") == "Complete":
-                        return True
+                        return None
                     if c.get("type") in ("Failed", "FailureTarget"):
-                        return False
+                        return c.get("reason") or c.get("message") or "Failed"
             if time.time() >= deadline:
-                return False
+                return f"no terminal condition after {timeout_seconds}s"
             time.sleep(5)
 
     def job_logs(self, namespace: str, name: str, tail: int = 20) -> str:

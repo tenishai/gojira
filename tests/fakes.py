@@ -155,13 +155,13 @@ class FakeKubectlClient(KubectlClient):
     def create_job_from_cronjob(self, namespace, name, cronjob):
         self.calls.append(f"job:{namespace}/{name}<-{cronjob}")
 
-    # observe: preset job_completes / job_log_text to script the Job outcome
-    job_completes = True
+    # observe: preset job_failure (None = Complete) / job_log_text to script the Job outcome
+    job_failure: str | None = None
     job_log_text = "ARGUS_SUMMARY observed app/dev: 3 steps applied, 1 skipped, contract abc123def456"
 
     def wait_job(self, namespace, name, timeout_seconds):
         self.calls.append(f"wait_job:{namespace}/{name}")
-        return self.job_completes
+        return self.job_failure
 
     def job_logs(self, namespace, name, tail=20):
         self.calls.append(f"job_logs:{namespace}/{name}")
