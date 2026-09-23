@@ -17,7 +17,8 @@
 set -uo pipefail
 
 FIX=0; [ "${1:-}" = "--fix" ] && FIX=1
-PROJECT="${PROJECT:?set PROJECT to your GCP project id}"
+. "$(cd "$(dirname "$0")" && pwd)/env.sh"
+PROJECT="${PROJECT:?set PROJECT in gojira.env (or the environment)}"
 REGION="${REGION:-us-central1}"
 CLUSTER="${CLUSTER:-gojira-sandbox}"
 fails=0
