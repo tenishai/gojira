@@ -290,20 +290,20 @@ def test_unknown_class_in_contract_falls_back_to_db():
 
 # --- adopt-mode inference (zero-touch onboarding) -------------------------------
 
-SHERLOCK_SHAPED = """\
+PROBE_SHAPED = """\
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: sherlock, namespace: sherlock }
+metadata: { name: probe, namespace: probe }
 spec:
   template:
     spec:
-      serviceAccountName: sherlock
+      serviceAccountName: probe
       securityContext: { fsGroup: 999 }
       containers:
-        - name: sherlock
-          image: gcr.io/x/sherlock:latest
+        - name: probe
+          image: gcr.io/x/probe:latest
           envFrom:
-            - secretRef: { name: sherlock-secrets }
+            - secretRef: { name: probe-secrets }
           env:
             - name: LOG_LEVEL
               value: DEBUG
@@ -313,17 +313,17 @@ spec:
             - { name: data, mountPath: /data }
       volumes:
         - name: data
-          persistentVolumeClaim: { claimName: sherlock-data }
+          persistentVolumeClaim: { claimName: probe-data }
 """
 
 
 def test_infer_reads_the_apps_declared_needs():
     from gojira.generator import infer_app_needs
-    needs = infer_app_needs(SHERLOCK_SHAPED)
-    assert needs["service_account"] == "sherlock"
-    assert needs["secrets_from"] == ["sherlock-secrets"]
+    needs = infer_app_needs(PROBE_SHAPED)
+    assert needs["service_account"] == "probe"
+    assert needs["secrets_from"] == ["probe-secrets"]
     assert needs["env_vars"] == {"LOG_LEVEL": "DEBUG"}   # valueFrom skipped
-    assert needs["data_mount"] == DataMount(pvc="sherlock-data", path="/data",
+    assert needs["data_mount"] == DataMount(pvc="probe-data", path="/data",
                                             fs_group=999)
 
 
@@ -351,12 +351,12 @@ def test_zero_touch_onboarding_seeds_the_contract(tmp_path):
             super().clone(repo, workdir)
             base = workdir / "k8s" / "base"
             base.mkdir(parents=True)
-            (base / "deployment.yaml").write_text(SHERLOCK_SHAPED)
+            (base / "deployment.yaml").write_text(PROBE_SHAPED)
             (base / "kustomization.yaml").write_text(
                 "resources:\n  - deployment.yaml\n  - externalsecret.yaml\n")
             (base / "externalsecret.yaml").write_text(
                 "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\n"
-                "metadata: { name: sherlock-secrets }\n")
+                "metadata: { name: probe-secrets }\n")
             # deliberately NO gojira.yaml — nobody touched this repo
 
     engine = create_engine("sqlite://")
@@ -381,13 +381,13 @@ def test_zero_touch_onboarding_seeds_the_contract(tmp_path):
 
     contract = (tmp_path / "gojira.yaml").read_text()
     got = read_app_needs(contract)
-    assert got["secrets_from"] == ["sherlock-secrets"]
-    assert got["service_account"] == "sherlock"
+    assert got["secrets_from"] == ["probe-secrets"]
+    assert got["service_account"] == "probe"
     assert got["data_mount"].fs_group == 999
 
     dep = yaml.safe_load((tmp_path / "k8s/base/deployment.yaml").read_text())
     pod = dep["spec"]["template"]["spec"]
-    assert pod["serviceAccountName"] == "sherlock"
+    assert pod["serviceAccountName"] == "probe"
     assert pod["securityContext"] == {"fsGroup": 999}
     assert {"externalsecret.yaml"} <= set(yaml.safe_load(
         (tmp_path / "k8s/base/kustomization.yaml").read_text())["resources"])
@@ -395,40 +395,40 @@ def test_zero_touch_onboarding_seeds_the_contract(tmp_path):
 
 # --- finding #18: config is a need too ------------------------------------------
 
-SHERLOCK_WITH_CONFIG = SHERLOCK_SHAPED.replace(
+PROBE_WITH_CONFIG = PROBE_SHAPED.replace(
     """          envFrom:
-            - secretRef: { name: sherlock-secrets }""",
+            - secretRef: { name: probe-secrets }""",
     """          envFrom:
-            - secretRef: { name: sherlock-secrets }
-            - configMapRef: { name: sherlock-env }""")
+            - secretRef: { name: probe-secrets }
+            - configMapRef: { name: probe-env }""")
 
 
 def test_infer_reads_configmap_env_sources():
     from gojira.generator import infer_app_needs
-    needs = infer_app_needs(SHERLOCK_WITH_CONFIG)
-    assert needs["config_from"] == ["sherlock-env"]
-    assert needs["secrets_from"] == ["sherlock-secrets"]
+    needs = infer_app_needs(PROBE_WITH_CONFIG)
+    assert needs["config_from"] == ["probe-env"]
+    assert needs["secrets_from"] == ["probe-secrets"]
 
 
 def test_config_from_renders_and_round_trips():
-    files = render(spec(config_from=["sherlock-env"], secrets_from=["s"]))
+    files = render(spec(config_from=["probe-env"], secrets_from=["s"]))
     dep = yaml.safe_load(files["k8s/base/deployment.yaml"])
     env_from = dep["spec"]["template"]["spec"]["containers"][0]["envFrom"]
-    assert {"configMapRef": {"name": "sherlock-env"}} in env_from
+    assert {"configMapRef": {"name": "probe-env"}} in env_from
     assert {"secretRef": {"name": "s"}} in env_from
-    assert read_app_needs(files["gojira.yaml"])["config_from"] == ["sherlock-env"]
+    assert read_app_needs(files["gojira.yaml"])["config_from"] == ["probe-env"]
 
 
 def test_preserve_generators_keeps_configmap_generator():
     from gojira.generator import preserve_generators
     existing = """\
-namespace: sherlock
+namespace: probe
 resources:
   - ../../base
 generatorOptions:
   disableNameSuffixHash: true
 configMapGenerator:
-  - name: sherlock-env
+  - name: probe-env
     literals:
       - LOG_LEVEL=INFO
       - REGION=us-east4
@@ -436,7 +436,7 @@ configMapGenerator:
     rendered = "# Generated by Gojira.\nresources:\n  - ../../base\n"
     out = preserve_generators(existing, rendered)
     parsed = yaml.safe_load(out)
-    assert parsed["configMapGenerator"][0]["name"] == "sherlock-env"
+    assert parsed["configMapGenerator"][0]["name"] == "probe-env"
     assert parsed["generatorOptions"] == {"disableNameSuffixHash": True}
     assert "# Generated by Gojira." in out
     # no generators → untouched; junk → untouched

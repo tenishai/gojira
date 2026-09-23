@@ -409,7 +409,7 @@ GENERATOR_KEYS = ("configMapGenerator", "secretGenerator", "generatorOptions")
 def preserve_generators(existing_text: str, rendered_text: str) -> str:
     """Carry an existing kustomization's generator blocks into a fresh render.
 
-    Finding #18: sherlock's non-secret config was born from an overlay
+    Finding #18: a tenant app's non-secret config was born from an overlay
     configMapGenerator — regeneration dropped it and the app lost its env.
     configMapGenerator / secretGenerator / generatorOptions survive verbatim
     (re-serialized; comments inside the blocks are not preserved). Rendered

@@ -61,7 +61,7 @@ def _cluster(session, name, project, ns_loc="us-central1"):
     return c
 
 
-def _app(session, repo="shaz/clips-api"):
+def _app(session, repo="acme/clips-api"):
     a = App(name="clips-api", repo_full_name=repo, installation_id=1, workload_class="web")
     session.add(a)
     session.commit()
@@ -77,8 +77,8 @@ def _env(session, app, cluster, name, namespace="clips"):
 
 @pytest.fixture
 def single_env(session):
-    """An app with one dev environment in project shaz-499303."""
-    cluster = _cluster(session, "dev", "shaz-499303")
+    """An app with one dev environment in project acme-499303."""
+    cluster = _cluster(session, "dev", "acme-499303")
     app = _app(session)
     env = _env(session, app, cluster, "dev")
     return app, cluster, env
@@ -107,11 +107,11 @@ def project_ctx(single_env):
 def test_names_derivation(project_ctx):
     n = Names.derive(project_ctx(FakeGCPClient()))
     assert n.gsa_account_id == "clips-api-deploy"
-    assert n.gsa_email == "clips-api-deploy@shaz-499303.iam.gserviceaccount.com"
-    assert n.repo_owner == "shaz"
+    assert n.gsa_email == "clips-api-deploy@acme-499303.iam.gserviceaccount.com"
+    assert n.repo_owner == "acme"
     assert n.ar_location == "us-central1"
     assert n.ar_repo == "apps"
-    assert n.gsa_member == "serviceAccount:clips-api-deploy@shaz-499303.iam.gserviceaccount.com"
+    assert n.gsa_member == "serviceAccount:clips-api-deploy@acme-499303.iam.gserviceaccount.com"
 
 
 def test_names_requires_project_scope(single_env):
@@ -127,7 +127,7 @@ def test_principal_set_format(project_ctx):
     assert ps == (
         "principalSet://iam.googleapis.com/projects/773958892580"
         "/locations/global/workloadIdentityPools/gojira"
-        "/attribute.repository/shaz/clips-api"
+        "/attribute.repository/acme/clips-api"
     )
 
 
@@ -136,26 +136,26 @@ def test_principal_set_format(project_ctx):
 
 def test_per_project_clean(session, single_env, project_ctx):
     gcp = FakeGCPClient()
-    result = ProvisionEngine(per_project_steps()).run(session, project_ctx(gcp), "shaz-499303")
+    result = ProvisionEngine(per_project_steps()).run(session, project_ctx(gcp), "acme-499303")
 
     assert result.completed
     assert gcp.enabled_apis == set(REQUIRED_APIS)
-    assert gcp.service_accounts == {"clips-api-deploy@shaz-499303.iam.gserviceaccount.com"}
+    assert gcp.service_accounts == {"clips-api-deploy@acme-499303.iam.gserviceaccount.com"}
     assert gcp.wif_pools == {WIF_POOL}
     assert (WIF_POOL, WIF_PROVIDER) in gcp.wif_providers
-    assert ("shaz-499303", "us-central1", "apps") in gcp.artifact_repos
+    assert ("acme-499303", "us-central1", "apps") in gcp.artifact_repos
     assert len([b for b in gcp.project_bindings if b[2] in DEPLOY_ROLES]) == len(DEPLOY_ROLES)
 
     # ledger rows are scoped to the project
     rows = session.scalars(select(ProvisionStep)).all()
-    assert {r.step_name for r in rows} == {f"{s.name}@shaz-499303" for s in per_project_steps()}
+    assert {r.step_name for r in rows} == {f"{s.name}@acme-499303" for s in per_project_steps()}
     assert all(r.status == StepStatus.DONE for r in rows)
 
 
 def test_provider_restricted_to_repo_owner(session, project_ctx):
     gcp = FakeGCPClient()
-    ProvisionEngine(per_project_steps()).run(session, project_ctx(gcp), "shaz-499303")
-    assert "create_provider:gojira/github:shaz" in gcp.calls
+    ProvisionEngine(per_project_steps()).run(session, project_ctx(gcp), "acme-499303")
+    assert "create_provider:gojira/github:acme" in gcp.calls
 
 
 def test_second_app_skips_shared_resources(session, project_ctx):
@@ -167,23 +167,23 @@ def test_second_app_skips_shared_resources(session, project_ctx):
             "wif_providers": [(WIF_POOL, WIF_PROVIDER)],
         }
     )
-    result = ProvisionEngine(per_project_steps()).run(session, project_ctx(gcp), "shaz-499303")
+    result = ProvisionEngine(per_project_steps()).run(session, project_ctx(gcp), "acme-499303")
 
     assert result.completed
-    assert "ensure_apis_enabled@shaz-499303" in result.steps_skipped
-    assert "ensure_wif_pool@shaz-499303" in result.steps_skipped
-    assert "ensure_service_account@shaz-499303" in result.steps_run
+    assert "ensure_apis_enabled@acme-499303" in result.steps_skipped
+    assert "ensure_wif_pool@acme-499303" in result.steps_skipped
+    assert "ensure_service_account@acme-499303" in result.steps_run
     assert "create_pool:gojira" not in gcp.calls
 
 
 def test_rerun_is_fully_idempotent(session, project_ctx):
     gcp = FakeGCPClient()
     engine = ProvisionEngine(per_project_steps())
-    engine.run(session, project_ctx(gcp), "shaz-499303")
+    engine.run(session, project_ctx(gcp), "acme-499303")
     assert gcp.calls  # first run did real work
 
     gcp.calls.clear()
-    result = engine.run(session, project_ctx(gcp), "shaz-499303")
+    result = engine.run(session, project_ctx(gcp), "acme-499303")
     assert result.completed
     assert result.steps_run == []
     assert gcp.calls == []
@@ -192,13 +192,13 @@ def test_rerun_is_fully_idempotent(session, project_ctx):
 def test_partial_existing_grants_only_missing_role(session, project_ctx):
     gcp = FakeGCPClient()
     n = Names.derive(project_ctx(gcp))
-    gcp.project_bindings.add(("shaz-499303", n.gsa_member, DEPLOY_ROLES[0]))
+    gcp.project_bindings.add(("acme-499303", n.gsa_member, DEPLOY_ROLES[0]))
 
     step = GrantIamRoles()
     assert step.check(project_ctx(gcp)) is None
     step.apply(project_ctx(gcp))
-    assert gcp.calls.count(f"proj_bind:shaz-499303:{DEPLOY_ROLES[1]}") == 1
-    assert f"proj_bind:shaz-499303:{DEPLOY_ROLES[0]}" not in gcp.calls
+    assert gcp.calls.count(f"proj_bind:acme-499303:{DEPLOY_ROLES[1]}") == 1
+    assert f"proj_bind:acme-499303:{DEPLOY_ROLES[0]}" not in gcp.calls
 
 
 def test_bind_wif_uses_project_number_in_principal_set(session, project_ctx):
@@ -224,7 +224,7 @@ def test_ensure_namespace_creates_with_managed_label(single_env):
 
 
 def test_ensure_namespace_skips_when_present_and_labeled(single_env):
-    # "exists" alone is not "done" anymore (Rook's finding): the namespace
+    # "exists" alone is not "done" anymore (a tenant's finding): the namespace
     # must also carry the managed + configured labels to be skipped.
     app, cluster, env = single_env
     kube = FakeKubectlClient(existing={"clips": {"gojira.dev/managed": "true"}})
@@ -379,12 +379,12 @@ def test_build_spec_single_env(single_env):
     assert spec.app == "clips-api"
     assert [e.name for e in spec.environments] == ["dev"]
     dev = spec.ci_env
-    assert dev.gsa_email == "clips-api-deploy@shaz-499303.iam.gserviceaccount.com"
+    assert dev.gsa_email == "clips-api-deploy@acme-499303.iam.gserviceaccount.com"
     assert dev.wif_provider == (
         "projects/773958892580/locations/global"
         "/workloadIdentityPools/gojira/providers/github"
     )
-    assert spec.image(dev) == "us-central1-docker.pkg.dev/shaz-499303/apps/clips-api"
+    assert spec.image(dev) == "us-central1-docker.pkg.dev/acme-499303/apps/clips-api"
     assert spec.promote_envs == []
 
 
@@ -430,10 +430,10 @@ def test_provision_app_single_env(session, single_env, tmp_path):
     assert kube.by_cluster["dev"].namespaces["clips"] == MANAGED_LABEL
     assert (tmp_path / "k8s/base/service.yaml").exists()
     assert (tmp_path / "gojira.yaml").exists()
-    assert app.setup_pr_url == "https://github.com/shaz/clips-api/pull/1"
+    assert app.setup_pr_url == "https://github.com/acme/clips-api/pull/1"
     # only the per-app step is unscoped; identity is scoped to the project
     names = {r.step_name for r in session.scalars(select(ProvisionStep))}
-    assert "ensure_service_account@shaz-499303" in names
+    assert "ensure_service_account@acme-499303" in names
     assert "ensure_namespace@dev" in names
     assert "open_setup_pr" in names
 
@@ -493,7 +493,7 @@ def test_provision_app_resumes_after_failure(session, single_env, tmp_path, monk
         r.step_name for r in session.scalars(select(ProvisionStep))
         if r.status == StepStatus.DONE
     }
-    assert "ensure_service_account@shaz-499303" in done
+    assert "ensure_service_account@acme-499303" in done
     assert "ensure_namespace@dev" in done
 
     # fix the issue and re-run: GCP/namespace skipped, per-app completes
@@ -532,7 +532,7 @@ def test_dns_access_enabled_once_then_skipped(session_and_app=None):
 
 
 def test_namespace_labels_stamped_and_converged():
-    """Rook's finding: secrets infra gates on namespace labels; the provisioner
+    """A tenant's finding: secrets infra gates on namespace labels; the provisioner
     stamps defaults.namespace_labels and re-asserts them on existing
     namespaces (a label-less namespace is not 'done')."""
     from gojira.config import Config
@@ -540,21 +540,21 @@ def test_namespace_labels_stamped_and_converged():
     from tests.fakes import FakeKubectlClient
 
     cfg = Config()
-    cfg.defaults.namespace_labels = {"fubo.tv/team": "sre"}
+    cfg.defaults.namespace_labels = {"example.com/team": "sre"}
 
     class Env:
-        namespace = "rook"
+        namespace = "scout"
 
     class Ctx:
         environment = Env()
         config = cfg
-        clients = {"kubectl": FakeKubectlClient(existing={"rook": {"app": "rook"}})}
+        clients = {"kubectl": FakeKubectlClient(existing={"scout": {"app": "scout"}})}
 
     step = EnsureNamespace()
     ctx = Ctx()
     assert step.check(ctx) is None            # exists but unlabeled → not done
     step.apply(ctx)
     kubectl = ctx.clients["kubectl"]
-    assert kubectl.namespaces["rook"]["fubo.tv/team"] == "sre"
-    assert kubectl.namespaces["rook"][next(iter(MANAGED_LABEL))] == "true"
-    assert step.check(ctx) == "rook"          # converged → done
+    assert kubectl.namespaces["scout"]["example.com/team"] == "sre"
+    assert kubectl.namespaces["scout"][next(iter(MANAGED_LABEL))] == "true"
+    assert step.check(ctx) == "scout"          # converged → done
