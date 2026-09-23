@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# Bootstrap Gojira into a sandbox cluster — everything after `terraform apply`.
+# Bootstrap Gojira into a cluster — everything after `terraform apply` (or
+# prepare-project.sh). Inputs come from gojira.env (see gojira.env.example);
+# `make install` is the front door, this script is what it runs.
 #
-#   PROJECT=my-sandbox \
-#   GOJIRA_GITHUB_APP_ID=1234567 \
-#   GOJIRA_GITHUB_APP_PEM=./github-app.pem \
-#   ./scripts/bootstrap.sh
+#   cp gojira.env.example gojira.env && $EDITOR gojira.env && make install
+#   # or, values in the environment instead of the file:
+#   PROJECT=my-sandbox GOJIRA_GITHUB_APP_ID=1234567 \
+#   GOJIRA_GITHUB_APP_PEM=./github-app.pem ./scripts/bootstrap.sh
 #
 # Optional front door (IAP + HTTPS LB; see deploy/ingress/):
 #   GOJIRA_HOSTNAME=gojira.example.com     enables the ingress step
 #   GOJIRA_IAP_MEMBERS=domain:example.com  comma-separated IAP accessor grants
-# After it provisions, point DNS (A record) at the printed static IP and set
-# the auth: block in your config (enabled + allowed_domain/allowed_emails).
+#   GOJIRA_ALLOWED_DOMAIN / GOJIRA_ALLOWED_EMAILS  Gojira's own allowlist —
+#                                          auth: turns on only with a hostname
+# After it provisions, point DNS (A record) at the printed static IP.
 #
 # What it does, in order (each step idempotent — rerun freely):
 #   0. preflight                  (scripts/preflight.sh --fix: tools, project,
@@ -19,6 +22,8 @@
 #   2. build + push the image     (Cloud Build — works from ARM machines too)
 #   3. namespace + Gojira secret  (App id + pem you supply; webhook secret and
 #                                  API token minted here, preserved on rerun)
+#      + gojira-install ConfigMap (the optional knobs, as pod env — the
+#                                  committed configmap.yaml interpolates them)
 #   4. render + apply deploy/     (placeholders filled in a temp copy; your
 #                                  working tree stays clean)
 #   5. wait for the pod, print how to reach the UI + the minted secrets
@@ -30,9 +35,11 @@
 # terraform can live on a different one.
 
 set -euo pipefail
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$REPO_ROOT/scripts/env.sh"
 
 # --- inputs -------------------------------------------------------------------
-PROJECT="${PROJECT:?set PROJECT to your sandbox GCP project id}"
+PROJECT="${PROJECT:?set PROJECT in gojira.env (or the environment)}"
 REGION="${REGION:-us-central1}"
 CLUSTER="${CLUSTER:-gojira-sandbox}"
 # NB: no apostrophes in :? messages — inside ${VAR:?...} a quote character
@@ -43,7 +50,6 @@ PEM="${GOJIRA_GITHUB_APP_PEM:?set GOJIRA_GITHUB_APP_PEM (path to the App private
 
 AR_PATH="${REGION}-docker.pkg.dev/${PROJECT}/gojira"
 GSA="gojira@${PROJECT}.iam.gserviceaccount.com"
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
@@ -80,6 +86,22 @@ kubectl -n gojira create secret generic gojira-github-app \
   --from-literal=webhook_secret="$WEBHOOK_SECRET" \
   --from-literal=api_token="$API_TOKEN" \
   --from-file=private_key="$PEM" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# The optional knobs, handed to the pod as env; configmap.yaml's ${VAR:-default}
+# lines read them. Gojira's own allowlist only arms behind a front door — the
+# identity header it trusts is forgeable on a bare endpoint.
+AUTH_ENABLED=false
+if [ -n "${GOJIRA_HOSTNAME:-}" ] && [ -n "${GOJIRA_ALLOWED_DOMAIN:-}${GOJIRA_ALLOWED_EMAILS:-}" ]; then
+  AUTH_ENABLED=true
+fi
+kubectl -n gojira create configmap gojira-install \
+  --from-literal=GOJIRA_AUTH_ENABLED="$AUTH_ENABLED" \
+  --from-literal=GOJIRA_ALLOWED_DOMAIN="${GOJIRA_ALLOWED_DOMAIN:-}" \
+  --from-literal=GOJIRA_ALLOWED_EMAILS="${GOJIRA_ALLOWED_EMAILS:-}" \
+  --from-literal=GOJIRA_NAMESPACE_LABELS="${GOJIRA_NAMESPACE_LABELS:-}" \
+  --from-literal=GOJIRA_SIZING_AGENT_IMAGE="${GOJIRA_SIZING_AGENT_IMAGE:-}" \
+  --from-literal=GOJIRA_DRIFT_ENABLED="${GOJIRA_DRIFT_ENABLED:-true}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 step "4/5 render + apply manifests (temp copy — your tree stays clean)"
@@ -141,7 +163,8 @@ if [ -n "${GOJIRA_HOSTNAME:-}" ]; then
 front door provisioning (cert takes ~15-60 min after DNS resolves):
   1. Create an A record: ${GOJIRA_HOSTNAME} -> ${STATIC_IP}
   2. Watch: kubectl -n gojira get managedcertificate gojira-cert
-  3. Enable app auth in your config.yaml:  auth: { enabled: true, allowed_domain: ... }
+  3. Gojira's allowlist: auth.enabled=${AUTH_ENABLED} (set GOJIRA_ALLOWED_DOMAIN or
+     GOJIRA_ALLOWED_EMAILS in gojira.env and rerun to change it)
   4. Point your GitHub App webhook at https://${GOJIRA_HOSTNAME}/webhook/github
      and set its secret to the minted webhook secret (printed below).
 EOI
