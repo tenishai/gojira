@@ -99,7 +99,7 @@ def test_connect_app_creates_environments_in_order(session):
     app = service.connect_app(
         session,
         name="clips-api",
-        repo_full_name="shaz/clips-api",
+        repo_full_name="acme/clips-api",
         workload_class="web",
         env_map={
             "dev": (clusters["dev"].id, "clips"),
@@ -125,14 +125,14 @@ def test_connect_app_rejects_empty_env_map(session):
 def test_run_provision_drives_full_flow(session):
     clusters = _three_clusters(session)
     app = service.connect_app(
-        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        session, name="clips-api", repo_full_name="acme/clips-api", workload_class="web",
         env_map={n: (c.id, "clips") for n, c in clusters.items()},
     )
     clients = _clients()
     service.run_provision(session, app, clients, Config())
 
     assert app.status == AppStatus.AWAITING_PR
-    assert app.setup_pr_url == "https://github.com/shaz/clips-api/pull/1"
+    assert app.setup_pr_url == "https://github.com/acme/clips-api/pull/1"
     # identity provisioned once per distinct project
     assert "clips-api-deploy@proj-a.iam.gserviceaccount.com" in clients.gcp.service_accounts
     assert "clips-api-deploy@proj-b.iam.gserviceaccount.com" in clients.gcp.service_accounts
@@ -141,7 +141,7 @@ def test_run_provision_drives_full_flow(session):
 def test_app_status_view_parses_scoped_steps(session):
     clusters = _three_clusters(session)
     app = service.connect_app(
-        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        session, name="clips-api", repo_full_name="acme/clips-api", workload_class="web",
         env_map={n: (c.id, "clips") for n, c in clusters.items()},
     )
     service.run_provision(session, app, _clients(), Config())
@@ -161,7 +161,7 @@ def test_start_provision_runs_in_thread(session_factory):
     with session_factory() as s:
         clusters = _three_clusters(s)
         app = service.connect_app(
-            s, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+            s, name="clips-api", repo_full_name="acme/clips-api", workload_class="web",
             env_map={"dev": (clusters["dev"].id, "clips")},
         )
         app_id = app.id
@@ -178,7 +178,7 @@ def test_start_provision_runs_in_thread(session_factory):
 def test_delete_app_removes_rows_and_namespaces(session):
     clusters = _three_clusters(session)
     app = service.connect_app(
-        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        session, name="clips-api", repo_full_name="acme/clips-api", workload_class="web",
         env_map={n: (c.id, "clips") for n, c in clusters.items()},
     )
     kube = KubectlFactory()
@@ -190,7 +190,7 @@ def test_delete_app_removes_rows_and_namespaces(session):
 
     service.delete_app(session, app_id, kube, FakeGCPClient(), delete_namespaces=True)
 
-    assert service.app_by_repo(session, "shaz/clips-api") is None
+    assert service.app_by_repo(session, "acme/clips-api") is None
     from gojira.models import Environment, Event, ProvisionStep
     assert session.query(Environment).filter_by(app_id=app_id).count() == 0
     assert session.query(ProvisionStep).filter_by(app_id=app_id).count() == 0
@@ -219,7 +219,7 @@ def test_delete_app_missing_returns_none(session):
 def test_delete_app_summary_shape(session):
     clusters = _three_clusters(session)
     app = service.connect_app(
-        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        session, name="clips-api", repo_full_name="acme/clips-api", workload_class="web",
         env_map={"dev": (clusters["dev"].id, "clips")},
     )
     summary = service.delete_app(
@@ -245,7 +245,7 @@ def test_delete_app_removes_provisioned_identity(session):
 
     clusters = _three_clusters(session)
     app = service.connect_app(
-        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        session, name="clips-api", repo_full_name="acme/clips-api", workload_class="web",
         env_map={"dev": (clusters["dev"].id, "clips")},
     )
     clients = _clients()
@@ -275,7 +275,7 @@ def test_delete_app_removes_provisioned_identity_across_two_projects(session):
 
     clusters = _three_clusters(session)  # dev+qa on proj-a, prod on proj-b
     app = service.connect_app(
-        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        session, name="clips-api", repo_full_name="acme/clips-api", workload_class="web",
         env_map={n: (c.id, "clips") for n, c in clusters.items()},
     )
     ar_repo_a = clusters["dev"].ar_repo
@@ -338,7 +338,7 @@ def test_delete_app_teardown_identity_false_skips_all_gcp_calls(session):
     summary shape is stable for callers that don't care about this flag."""
     clusters = _three_clusters(session)
     app = service.connect_app(
-        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        session, name="clips-api", repo_full_name="acme/clips-api", workload_class="web",
         env_map={"dev": (clusters["dev"].id, "clips")},
     )
     clients = _clients()
@@ -352,7 +352,7 @@ def test_delete_app_teardown_identity_false_skips_all_gcp_calls(session):
     )
 
     assert clients.gcp.calls == []
-    assert service.app_by_repo(session, "shaz/clips-api") is None
+    assert service.app_by_repo(session, "acme/clips-api") is None
     assert summary["identity"] == {
         "bindings_removed": 0,
         "gsa_deleted": False,
@@ -370,7 +370,7 @@ def test_delete_app_keeps_namespaces_skips_image_deletion(session):
     runs), and the summary records why."""
     clusters = _three_clusters(session)
     app = service.connect_app(
-        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        session, name="clips-api", repo_full_name="acme/clips-api", workload_class="web",
         env_map={"dev": (clusters["dev"].id, "clips")},
     )
     ar_repo = clusters["dev"].ar_repo
@@ -413,7 +413,7 @@ def test_delete_app_seven_tables_cleaned_up(session):
 
     clusters = _three_clusters(session)
     app = service.connect_app(
-        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        session, name="clips-api", repo_full_name="acme/clips-api", workload_class="web",
         env_map={"dev": (clusters["dev"].id, "clips")},
     )
     app_id = app.id
@@ -438,7 +438,7 @@ def test_delete_app_seven_tables_cleaned_up(session):
 
     assert summary is not None
     assert summary["rows_deleted"] is True
-    assert service.app_by_repo(session, "shaz/clips-api") is None
+    assert service.app_by_repo(session, "acme/clips-api") is None
     for model in (
         Environment, ProvisionStep, Event, DriftFinding, UsageProfileRow, SizingRecommendation,
     ):
@@ -463,7 +463,7 @@ class _RaisingGCPClient(FakeGCPClient):
 def test_delete_app_gcp_failures_continue_and_rows_still_deleted(session, caplog):
     clusters = _three_clusters(session)
     app = service.connect_app(
-        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        session, name="clips-api", repo_full_name="acme/clips-api", workload_class="web",
         env_map={"dev": (clusters["dev"].id, "clips")},
     )
     app_id = app.id
@@ -475,7 +475,7 @@ def test_delete_app_gcp_failures_continue_and_rows_still_deleted(session, caplog
 
     assert summary is not None
     assert summary["rows_deleted"] is True
-    assert service.app_by_repo(session, "shaz/clips-api") is None
+    assert service.app_by_repo(session, "acme/clips-api") is None
     assert len(summary["identity"]["failures"]) > 0
     assert all("boom" in f for f in summary["identity"]["failures"])
 
@@ -509,7 +509,7 @@ class _RaisingKubectlFactory:
 def test_delete_app_namespace_failure_recorded_in_summary(session):
     clusters = _three_clusters(session)
     app = service.connect_app(
-        session, name="clips-api", repo_full_name="shaz/clips-api", workload_class="web",
+        session, name="clips-api", repo_full_name="acme/clips-api", workload_class="web",
         env_map={"dev": (clusters["dev"].id, "clips")},
     )
     app_id = app.id
@@ -522,7 +522,7 @@ def test_delete_app_namespace_failure_recorded_in_summary(session):
     assert summary["namespace_failures"] == [
         {"namespace": "clips", "reason": "cluster unreachable"}
     ]
-    assert service.app_by_repo(session, "shaz/clips-api") is None
+    assert service.app_by_repo(session, "acme/clips-api") is None
 
 
 def test_cut_release_tags_head_and_normalizes_v():

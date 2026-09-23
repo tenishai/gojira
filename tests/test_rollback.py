@@ -87,7 +87,7 @@ def test_rollback_pins_the_receipt_and_applies_it(session):
         return [{"kind": "Deployment", "metadata": {"name": "a", "namespace": "ns"}}]
 
     msg = service.rollback_app(
-        session, app.id, sha=SHA, actor="shaz@example.com", clients=clients, render=render
+        session, app.id, sha=SHA, actor="user@example.com", clients=clients, render=render
     )
 
     assert seen["kust"]["images"] == [
@@ -102,7 +102,7 @@ def test_rollback_pins_the_receipt_and_applies_it(session):
     ev = next(e for e in view.events if e.type == "app.rolled_back")
     payload = json.loads(ev.payload_json)
     assert payload["sha"] == SHA
-    assert payload["actor"] == "shaz@example.com"
+    assert payload["actor"] == "user@example.com"
     assert payload["image"] == f"{image}:{TAG}@{DIGEST}"
 
 
@@ -276,7 +276,7 @@ def test_revert_pr_is_idempotent_per_target(session):
 
 
 def test_revert_pr_nothing_to_revert_when_git_matches(session):
-    """Rolling back to the current tip (cinder's first live rollback) leaves
+    """Rolling back to the current tip (the first live rollback) leaves
     git already correct — say so instead of opening an empty PR."""
     app, _ = _active_app(session)
     gh = FakeGitHubClient()
