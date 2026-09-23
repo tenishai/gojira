@@ -8,6 +8,7 @@ can address many clusters by constructing one client per context.
 
 import json
 import logging
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -60,6 +61,18 @@ class KubectlClient(ABC):
     @abstractmethod
     def apply(self, manifest: str) -> None:
         """Apply a YAML manifest (may hold multiple documents). Idempotent."""
+
+    @abstractmethod
+    def wait_job(self, namespace: str, name: str, timeout_seconds: int) -> str | None:
+        """Block until the Job reaches Complete (None) or fails: then the
+        failure reason (the Job's condition reason, e.g. DeadlineExceeded,
+        or a timeout note)."""
+        ...
+
+    @abstractmethod
+    def job_logs(self, namespace: str, name: str, tail: int = 20) -> str:
+        """The Job's pod log tail; empty string when unreadable (best-effort)."""
+        ...
 
     @abstractmethod
     def create_job_from_cronjob(self, namespace: str, name: str, cronjob: str) -> None:
@@ -122,6 +135,32 @@ class KubectlCLI(KubectlClient):
         result = self._run("apply", "-f", "-", stdin=manifest)
         if result.returncode != 0:
             raise K8sError(f"kubectl apply failed: {result.stderr}")
+
+    def wait_job(self, namespace: str, name: str, timeout_seconds: int) -> str | None:
+        # Poll rather than `kubectl wait --for=condition=complete`: wait can
+        # only watch ONE condition, so a failed Job would hang the full
+        # timeout instead of returning promptly.
+        deadline = time.time() + timeout_seconds
+        while True:
+            result = self._run("get", "job", name, "-n", namespace, "-o", "json")
+            if result.returncode == 0:
+                conditions = (json.loads(result.stdout).get("status") or {}).get(
+                    "conditions"
+                ) or []
+                for c in conditions:
+                    if c.get("status") != "True":
+                        continue
+                    if c.get("type") == "Complete":
+                        return None
+                    if c.get("type") in ("Failed", "FailureTarget"):
+                        return c.get("reason") or c.get("message") or "Failed"
+            if time.time() >= deadline:
+                return f"no terminal condition after {timeout_seconds}s"
+            time.sleep(5)
+
+    def job_logs(self, namespace: str, name: str, tail: int = 20) -> str:
+        result = self._run("logs", f"job/{name}", "-n", namespace, f"--tail={tail}")
+        return result.stdout if result.returncode == 0 else ""
 
     def create_job_from_cronjob(self, namespace: str, name: str, cronjob: str) -> None:
         result = self._run("delete", "job", name, "-n", namespace, "--ignore-not-found")
