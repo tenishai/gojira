@@ -18,5 +18,5 @@ output "ar_repo_path" {
 }
 
 output "get_credentials_cmd" {
-  value = "gcloud container clusters get-credentials ${google_container_cluster.sandbox.name} --region ${var.region} --project ${var.project_id}"
+  value = "gcloud container clusters get-credentials ${google_container_cluster.sandbox.name} --region ${var.region} --project ${var.project_id} --dns-endpoint"
 }
