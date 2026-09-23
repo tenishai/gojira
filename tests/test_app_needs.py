@@ -19,23 +19,23 @@ from gojira.generator import (
 
 def spec(**over) -> GeneratorSpec:
     return GeneratorSpec(
-        app="iris",
-        repo_full_name="example/infra-agent-iris",
+        app="atlas",
+        repo_full_name="acme/agent-atlas",
         workload_class="worker",
         environments=[EnvSpec(
-            name="dev", namespace="iris", project="p", cluster_name="example-dev",
+            name="dev", namespace="atlas", project="p", cluster_name="acme-dev",
             location="us-east4", gke_cluster="g", ar_repo="us-east4-docker.pkg.dev/p/apps",
             wif_provider="projects/1/locations/global/workloadIdentityPools/gojira/providers/github",
-            gsa_email="iris-deploy@p.iam.gserviceaccount.com",
+            gsa_email="atlas-deploy@p.iam.gserviceaccount.com",
         )],
         **over,
     )
 
 
 NEEDS = dict(
-    secrets_from=["iris-secrets"],
-    service_account="iris",
-    data_mount=DataMount(pvc="iris-data", path="/data"),
+    secrets_from=["atlas-secrets"],
+    service_account="atlas",
+    data_mount=DataMount(pvc="atlas-data", path="/data"),
 )
 
 
@@ -44,11 +44,11 @@ def test_needs_render_into_the_deployment():
     dep = yaml.safe_load(files["k8s/base/deployment.yaml"])
     pod = dep["spec"]["template"]["spec"]
     app = pod["containers"][0]
-    assert pod["serviceAccountName"] == "iris"
-    assert app["envFrom"] == [{"secretRef": {"name": "iris-secrets"}}]
+    assert pod["serviceAccountName"] == "atlas"
+    assert app["envFrom"] == [{"secretRef": {"name": "atlas-secrets"}}]
     assert app["volumeMounts"] == [{"name": "data", "mountPath": "/data"}]
     assert pod["volumes"] == [
-        {"name": "data", "persistentVolumeClaim": {"claimName": "iris-data"}}
+        {"name": "data", "persistentVolumeClaim": {"claimName": "atlas-data"}}
     ]
     # finding #15: a mounted PVC without fsGroup is unwritable for non-root
     # images — the sandbox's finding-#2 lesson, encoded in the vocabulary
@@ -67,9 +67,9 @@ def test_contract_round_trips():
     invariant overrides hold (finding #10's lesson, applied to needs)."""
     rendered = render(spec(**NEEDS))["gojira.yaml"]
     got = read_app_needs(rendered)
-    assert got["secrets_from"] == ["iris-secrets"]
-    assert got["service_account"] == "iris"
-    assert got["data_mount"] == DataMount(pvc="iris-data", path="/data", fs_group=999)
+    assert got["secrets_from"] == ["atlas-secrets"]
+    assert got["service_account"] == "atlas"
+    assert got["data_mount"] == DataMount(pvc="atlas-data", path="/data", fs_group=999)
     # explicit fs_group round-trips too
     assert read_app_needs("data_mount: { pvc: d, path: /x, fs_group: 10001 }")[
         "data_mount"].fs_group == 10001
@@ -130,7 +130,7 @@ def test_preserve_resources_noops_without_extras():
     assert preserve_resources(":::bad", RENDERED, file_exists=lambda e: True) == RENDERED
 
 
-# --- the full Iris shape through provisioning -----------------------------------
+# --- the full agent shape through provisioning -----------------------------------
 
 
 def test_iris_shaped_repo_survives_onboarding(tmp_path):
@@ -152,38 +152,38 @@ def test_iris_shaped_repo_survives_onboarding(tmp_path):
             base.mkdir(parents=True)
             (base / "externalsecret.yaml").write_text(
                 "apiVersion: external-secrets.io/v1beta1\nkind: ExternalSecret\n"
-                "metadata: { name: iris-secrets }\n")
+                "metadata: { name: atlas-secrets }\n")
             (base / "serviceaccount.yaml").write_text(
-                "apiVersion: v1\nkind: ServiceAccount\nmetadata: { name: iris }\n")
+                "apiVersion: v1\nkind: ServiceAccount\nmetadata: { name: atlas }\n")
             (base / "pvc.yaml").write_text(
-                "apiVersion: v1\nkind: PersistentVolumeClaim\nmetadata: { name: iris-data }\n")
+                "apiVersion: v1\nkind: PersistentVolumeClaim\nmetadata: { name: atlas-data }\n")
             (base / "kustomization.yaml").write_text(
                 "resources:\n  - deployment.yaml\n  - serviceaccount.yaml\n"
                 "  - pvc.yaml\n  - externalsecret.yaml\n")
             overlay = workdir / "k8s" / "overlays" / "dev"
             (overlay / "patches").mkdir(parents=True)
             (overlay / "patches" / "sa-wif.yaml").write_text(
-                "apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: iris\n"
-                "  annotations: { iam.gke.io/gcp-service-account: iris@p.iam.gserviceaccount.com }\n")
+                "apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: atlas\n"
+                "  annotations: { iam.gke.io/gcp-service-account: atlas@p.iam.gserviceaccount.com }\n")
             (overlay / "kustomization.yaml").write_text(
                 "resources:\n  - ../../base\npatches:\n  - path: patches/sa-wif.yaml\n")
             (workdir / "gojira.yaml").write_text(
-                "app: iris\nclass: worker\n"
-                "service_account: iris\nsecrets_from: [iris-secrets]\n"
-                "data_mount: { pvc: iris-data, path: /data }\n")
+                "app: atlas\nclass: worker\n"
+                "service_account: atlas\nsecrets_from: [atlas-secrets]\n"
+                "data_mount: { pvc: atlas-data, path: /data }\n")
 
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine, expire_on_commit=False)() as session:
-        c = Cluster(name="example-dev", gcp_project="p", location="us-east4",
+        c = Cluster(name="acme-dev", gcp_project="p", location="us-east4",
                     gke_cluster="g", ar_repo="us-east4-docker.pkg.dev/p/apps")
         session.add(c)
         session.commit()
-        a = App(name="iris", repo_full_name="example/infra-agent-iris",
+        a = App(name="atlas", repo_full_name="acme/agent-atlas",
                 installation_id=1, workload_class="worker")
         session.add(a)
         session.commit()
-        session.add(Environment(app_id=a.id, name="dev", cluster_id=c.id, namespace="iris"))
+        session.add(Environment(app_id=a.id, name="dev", cluster_id=c.id, namespace="atlas"))
         session.commit()
 
         result = provision_app(
@@ -198,9 +198,9 @@ def test_iris_shaped_repo_survives_onboarding(tmp_path):
 
     dep = yaml.safe_load((tmp_path / "k8s/base/deployment.yaml").read_text())
     pod = dep["spec"]["template"]["spec"]
-    assert pod["serviceAccountName"] == "iris"
-    assert pod["containers"][0]["envFrom"] == [{"secretRef": {"name": "iris-secrets"}}]
-    assert pod["volumes"][0]["persistentVolumeClaim"]["claimName"] == "iris-data"
+    assert pod["serviceAccountName"] == "atlas"
+    assert pod["containers"][0]["envFrom"] == [{"secretRef": {"name": "atlas-secrets"}}]
+    assert pod["volumes"][0]["persistentVolumeClaim"]["claimName"] == "atlas-data"
 
     # the WIF patch targets the preserved ServiceAccount — not orphaned
     overlay = yaml.safe_load((tmp_path / "k8s/overlays/dev/kustomization.yaml").read_text())
@@ -208,19 +208,19 @@ def test_iris_shaped_repo_survives_onboarding(tmp_path):
 
     # and the contract round-trips through the regenerated gojira.yaml
     regenerated = (tmp_path / "gojira.yaml").read_text()
-    assert read_app_needs(regenerated)["secrets_from"] == ["iris-secrets"]
+    assert read_app_needs(regenerated)["secrets_from"] == ["atlas-secrets"]
 
 
-# --- tenant feedback round 1 (Rook) ---------------------------------------------
+# --- tenant feedback round 1 ---------------------------------------------
 
 
 def test_env_vars_render_inline_and_round_trip():
-    files = render(spec(env_vars={"AGENT_BUNDLE": "rook", "GCP_PROJECT_ID": "p"}))
+    files = render(spec(env_vars={"AGENT_BUNDLE": "scout", "GCP_PROJECT_ID": "p"}))
     dep = yaml.safe_load(files["k8s/base/deployment.yaml"])
     env = dep["spec"]["template"]["spec"]["containers"][0]["env"]
-    assert {"name": "AGENT_BUNDLE", "value": "rook"} in env
+    assert {"name": "AGENT_BUNDLE", "value": "scout"} in env
     assert read_app_needs(files["gojira.yaml"])["env_vars"] == {
-        "AGENT_BUNDLE": "rook", "GCP_PROJECT_ID": "p"}
+        "AGENT_BUNDLE": "scout", "GCP_PROJECT_ID": "p"}
 
 
 def test_agent_class_recreate_no_surge():
@@ -253,20 +253,20 @@ def test_class_change_in_contract_wins_over_db(tmp_path):
     class AgentContractGitHub(FakeGitHubClient):
         def clone(self, repo, workdir):
             super().clone(repo, workdir)
-            (workdir / "gojira.yaml").write_text("app: iris\nclass: agent\n")
+            (workdir / "gojira.yaml").write_text("app: atlas\nclass: agent\n")
 
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine, expire_on_commit=False)() as session:
-        c = Cluster(name="example-dev", gcp_project="p", location="us-east4",
+        c = Cluster(name="acme-dev", gcp_project="p", location="us-east4",
                     gke_cluster="g", ar_repo="us-east4-docker.pkg.dev/p/apps")
         session.add(c)
         session.commit()
-        a = App(name="iris", repo_full_name="example/infra-agent-iris",
+        a = App(name="atlas", repo_full_name="acme/agent-atlas",
                 installation_id=1, workload_class="worker")  # DB says worker
         session.add(a)
         session.commit()
-        session.add(Environment(app_id=a.id, name="dev", cluster_id=c.id, namespace="iris"))
+        session.add(Environment(app_id=a.id, name="dev", cluster_id=c.id, namespace="atlas"))
         session.commit()
         result = provision_app(
             session, a, gcp=FakeGCPClient(), github=AgentContractGitHub(),
@@ -362,16 +362,16 @@ def test_zero_touch_onboarding_seeds_the_contract(tmp_path):
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine, expire_on_commit=False)() as session:
-        c = Cluster(name="example-dev", gcp_project="p", location="us-east4",
+        c = Cluster(name="acme-dev", gcp_project="p", location="us-east4",
                     gke_cluster="g", ar_repo="us-east4-docker.pkg.dev/p/apps")
         session.add(c)
         session.commit()
-        a = App(name="sherlock2", repo_full_name="example/sherlock2",
+        a = App(name="watson", repo_full_name="acme/watson",
                 installation_id=1, workload_class="agent")
         session.add(a)
         session.commit()
         session.add(Environment(app_id=a.id, name="dev", cluster_id=c.id,
-                                namespace="sherlock2"))
+                                namespace="watson"))
         session.commit()
         result = provision_app(
             session, a, gcp=FakeGCPClient(), github=UntouchedRepo(),
@@ -461,7 +461,7 @@ def test_admin_port_renders_second_port_and_its_own_service():
     assert {"name": "http", "containerPort": 8080} in ports
 
     admin = yaml.safe_load(files["k8s/base/admin-service.yaml"])
-    assert admin["metadata"]["name"] == "iris-admin"
+    assert admin["metadata"]["name"] == "atlas-admin"
     assert admin["spec"]["ports"] == [
         {"name": "admin", "port": 80, "targetPort": "admin"}
     ]

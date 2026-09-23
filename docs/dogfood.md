@@ -1,7 +1,7 @@
 # Dogfooding Gojira
 
 End-to-end: stand up a throwaway GKE sandbox, run Gojira **in-cluster**, and use
-it to deploy [`gojira-demo`](https://github.com/shaz/gojira-demo) — then patch
+it to deploy [`examples/hello-app`](../examples/hello-app/README.md) pushed to a repo of your own — then patch
 the running app and watch Gojira open a drift-capture PR.
 
 This is the production-shaped path (in-cluster Gojira, GitHub App auth). It
@@ -87,7 +87,7 @@ green result means Gojira (via Workload Identity) can reach the cluster.
 
 ## 5 — Connect gojira-demo
 
-UI → **Connect** → pick `shaz/gojira-demo`, then:
+UI → **Connect** → pick `<your-org>/hello-app`, then:
 
 - **class:** `web`
 - **environment(s):** one `dev` env on the `sandbox` cluster, namespace `demo`
