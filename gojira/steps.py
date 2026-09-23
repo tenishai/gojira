@@ -769,7 +769,7 @@ def _observe_job_name(app: str, env: str, epoch: int) -> str:
     """Unique per run — a lingering completed Job (ttl not yet elapsed) would
     reject an apply that changes immutable fields. The epoch leads and the
     variable-length app name trails, so the 63-char DNS-label cut trims the
-    app name, never the uniqueness (Kai's review of #49)."""
+    app name, never the uniqueness (review of #49)."""
     return f"argus-observe-{epoch}-{env}-{app}"[:63].rstrip("-")
 
 

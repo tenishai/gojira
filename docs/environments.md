@@ -115,7 +115,7 @@ gsa_email, namespace}`. Then:
    environments and drives the engine across them.
 3. **Generator**: multi-env `GeneratorSpec`; per-env auth + crane-copy promote
    workflow; golden tests for a 2-project app.
-4. **Validate**: provision a demo app with dev on `shaz-test` and a second
+4. **Validate**: provision a demo app with dev on a sandbox project and a second
    cluster (same project first, then a second project) and watch promote
    crane-copy + deploy.
 
