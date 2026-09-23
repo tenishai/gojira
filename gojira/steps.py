@@ -13,6 +13,7 @@ gated production target.
 """
 
 import logging
+import time
 from dataclasses import dataclass
 
 import yaml
@@ -21,6 +22,7 @@ from gojira.gcp import GCPClient
 from gojira.generator import (
     EnvSpec,
     GeneratorSpec,
+    contract_fingerprint,
     infer_app_needs,
     preserve_generators,
     preserve_patches,
@@ -706,6 +708,124 @@ def per_project_steps() -> list[Step]:
         GrantIamRoles(),
         EnsureArtifactRepo(),
     ]
+
+
+OBSERVE_SUMMARY_PREFIX = "ARGUS_SUMMARY "
+
+
+class ObserveApp:
+    """Born observed: hand the app's contract to an in-cluster `argus observe`
+    Job and record its one-line summary in the ledger (design agreed with
+    argus, 2026-09-17/18 collab thread).
+
+    Ephemeral, so Provision-again re-observes after contract edits — argus's
+    observe is idempotent and its Job deliberately runs without a persistent
+    ledger, re-checking the live world every run. Failure is loud but
+    isolated: this step runs in its own non-halting pass (an unobserved app
+    beats an undeployed one), and the summary line — success or failure —
+    is the ledger row, so a failed observe explains itself in the UI.
+    """
+
+    name = "observe"
+    ephemeral = True
+
+    def check(self, ctx: ProvisionContext) -> str | None:
+        cfg = ctx.config.observe
+        cluster_name = ctx.environment.cluster.name
+        if not cfg.job_image or cluster_name not in cfg.clusters:
+            return f"argus not configured for cluster {cluster_name}"
+        if ctx.workdir is None or not (ctx.workdir / "gojira.yaml").is_file():
+            return "no contract in the working tree"
+        return None
+
+    def apply(self, ctx: ProvisionContext) -> str:
+        cfg = ctx.config.observe
+        ocfg = cfg.clusters[ctx.environment.cluster.name]
+        contract = (ctx.workdir / "gojira.yaml").read_text()
+        # Same canonicalization the generated CI stamps (#42); argus refuses
+        # to apply anything when its own recomputation disagrees.
+        sha = contract_fingerprint(contract)
+        job_name = _observe_job_name(ctx.app.name, ctx.environment.name, int(time.time()))
+        kubectl = _kubectl(ctx)
+        kubectl.apply(yaml.safe_dump(
+            _observe_job(job_name, ocfg, cfg, contract, sha, ctx.environment.name),
+            sort_keys=False,
+        ))
+        failure = kubectl.wait_job(ocfg.namespace, job_name, cfg.active_deadline_seconds + 60)
+        logs = kubectl.job_logs(ocfg.namespace, job_name)
+        summary = ""
+        for line in reversed(logs.splitlines()):
+            if line.startswith(OBSERVE_SUMMARY_PREFIX):
+                summary = line[len(OBSERVE_SUMMARY_PREFIX):].strip()
+                break
+        if failure:
+            # argus's own line when it got that far; else the Job's failure
+            # reason, so a row for a pull failure or deadline still explains itself.
+            raise RuntimeError(summary or f"observe job {job_name} did not complete: {failure}")
+        return summary or f"{job_name} complete (no summary line)"
+
+
+def _observe_job_name(app: str, env: str, epoch: int) -> str:
+    """Unique per run — a lingering completed Job (ttl not yet elapsed) would
+    reject an apply that changes immutable fields. The epoch leads and the
+    variable-length app name trails, so the 63-char DNS-label cut trims the
+    app name, never the uniqueness (Kai's review of #49)."""
+    return f"argus-observe-{epoch}-{env}-{app}"[:63].rstrip("-")
+
+
+def _observe_job(name, ocfg, cfg, contract_yaml, sha, env_name) -> dict:
+    """The Job spec, mirroring argus's README manifest ("Running observe as a
+    Job") — SA and security context are argus's own prescription; env vars are
+    the agreed I/O contract."""
+    return {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {
+            "name": name,
+            "namespace": ocfg.namespace,
+            "labels": {"app.kubernetes.io/managed-by": "gojira"},
+        },
+        "spec": {
+            "backoffLimit": 0,
+            "ttlSecondsAfterFinished": cfg.ttl_seconds,
+            "activeDeadlineSeconds": cfg.active_deadline_seconds,
+            "template": {"spec": {
+                "serviceAccountName": ocfg.service_account,
+                "automountServiceAccountToken": True,
+                "restartPolicy": "Never",
+                "securityContext": {
+                    "runAsNonRoot": True,
+                    "seccompProfile": {"type": "RuntimeDefault"},
+                },
+                "volumes": [{"name": "tmp", "emptyDir": {}}],
+                "containers": [{
+                    "name": "observe",
+                    "image": cfg.job_image,
+                    "args": ["observe"],
+                    "env": [
+                        {"name": "GOJIRA_CONTRACT_YAML", "value": contract_yaml},
+                        {"name": "GOJIRA_CONTRACT_SHA256", "value": sha},
+                        {"name": "ARGUS_ENV", "value": env_name},
+                    ],
+                    "securityContext": {
+                        "allowPrivilegeEscalation": False,
+                        "readOnlyRootFilesystem": True,
+                        "capabilities": {"drop": ["ALL"]},
+                    },
+                    "volumeMounts": [{"name": "tmp", "mountPath": "/tmp"}],
+                    "resources": {
+                        "requests": {"cpu": "100m", "memory": "128Mi"},
+                        "limits": {"memory": "512Mi"},
+                    },
+                }],
+            }},
+        },
+    }
+
+
+def observe_steps() -> list[Step]:
+    """The non-halting observe pass — after the repo flow, per environment."""
+    return [ObserveApp()]
 
 
 def per_env_steps() -> list[Step]:

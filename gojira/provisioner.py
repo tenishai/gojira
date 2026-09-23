@@ -259,6 +259,27 @@ def provision_app(
     if not absorb(ProvisionEngine(per_app_steps()).run(session, ctx)):
         return aggregate
 
+    # per-environment observe — after the repo flow (the contract must exist
+    # in the working tree), NON-HALTING by design: an unobserved app beats an
+    # undeployed one. A failure lands loudly in the ledger row (the argus
+    # summary line explains itself) but never fails the provision or the app.
+    from gojira.steps import observe_steps
+
+    for env in envs:
+        ctx = ProvisionContext(
+            app=app, config=config,
+            clients={"kubectl": kubectl_for(env.cluster)},
+            environment=env, environments=envs, workdir=workdir,
+        )
+        res = ProvisionEngine(observe_steps()).run(session, ctx, env.name)
+        aggregate.steps_run.extend(res.steps_run)
+        aggregate.steps_skipped.extend(res.steps_skipped)
+        if not res.completed:
+            log.warning(
+                "observe failed for %s/%s (recorded in ledger, provision continues): %s",
+                app.name, env.name, res.error,
+            )
+
     # No setup PR means there was nothing to propose (re-onboard of an
     # already-configured repo) — deploys already flow, so the app is ACTIVE.
     app.status = AppStatus.AWAITING_PR if app.setup_pr_url else AppStatus.ACTIVE
