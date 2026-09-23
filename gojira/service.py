@@ -107,8 +107,17 @@ def register_cluster(
     gcp: GCPClient | None = None,
 ) -> Cluster:
     """Register a deploy target. If a GCP client is given, validate connectivity
-    by fetching credentials first (raises if the cluster is unreachable)."""
+    by fetching credentials first (raises if the cluster is unreachable).
+
+    Credentials are fetched over GKE's DNS-based endpoint — the only path
+    that works for private control planes off-VPC and from CI runners
+    (finding #14) — so that endpoint is enabled here, at registration, not
+    first at provision time: a fresh cluster with it off used to fail
+    registration with a bare gcloud error and nothing saying why."""
     if gcp is not None:
+        if not gcp.dns_access_enabled(gcp_project, location, gke_cluster):
+            log.info("enabling DNS-based control-plane access on %s", gke_cluster)
+            gcp.enable_dns_access(gcp_project, location, gke_cluster)
         gcp.get_gke_credentials(gcp_project, location, gke_cluster)
     cluster = Cluster(
         name=name,

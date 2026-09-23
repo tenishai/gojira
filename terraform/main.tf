@@ -49,6 +49,15 @@ resource "google_container_cluster" "sandbox" {
   # protection off — this is a throwaway.
   deletion_protection = false
 
+  # Gojira reaches every control plane over GKE's IAM-authenticated DNS
+  # endpoint (registration probe, generated CI from GitHub runners — finding
+  # #14). On at birth here; registration enables it on clusters made elsewhere.
+  control_plane_endpoints_config {
+    dns_endpoint_config {
+      allow_external_traffic = true
+    }
+  }
+
   depends_on = [google_project_service.enabled]
 }
 
