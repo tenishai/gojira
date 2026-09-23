@@ -91,6 +91,28 @@ class AuthConfig(BaseModel):
     api_token: str | None = None
 
 
+class ObserveClusterConfig(BaseModel):
+    """Where argus lives on one cluster. The minimal real-world entry is the
+    defaults — an empty mapping value enables observe for that cluster."""
+
+    namespace: str = "argus"
+    service_account: str = "argus-observe"
+
+
+class ObserveConfig(BaseModel):
+    """Born observed: hand each provisioned app's contract to an in-cluster
+    `argus observe` Job (co-designed with argus, 2026-09-17). Feature-off-
+    when-absent: no job_image or no entry for an env's cluster = the step
+    skips. job_image should be digest-pinned (tag for humans, digest for
+    receipts — #37).
+    """
+
+    job_image: str = ""
+    ttl_seconds: int = 600            # completed Jobs clean themselves up
+    active_deadline_seconds: int = 900  # argus's own outer bound on the summary line
+    clusters: dict[str, ObserveClusterConfig] = {}
+
+
 class Config(BaseModel):
     auth: AuthConfig = AuthConfig()
     github: GitHubConfig = GitHubConfig()
@@ -98,6 +120,7 @@ class Config(BaseModel):
     defaults: DefaultsConfig = DefaultsConfig()
     drift: DriftConfig = DriftConfig()
     sizing: SizingConfig = SizingConfig()
+    observe: ObserveConfig = ObserveConfig()
 
 
 def _interpolate(value: str) -> str:
