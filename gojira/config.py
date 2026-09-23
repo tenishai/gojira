@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +30,15 @@ class DefaultsConfig(BaseModel):
     # (e.g. an ESO ClusterSecretStore matching example.com/team) — a missing
     # label means ExternalSecrets silently never sync (Rook's finding).
     namespace_labels: dict[str, str] = {}
+
+    @field_validator("namespace_labels", mode="before")
+    @classmethod
+    def _labels_from_string(cls, v):
+        # The in-cluster configmap interpolates this from one env var
+        # (GOJIRA_NAMESPACE_LABELS, a YAML flow map); empty means none.
+        if isinstance(v, str):
+            return yaml.safe_load(v) or {}
+        return v
 
 
 class DriftConfig(BaseModel):
@@ -89,6 +98,14 @@ class AuthConfig(BaseModel):
     # while enabled is True means those routes have none, so callers must
     # configure this (web/auth.py's api_token_error fails closed in that case).
     api_token: str | None = None
+
+    @field_validator("allowed_emails", mode="before")
+    @classmethod
+    def _emails_from_string(cls, v):
+        # GOJIRA_ALLOWED_EMAILS=a@x.com,b@x.com in the install values.
+        if isinstance(v, str):
+            return [e.strip() for e in v.split(",") if e.strip()]
+        return v
 
 
 class ObserveClusterConfig(BaseModel):

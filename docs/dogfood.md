@@ -53,10 +53,8 @@ amd64 `exec format error` trap), namespace, GitHub App secret, manifests
 rendered into a temp copy (your tree stays clean), and the rollout wait:
 
 ```bash
-PROJECT=$PROJECT \
-GOJIRA_GITHUB_APP_ID=<app id> \
-GOJIRA_GITHUB_APP_PEM=./github-app.pem \
-./scripts/bootstrap.sh
+cp gojira.env.example gojira.env      # PROJECT, GOJIRA_GITHUB_APP_ID, GOJIRA_GITHUB_APP_PEM
+make install                          # = ./scripts/install.sh → preflight → bootstrap
 ```
 
 Idempotent — rerun it freely (it preserves the minted webhook secret and API

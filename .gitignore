@@ -9,6 +9,7 @@ venv/
 .venv/
 
 # Local state
+gojira.env
 *.db
 *.sqlite3
 .env

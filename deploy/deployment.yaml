@@ -48,6 +48,10 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+          # Operator knobs from gojira.env (bootstrap.sh builds this ConfigMap);
+          # optional so a hand-applied deploy/ still boots with the defaults.
+          envFrom:
+            - configMapRef: { name: gojira-install, optional: true }
           env:
             - name: GOJIRA_CONFIG
               value: /config/config.yaml

@@ -11,8 +11,13 @@ data:
     # coming up with the onboarding API (/api/v1/apps, /api/v1/apps/{id})
     # open to any in-cluster pod. This is independent of auth.enabled (IAP) —
     # that gate covers the human UI, not the /api/v1/* exemption.
+    # The GOJIRA_* knobs with defaults come from the gojira-install ConfigMap
+    # that bootstrap.sh builds from gojira.env — nobody edits this file.
     auth:
       api_token: "${GOJIRA_API_TOKEN}"
+      enabled: "${GOJIRA_AUTH_ENABLED:-false}"
+      allowed_domain: "${GOJIRA_ALLOWED_DOMAIN:-}"
+      allowed_emails: "${GOJIRA_ALLOWED_EMAILS:-}"
     github:
       app_id: "${GOJIRA_GITHUB_APP_ID}"
       private_key_path: /secrets/github-app.pem
@@ -20,14 +25,14 @@ data:
     database:
       url: sqlite:////data/gojira.db
     drift:
-      enabled: true
+      enabled: "${GOJIRA_DRIFT_ENABLED:-true}"
       interval_seconds: 900
     defaults:
       environments: [dev, qa, prod]
       # Labels stamped on every namespace Gojira creates — secrets infra
-      # (e.g. an ESO ClusterSecretStore) often gates on these:
-      # namespace_labels: { example.com/team: sre }
-    # To enable the Clusters-page "Deploy agent" button, point sizing.agent_image
-    # at your build of https://github.com/tenishai/gojira-sizing-agent:
-    # sizing:
-    #   agent_image: us-central1-docker.pkg.dev/<project>/gojira/gojira-sizing-agent:dev
+      # (e.g. an ESO ClusterSecretStore) often gates on these. YAML flow map.
+      namespace_labels: "${GOJIRA_NAMESPACE_LABELS:-}"
+    sizing:
+      # Your build of github.com/tenishai/gojira-sizing-agent — set to enable
+      # the Clusters-page "Deploy agent" button.
+      agent_image: "${GOJIRA_SIZING_AGENT_IMAGE:-}"
