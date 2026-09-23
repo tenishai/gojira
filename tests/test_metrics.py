@@ -62,7 +62,7 @@ def test_metrics_exempt_from_identity_gate(tmp_path):
     sf = sessionmaker(bind=engine, expire_on_commit=False)
     cfg = Config()
     cfg.auth.enabled = True
-    cfg.auth.allowed_domain = "fubo.tv"
+    cfg.auth.allowed_domain = "example.com"
     clients = service.ProvisionClients(
         gcp=FakeGCPClient(), github=FakeGitHubClient(), kubectl_for=KubectlFactory()
     )

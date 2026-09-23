@@ -50,7 +50,7 @@ def test_ephemeral_storage_explicit(sizing):
 def test_agent_class_probes_are_http_healthz(sizing):
     """Both probes hit /healthz over http: readiness gates the generated
     Service, and liveness must be http because a hung Socket Mode agent
-    keeps its tcp socket open (iris, 2026-07-26)."""
+    keeps its tcp socket open (a Slack agent, 2026-07-26)."""
     cls = sizing.classes["agent"]
     for probe in ("readiness", "liveness"):
         assert cls.probes[probe].type == "http"

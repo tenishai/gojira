@@ -247,7 +247,7 @@ class GeneratorSpec(BaseModel):
     data_mount: DataMount | None = None
     # Plain, non-secret configuration (tenant identity, endpoints). Rendered
     # inline into the deployment: config changes stay reviewed git commits,
-    # not secret-store writes (Rook's finding).
+    # not secret-store writes (a tenant's finding).
     env_vars: dict[str, str] = {}
     # A second listener beside the app port (gateway-shaped apps: liminal's
     # separable admin plane). Renders a named containerPort plus its own
@@ -374,7 +374,7 @@ def preserve_resources(existing_text: str, rendered_text: str, file_exists) -> s
     Finding #12: the generator does not own the whole manifest tree. Apps
     arrive with objects Gojira doesn't model — ExternalSecrets, ServiceAccounts,
     PVCs — and regeneration must not orphan them (the files survive on disk but
-    silently leave the build, which is how Iris lost her Slack tokens).
+    silently leave the build, which is how a Slack agent lost its tokens).
 
     `file_exists(entry) -> bool` drops entries whose file is gone (same
     rename-safety stance as preserve_patches: a stale entry hard-fails the
@@ -409,7 +409,7 @@ GENERATOR_KEYS = ("configMapGenerator", "secretGenerator", "generatorOptions")
 def preserve_generators(existing_text: str, rendered_text: str) -> str:
     """Carry an existing kustomization's generator blocks into a fresh render.
 
-    Finding #18: sherlock's non-secret config was born from an overlay
+    Finding #18: a tenant app's non-secret config was born from an overlay
     configMapGenerator — regeneration dropped it and the app lost its env.
     configMapGenerator / secretGenerator / generatorOptions survive verbatim
     (re-serialized; comments inside the blocks are not preserved). Rendered

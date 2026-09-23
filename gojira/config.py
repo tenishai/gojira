@@ -28,7 +28,7 @@ class DefaultsConfig(BaseModel):
     # Stamped on every namespace Gojira creates (and re-asserted on
     # re-onboard). Secrets infrastructure commonly gates on namespace labels
     # (e.g. an ESO ClusterSecretStore matching example.com/team) — a missing
-    # label means ExternalSecrets silently never sync (Rook's finding).
+    # label means ExternalSecrets silently never sync (a tenant's finding).
     namespace_labels: dict[str, str] = {}
 
     @field_validator("namespace_labels", mode="before")
