@@ -191,7 +191,7 @@ class FakeGitHubClient(GitHubClient):
         self._repo_ever_merged = pr_merged
         self.merged_urls = set(merged_urls or [])  # PR-specific merged state, by URL
         self.installation_id = installation_id
-        self.repos = repos or ["shaz/clips-api", "shaz/gojira-demo", "acme/web"]
+        self.repos = repos or ["acme/clips-api", "acme/hello-app", "acme/web"]
         self.prs = {}
         if existing_pr:
             self.prs[SETUP_BRANCH] = existing_pr

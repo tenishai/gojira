@@ -29,7 +29,7 @@ reviewed PRs. Nothing silently reverts an operator's fix.
 
 Gojira generalizes patterns proven on internal platforms:
 
-- **Kodama** (internal Cloud Run PaaS) — the "connect your repo" UX, GitHub
+- **An internal Cloud Run PaaS** — the "connect your repo" UX, GitHub
   App webhook handling, provisioner sequencing, build tracking.
 - **argocd-cicd generator** (internal skill) — generation of GH Actions
   workflows + Kustomize base/overlays, minus the ArgoCD parts.
@@ -49,7 +49,7 @@ reimplemented cleanly.
 | GitHub integration | GitHub App | Scoped permissions, installation flow, webhooks, can push commits/PRs. OAuth-only can't push cleanly |
 | GCP auth (phase 1) | Operator's `gcloud` credentials | The v0.1 backend shells out to `gcloud`, so it uses the active `gcloud auth login` account — not ADC. (ADC matters only if we adopt the Python google-cloud SDKs.) Honest single-tenant story; hosted multi-tenant is out of scope |
 | State store | SQLite default, Postgres optional | Zero-setup for evaluators; same SQLAlchemy models serve both |
-| Language / stack | Python — FastAPI + SQLAlchemy + light server-rendered frontend (Jinja2 + htmx) | Fast to build, approachable for contributors, matches the proven Kodama shape |
+| Language / stack | Python — FastAPI + SQLAlchemy + light server-rendered frontend (Jinja2 + htmx) | Fast to build, approachable for contributors, matches a shape proven on an internal PaaS |
 | Cloud scope | GCP/GKE only | Coherent v1 pitch: "Gojira deploys to GKE." Multi-cloud is someone else's PR |
 
 ---
@@ -191,7 +191,7 @@ events              append-only log: webhooks received, deploys observed,
 `provision_steps` is load-bearing: every provisioner step records what it
 created, so re-runs are idempotent (skip `done` steps), failures are resumable
 from the failed step, and teardown (`gojira destroy`, later) knows exactly
-what to delete. Lesson learned from Kodama's provisioner reliability work.
+what to delete. Lesson learned from an internal PaaS's provisioner reliability work.
 
 ### Provisioner — step engine
 

@@ -143,7 +143,7 @@ def test_connect_lists_repos_from_github(client, session_factory):
     _register_three(session_factory)
     html = client.get("/connect").text
     assert 'name="repo_select"' in html
-    assert "shaz/gojira-demo" in html  # from the fake's repo list
+    assert "acme/hello-app" in html  # from the fake's repo list
 
 
 def test_connect_provisions_and_status_reaches_terminal(client, session_factory):

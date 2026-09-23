@@ -38,7 +38,7 @@ def test_no_identity_is_401(client):
 
 
 def test_domain_user_admitted(client):
-    r = client.get("/", headers={IAP: "accounts.google.com:yanyan@example.com"})
+    r = client.get("/", headers={IAP: "accounts.google.com:someone@example.com"})
     assert r.status_code == 200
 
 
@@ -71,9 +71,9 @@ def test_disabled_auth_changes_nothing(tmp_path):
 
 def test_allowlist_logic():
     a = AuthConfig(enabled=True, allowed_domain="example.com", allowed_emails=["X@Ex.com"])
-    assert allowed("shaz@example.com", a)
+    assert allowed("user@example.com", a)
     assert allowed("x@ex.com", a)          # case-insensitive
-    assert not allowed("shaz@example.com.evil.com", a)
+    assert not allowed("user@example.com.evil.com", a)
     assert not allowed("", a)
 
 

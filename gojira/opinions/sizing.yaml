@@ -55,9 +55,9 @@ classes:
       # also what makes the generator emit a Service for this class.
       readiness: { type: http, path: /healthz }
       # http, not tcp: a hung agent keeps its socket open — a tcp check
-      # passes while the agent is dead to the world. Learned live (iris,
+      # passes while the agent is dead to the world. Learned live (a Slack agent,
       # 2026-07-26, as a hand-edit the regenerator later reclaimed); safe as
-      # a class opinion since example-agent SDK ≥ 0.9.1 serves /healthz.
+      # a class opinion since the agent SDK serves /healthz.
       liveness: { type: http, path: /healthz }
 
   cron:

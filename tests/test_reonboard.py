@@ -163,7 +163,7 @@ def test_rename_drops_orphaned_patch_but_keeps_live_one(tmp_path):
 def test_retry_refreshes_an_open_setup_pr(session, tmp_path):
     """Finding #13: a Retry after a generator upgrade must force-push fresh
     content under the OPEN setup PR — not skip because the PR exists (which
-    silently discarded the regenerated tree on the Example pilot)."""
+    silently discarded the regenerated tree on the first real tenant)."""
     app = _seed(session)
     gh = FakeGitHubClient(
         existing_pr="https://github.com/acme/gojira-demo/pull/3")  # PR open, stale
