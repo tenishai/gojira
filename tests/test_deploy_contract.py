@@ -121,12 +121,17 @@ def test_committed_configmap_loads_like_the_pod(monkeypatch, tmp_path):
     cfg = load_config(path)  # defaults: no front door, no labels, no agent
     assert cfg.auth.enabled is False and cfg.defaults.namespace_labels == {}
     assert cfg.sizing.agent_image == "" and cfg.drift.enabled is True
+    assert cfg.observe.job_image == "" and cfg.observe.clusters == {}  # born-observed off
 
     monkeypatch.setenv("GOJIRA_AUTH_ENABLED", "true")
     monkeypatch.setenv("GOJIRA_ALLOWED_DOMAIN", "example.com")
     monkeypatch.setenv("GOJIRA_NAMESPACE_LABELS", "{example.com/team: sre}")
     monkeypatch.setenv("GOJIRA_SIZING_AGENT_IMAGE", "img:dev")
+    monkeypatch.setenv("GOJIRA_OBSERVE_JOB_IMAGE", "argus@sha256:" + "a" * 64)
+    monkeypatch.setenv("GOJIRA_OBSERVE_CLUSTERS", "dev,qa")
     cfg = load_config(path)
     assert cfg.auth.enabled is True and cfg.auth.allowed_domain == "example.com"
     assert cfg.defaults.namespace_labels == {"example.com/team": "sre"}
     assert cfg.sizing.agent_image == "img:dev"
+    assert cfg.observe.job_image.startswith("argus@sha256:")
+    assert set(cfg.observe.clusters) == {"dev", "qa"}

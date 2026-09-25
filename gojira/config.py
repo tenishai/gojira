@@ -129,6 +129,19 @@ class ObserveConfig(BaseModel):
     active_deadline_seconds: int = 900  # argus's own outer bound on the summary line
     clusters: dict[str, ObserveClusterConfig] = {}
 
+    @field_validator("clusters", mode="before")
+    @classmethod
+    def _clusters_from_string(cls, v):
+        # The in-cluster configmap hands this over as one env var
+        # (GOJIRA_OBSERVE_CLUSTERS, a comma list of registered cluster names):
+        # ${VAR} interpolation reaches values, never mapping keys, so a
+        # string is the only shape the install path can deliver. Each name
+        # gets the defaults (argus namespace, argus-observe SA); an operator
+        # who needs anything else writes the mapping form. Empty means none.
+        if isinstance(v, str):
+            return {name.strip(): {} for name in v.split(",") if name.strip()}
+        return v
+
 
 class Config(BaseModel):
     auth: AuthConfig = AuthConfig()
