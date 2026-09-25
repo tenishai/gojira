@@ -59,3 +59,20 @@ def test_namespace_labels_and_emails_accept_install_value_strings():
     assert cfg.auth.allowed_emails == ["a@x.com", "b@x.com"]
     empty = Config.model_validate({"defaults": {"namespace_labels": ""}, "auth": {"allowed_emails": ""}})
     assert empty.defaults.namespace_labels == {} and empty.auth.allowed_emails == []
+
+
+def test_observe_clusters_accept_install_value_string():
+    """GOJIRA_OBSERVE_CLUSTERS arrives as one comma list; each name gets the
+    argus defaults. Empty means no cluster is observed. The mapping form an
+    operator writes by hand still round-trips."""
+    from gojira.config import ObserveClusterConfig
+
+    cfg = Config.model_validate({"observe": {"clusters": "example-dev, sandbox,"}})
+    assert cfg.observe.clusters == {
+        "example-dev": ObserveClusterConfig(), "sandbox": ObserveClusterConfig(),
+    }
+    assert Config.model_validate({"observe": {"clusters": ""}}).observe.clusters == {}
+    hand = Config.model_validate(
+        {"observe": {"clusters": {"dev": {"namespace": "obs", "service_account": "sa"}}}}
+    )
+    assert hand.observe.clusters["dev"].namespace == "obs"

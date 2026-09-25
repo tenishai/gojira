@@ -101,6 +101,8 @@ kubectl -n gojira create configmap gojira-install \
   --from-literal=GOJIRA_ALLOWED_EMAILS="${GOJIRA_ALLOWED_EMAILS:-}" \
   --from-literal=GOJIRA_NAMESPACE_LABELS="${GOJIRA_NAMESPACE_LABELS:-}" \
   --from-literal=GOJIRA_SIZING_AGENT_IMAGE="${GOJIRA_SIZING_AGENT_IMAGE:-}" \
+  --from-literal=GOJIRA_OBSERVE_JOB_IMAGE="${GOJIRA_OBSERVE_JOB_IMAGE:-}" \
+  --from-literal=GOJIRA_OBSERVE_CLUSTERS="${GOJIRA_OBSERVE_CLUSTERS:-}" \
   --from-literal=GOJIRA_DRIFT_ENABLED="${GOJIRA_DRIFT_ENABLED:-true}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
