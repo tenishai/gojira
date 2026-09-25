@@ -128,7 +128,7 @@ make install                           # preflight, image, secrets, manifests, r
 ```
 
 Every optional knob — front door hostname and IAP members, Gojira's own
-allowlist, namespace labels, the sizing agent image, the argus observe image and clusters — lives in `gojira.env`
+allowlist, namespace labels, the sizing agent image — lives in `gojira.env`
 too; nothing under `deploy/` is edited by hand, and rerunning `make install`
 applies changes.
 
