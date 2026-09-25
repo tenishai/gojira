@@ -36,3 +36,9 @@ data:
       # Your build of github.com/tenishai/gojira-sizing-agent — set to enable
       # the Clusters-page "Deploy agent" button.
       agent_image: "${GOJIRA_SIZING_AGENT_IMAGE:-}"
+    observe:
+      # Born observed: each provisioned app hands its contract to an in-cluster
+      # `argus observe` Job. Off until both knobs are set — the argus image
+      # (digest-pinned) and the registered cluster names it may observe on.
+      job_image: "${GOJIRA_OBSERVE_JOB_IMAGE:-}"
+      clusters: "${GOJIRA_OBSERVE_CLUSTERS:-}"
