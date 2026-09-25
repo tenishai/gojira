@@ -765,6 +765,10 @@ class ObserveApp:
         return summary or f"{job_name} complete (no summary line)"
 
 
+# argus's Dockerfile: `useradd --uid 10001 argus` + `USER 10001`.
+ARGUS_IMAGE_UID = 10001
+
+
 def _observe_job_name(app: str, env: str, epoch: int) -> str:
     """Unique per run — a lingering completed Job (ttl not yet elapsed) would
     reject an apply that changes immutable fields. The epoch leads and the
@@ -795,6 +799,15 @@ def _observe_job(name, ocfg, cfg, contract_yaml, sha, env_name) -> dict:
                 "restartPolicy": "Never",
                 "securityContext": {
                     "runAsNonRoot": True,
+                    # The uid argus's Dockerfile runs as. Stated here, not left
+                    # to the image, because the kubelet writes the projected SA
+                    # token 0600 root-owned unless the POD names a runAsUser or
+                    # fsGroup; an image-level USER cannot read it, kubectl then
+                    # falls back to localhost:8080 and every observe fails with
+                    # "platform record unreadable" (first live run, 2026-09-25).
+                    "runAsUser": ARGUS_IMAGE_UID,
+                    "runAsGroup": ARGUS_IMAGE_UID,
+                    "fsGroup": ARGUS_IMAGE_UID,
                     "seccompProfile": {"type": "RuntimeDefault"},
                 },
                 "volumes": [{"name": "tmp", "emptyDir": {}}],
