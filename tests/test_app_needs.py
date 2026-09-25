@@ -393,6 +393,73 @@ def test_zero_touch_onboarding_seeds_the_contract(tmp_path):
         (tmp_path / "k8s/base/kustomization.yaml").read_text())["resources"])
 
 
+def _onboard(tmp_path, github, *, auto_merge):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from gojira.config import Config
+    from gojira.models import App, Base, Cluster, Environment
+    from gojira.provisioner import provision_app
+    from tests.fakes import FakeGCPClient, KubectlFactory
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine, expire_on_commit=False)() as session:
+        c = Cluster(name="acme-dev", gcp_project="p", location="us-east4",
+                    gke_cluster="g", ar_repo="us-east4-docker.pkg.dev/p/apps")
+        session.add(c)
+        session.commit()
+        a = App(name="watson", repo_full_name="acme/watson", installation_id=1,
+                workload_class="agent", auto_merge_setup_pr=auto_merge)
+        session.add(a)
+        session.commit()
+        session.add(Environment(app_id=a.id, name="dev", cluster_id=c.id, namespace="watson"))
+        session.commit()
+        result = provision_app(session, a, gcp=FakeGCPClient(), github=github,
+                               kubectl_for=KubectlFactory(), config=Config(), workdir=tmp_path)
+        return result, a
+
+
+def test_adopted_repo_refuses_auto_merge(tmp_path):
+    """Finding #22 (live, 2026-09-25): a deployer UI onboarded a PRODUCTION
+    agent's existing repo with auto_merge_setup_pr=True — the flag it sets for
+    repos it authored. Gojira would have regenerated a human's k8s/ (renaming
+    their Deployment out from under the prod overlay) and merged it unreviewed.
+    Auto-merge is a waiver for repos with no human content; adopt mode is the
+    proof there IS human content, so the merge step refuses and the PR waits."""
+    from gojira.models import AppStatus
+    from tests.fakes import FakeGitHubClient
+
+    class HandBuilt(FakeGitHubClient):
+        def clone(self, repo, workdir):
+            super().clone(repo, workdir)
+            base = workdir / "k8s" / "base"
+            base.mkdir(parents=True)
+            (base / "deployment.yaml").write_text(PROBE_SHAPED)
+            (base / "kustomization.yaml").write_text("resources:\n  - deployment.yaml\n")
+
+    gh = HandBuilt()
+    result, app = _onboard(tmp_path, gh, auto_merge=True)
+    assert result.completed
+    assert gh.merged == []                       # nothing merged
+    assert app.setup_pr_url                      # the PR is open, for a person
+    assert app.status == AppStatus.AWAITING_PR
+    assert any(s.startswith("merge_setup_pr") for s in result.steps_skipped)
+
+
+def test_authored_repo_still_auto_merges(tmp_path):
+    """The control: a repo the caller authored (no k8s/, no contract) keeps
+    the one-click contract — the waiver is theirs to give."""
+    from gojira.models import AppStatus
+    from tests.fakes import FakeGitHubClient
+
+    gh = FakeGitHubClient()
+    result, app = _onboard(tmp_path, gh, auto_merge=True)
+    assert result.completed
+    assert gh.merged                             # merged
+    assert app.status == AppStatus.ACTIVE
+
+
 # --- finding #18: config is a need too ------------------------------------------
 
 PROBE_WITH_CONFIG = PROBE_SHAPED.replace(

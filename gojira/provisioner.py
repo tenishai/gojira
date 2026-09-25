@@ -70,6 +70,10 @@ class ProvisionContext:
     project: ProjectScope | None = None
     environment: Environment | None = None
     environments: list[Environment] = field(default_factory=list)
+    # Set by GenerateArtifacts when the repo had hand-built manifests and no
+    # contract (adopt mode): a human wrote this repo, so MergeSetupPr refuses
+    # to auto-merge over their work (finding #22).
+    adopted: bool = False
 
 
 class Step(Protocol):
