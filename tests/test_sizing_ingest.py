@@ -1,6 +1,7 @@
 """Ingestion: token auth, cluster scoping, app resolution, ledger append."""
 
 import json
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,9 +9,9 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from gojira import service
-from gojira.models import App, AppStatus, Base, Cluster, Environment, UsageProfileRow
+from gojira.models import App, AppStatus, Base, Cluster, Environment, UsageProfileRow, utcnow
 from gojira.sizing.profile import UsageProfile
-from gojira.sizing.service import IngestError, ingest_usage, mint_agent_token
+from gojira.sizing.service import IngestError, ingest_usage, mint_agent_token, usage_history
 from gojira.web import create_app
 from tests.fakes import FakeGCPClient, FakeGitHubClient, KubectlFactory
 from tests.test_sizing_profile import _fixture
@@ -142,3 +143,93 @@ def test_endpoint_round_trip(session_factory):
                        headers={"Authorization": "Bearer wrong"}).status_code == 401
     assert client.post("/api/v1/usage", json={"bad": "payload"},
                        headers={"Authorization": f"Bearer {token}"}).status_code == 422
+
+
+def _fresh_profile() -> UsageProfile:
+    return _profile()  # _fixture() already stamps reported_at to now (#36's lesson)
+
+
+def _old_profile() -> UsageProfile:
+    return _profile().model_copy(update={"reported_at": utcnow() - timedelta(days=40)})
+
+
+def test_usage_history_reads_ledger_and_recommendation(session, seeded):
+    """The read twin: every env listed (empty ones explicitly), profiles in
+    the POSTed wire shape newest-first with their ids, the live recommendation
+    pointing at the profile it was computed from."""
+    cluster, app, token = seeded
+    session.add(Environment(app_id=app.id, name="staging", cluster_id=cluster.id,
+                            namespace="clips-staging"))
+    session.commit()
+    row = ingest_usage(session, _fresh_profile(), token)
+
+    body = usage_history(session, app.id, since_days=30)
+    assert body["name"] == "clips-api"
+    assert list(body["environments"]) == ["prod", "staging"]
+    prod = body["environments"]["prod"]
+    assert prod["cluster"] == "my-prod-cluster"
+    assert [p["profile_id"] for p in prod["profiles"]] == [row.id]
+    profile = prod["profiles"][0]
+    assert profile["cpu"]["p95"] == "760m"
+    assert profile["reported_by"] == "gojira-sizing-agent/my-prod-cluster"
+    assert UsageProfile.model_validate(profile)  # still the wire contract
+    assert prod["recommendation"]["based_on_profile_id"] == row.id
+    assert prod["recommendation"]["proposed"]["cpu"]["request"] == "800m"
+    assert prod["recommendation"]["status"] == "open"
+    staging = body["environments"]["staging"]
+    assert staging["profiles"] == [] and staging["recommendation"] is None
+
+
+def test_usage_history_env_filter_and_window(session, seeded):
+    _, app, token = seeded
+    ingest_usage(session, _fresh_profile(), token)
+    ingest_usage(session, _old_profile(), token)  # 40 days back: outside 30d, inside 90d
+
+    body = usage_history(session, app.id, env="prod", since_days=30)
+    assert list(body["environments"]) == ["prod"]
+    assert len(body["environments"]["prod"]["profiles"]) == 1
+    assert len(usage_history(session, app.id, since_days=90)["environments"]["prod"]["profiles"]) == 2
+    assert usage_history(session, app.id, env="ghost") is None
+    assert usage_history(session, 999) is None
+
+
+def test_usage_read_endpoint(session_factory):
+    """GET /api/v1/apps/{id}/usage: platform bearer gate, 404 unknown app or
+    env, 422 on a window the ledger can't answer."""
+    from gojira.config import Config
+
+    with session_factory() as s:
+        cluster = Cluster(name="my-prod-cluster", gcp_project="p", location="l",
+                          gke_cluster="g", ar_repo="r")
+        s.add(cluster)
+        s.commit()
+        app_row = App(name="clips-api", repo_full_name="acme/clips-api",
+                      installation_id=1, workload_class="web", status=AppStatus.ACTIVE)
+        s.add(app_row)
+        s.commit()
+        s.add(Environment(app_id=app_row.id, name="prod",
+                          cluster_id=cluster.id, namespace="clips"))
+        s.commit()
+        app_id = app_row.id
+        ingest_usage(s, _fresh_profile(), mint_agent_token(s, cluster))
+
+    cfg = Config()
+    cfg.auth.api_token = "s3cr3t"
+    clients = service.ProvisionClients(
+        gcp=FakeGCPClient(), github=FakeGitHubClient(), kubectl_for=KubectlFactory()
+    )
+    client = TestClient(create_app(session_factory, clients=clients, config=cfg))
+    hdr = {"Authorization": "Bearer s3cr3t"}
+
+    assert client.get(f"/api/v1/apps/{app_id}/usage").status_code == 401
+    r = client.get(f"/api/v1/apps/{app_id}/usage", headers=hdr)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["since_days"] == cfg.sizing.history_days
+    assert body["environments"]["prod"]["profiles"][0]["memory"]["p99"] == "340Mi"
+    assert client.get(f"/api/v1/apps/{app_id}/usage?env=prod&since_days=7",
+                      headers=hdr).json()["since_days"] == 7
+    assert client.get(f"/api/v1/apps/{app_id}/usage?env=ghost", headers=hdr).status_code == 404
+    assert client.get("/api/v1/apps/999/usage", headers=hdr).status_code == 404
+    assert client.get(f"/api/v1/apps/{app_id}/usage?since_days=0", headers=hdr).status_code == 422
+    assert client.get(f"/api/v1/apps/{app_id}/usage?since_days=91", headers=hdr).status_code == 422
