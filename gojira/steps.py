@@ -391,6 +391,7 @@ class GenerateArtifacts:
             # seed the contract the setup PR proposes for review.
             old_deployment = ctx.workdir / "k8s" / "base" / "deployment.yaml"
             if old_deployment.exists():
+                ctx.adopted = True  # human content: MergeSetupPr refuses to auto-merge
                 inferred = infer_app_needs(old_deployment.read_text())
                 if inferred:
                     spec = spec.model_copy(update=inferred)
@@ -591,6 +592,17 @@ class MergeSetupPr:
             return "auto-merge not requested"
         if not ctx.app.setup_pr_url:
             return "no setup PR to merge"
+        if ctx.adopted:
+            # Finding #22: a programmatic caller asked for auto-merge on a
+            # repo it did NOT author — hand-built manifests, no contract. The
+            # one-click contract above only waives review for repos with no
+            # human content; this one regenerates a human's k8s/ (and can
+            # rename their objects out from under other overlays). The PR
+            # stays open for a person; the app waits in awaiting_pr.
+            log.warning("auto-merge refused for %s: adopted a repo with hand-built "
+                        "manifests; the setup PR %s needs a human review",
+                        ctx.app.name, ctx.app.setup_pr_url)
+            return "auto-merge refused: adopted hand-built manifests, review the setup PR"
         return None
 
     def apply(self, ctx: ProvisionContext) -> str:
