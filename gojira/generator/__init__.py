@@ -326,7 +326,22 @@ def apply_resource_overrides(
     return updated
 
 
-def preserve_patches(existing_text: str, rendered_text: str, keep_path=None) -> str:
+class _BlockDumper(yaml.SafeDumper):
+    """Multi-line strings as `|` blocks, so a preserved inline patch reads in
+    the overlay exactly the way its author wrote it."""
+
+
+def _str_presenter(dumper, data):
+    style = "|" if "\n" in data else None
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=style)
+
+
+_BlockDumper.add_representer(str, _str_presenter)
+
+
+def preserve_patches(
+    existing_text: str, rendered_text: str, keep_path=None, keep_target=None
+) -> str:
     """Carry an existing kustomization's `patches:` into a fresh render.
 
     Regenerating an overlay must not discard operator-owned state: drift
@@ -334,10 +349,18 @@ def preserve_patches(existing_text: str, rendered_text: str, keep_path=None) -> 
     overlay kustomization, and a blind overwrite silently reverts them on
     re-onboard — the exact thing the design forbids (design.md:26).
 
-    `keep_path(path) -> bool` lets the caller drop patches whose target no
-    longer exists in the render (an app rename orphans them, and kustomize
-    hard-fails the whole build on an orphaned patch — found live). Default:
-    keep everything.
+    kustomize accepts two shapes of entry and both are carried whole: a file
+    patch (`path:`) and an inline one (`target:` + `patch:`). The first
+    brownfield repo this ran on wrote its ConfigMap wiring inline, and the
+    old `p['path']` here raised KeyError before the setup PR existed
+    (2026-09-25). An entry that is neither is not a patch kustomize would
+    build either, and is dropped with a log line rather than crashing.
+
+    `keep_path(path) -> bool` and `keep_target(kind, name) -> bool` let the
+    caller drop patches whose target no longer exists in the render (an app
+    rename orphans them, and kustomize hard-fails the whole build on an
+    orphaned patch — found live). An inline patch whose target names no
+    kind and name (label selectors only) is kept. Default: keep everything.
 
     The block is appended textually so the render's comments survive. Only
     `patches` is preserved: every other field is Gojira's to regenerate.
@@ -351,20 +374,44 @@ def preserve_patches(existing_text: str, rendered_text: str, keep_path=None) -> 
         return rendered_text
 
     rendered = yaml.safe_load(rendered_text) or {}
-    have = {p.get("path") for p in rendered.get("patches", []) if isinstance(p, dict)}
-    keep = [
-        p for p in patches
-        if isinstance(p, dict) and p.get("path") not in have
-        and (keep_path is None or keep_path(p.get("path", "")))
-    ]
+    rendered_patches = [p for p in rendered.get("patches", []) if isinstance(p, dict)]
+    have_paths = {str(p["path"]) for p in rendered_patches if p.get("path") is not None}
+    have_inline = [(p.get("target"), p.get("patch")) for p in rendered_patches if "patch" in p]
+
+    keep: list[dict] = []
+    seen_paths: set[str] = set()
+    seen_inline: list[tuple] = []
+    for p in patches:
+        if not isinstance(p, dict):
+            continue
+        if p.get("path") is not None:
+            path = str(p["path"])
+            if path in have_paths or path in seen_paths:
+                continue
+            if keep_path is not None and not keep_path(path):
+                continue
+            seen_paths.add(path)
+            keep.append(p)
+        elif "patch" in p:
+            key = (p.get("target"), p.get("patch"))
+            if key in have_inline or key in seen_inline:
+                continue
+            target = p.get("target") if isinstance(p.get("target"), dict) else {}
+            kind, name = target.get("kind"), target.get("name")
+            if keep_target is not None and kind and name and not keep_target(str(kind), str(name)):
+                continue
+            seen_inline.append(key)
+            keep.append(p)
+        else:
+            log.warning("dropping kustomization patch entry with neither path nor patch: %r", p)
     if not keep:
         return rendered_text
 
-    lines = ["patches:"]
-    for p in keep:
-        lines.append(f"  - path: {p['path']}")
+    block = yaml.dump(
+        {"patches": keep}, Dumper=_BlockDumper, sort_keys=False, default_flow_style=False
+    )
     sep = "" if rendered_text.endswith("\n") else "\n"
-    return f"{rendered_text}{sep}" + "\n".join(lines) + "\n"
+    return f"{rendered_text}{sep}{block}"
 
 
 def preserve_resources(existing_text: str, rendered_text: str, file_exists) -> str:
