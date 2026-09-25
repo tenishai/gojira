@@ -444,7 +444,6 @@ class GenerateArtifacts:
                     keep_path=lambda p, d=target.parent: _patch_targets_rendered(
                         d / p, rendered_targets
                     ),
-                    keep_target=lambda k, n: _inline_target_rendered(k, n, rendered_targets),
                 )
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content)
@@ -484,15 +483,6 @@ def _preserved_targets(base_dir, kustomization_text: str) -> set[tuple[str, str]
         except (OSError, yaml.YAMLError):
             continue
     return targets
-
-
-def _inline_target_rendered(kind: str, name: str, rendered: set[tuple[str, str]]) -> bool:
-    """The inline-patch twin of `_patch_targets_rendered`: the target is named
-    in the entry itself, so there is no file to read and nothing to fail open on."""
-    keep = (kind, name) in rendered
-    if not keep:
-        log.info("dropping orphaned inline patch (targets %s/%s, no longer rendered)", kind, name)
-    return keep
 
 
 def _patch_targets_rendered(patch_path, rendered: set[tuple[str, str]]) -> bool:
