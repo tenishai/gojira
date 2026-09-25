@@ -102,6 +102,13 @@ def test_observe_job_spec_and_summary(session):
     assert job["spec"]["activeDeadlineSeconds"] == 900
     assert job["spec"]["ttlSecondsAfterFinished"] == 600
     assert container["securityContext"]["readOnlyRootFilesystem"] is True
+    # The pod, not just the image, names the uid: without runAsUser/fsGroup the
+    # kubelet leaves the projected token 0600 root-owned, argus's uid 10001
+    # cannot read it, and kubectl in the Job dials localhost:8080 instead of
+    # the API server (the first live run's "platform record unreadable").
+    sc = pod["securityContext"]
+    assert sc["runAsNonRoot"] is True
+    assert (sc["runAsUser"], sc["runAsGroup"], sc["fsGroup"]) == (10001, 10001, 10001)
 
     steps = _step_rows(session, app)
     assert steps["observe@dev"].status == "done"
