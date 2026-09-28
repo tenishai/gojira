@@ -84,11 +84,11 @@ spec:
 {% if cls.limits.gpu %}
               nvidia.com/gpu: {{ cls.limits.gpu }}
 {% endif %}
-{% if "readiness" in cls.probes %}
+{% if "readiness" in probes %}
           readinessProbe:
-{% if cls.probes["readiness"].type == "http" %}
+{% if probes["readiness"].type == "http" %}
             httpGet:
-              path: {{ cls.probes["readiness"].path }}
+              path: {{ probes["readiness"].path }}
               port: http
 {% else %}
             tcpSocket:
@@ -97,11 +97,11 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
 {% endif %}
-{% if "liveness" in cls.probes %}
+{% if "liveness" in probes %}
           livenessProbe:
-{% if cls.probes["liveness"].type == "http" %}
+{% if probes["liveness"].type == "http" %}
             httpGet:
-              path: {{ cls.probes["liveness"].path }}
+              path: {{ probes["liveness"].path }}
               port: http
 {% else %}
             tcpSocket:

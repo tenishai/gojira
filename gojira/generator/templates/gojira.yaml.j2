@@ -30,6 +30,12 @@ env:
 {% if spec.data_mount %}
 data_mount: { pvc: {{ spec.data_mount.pvc }}, path: {{ spec.data_mount.path }}, fs_group: {{ spec.data_mount.fs_group }} }
 {% endif %}
+{% if spec.port != 8080 %}
+port: {{ spec.port }}
+{% endif %}
+{% if spec.health %}
+health: {{ spec.health }}
+{% endif %}
 {% if spec.admin_port %}
 admin_port: {{ spec.admin_port }}
 {% endif %}
