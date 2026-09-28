@@ -504,3 +504,70 @@ def test_admin_port_ignores_nonsense_values():
     # equal to the app port: a duplicate containerPort whose admin Service
     # would route to the data-plane listener
     assert "admin_port" not in read_app_needs("admin_port: 8080")
+
+
+# --- port + health: the app's listener is its own (2026-09-28) --------------------
+
+def test_port_and_health_render_and_round_trip():
+    """A Go proxy on 9000 answering /alive is hosted as it is: containerPort,
+    both http probes and the contract carry the app's values; the class keeps
+    its probe shape. read_app_needs(render(spec)) gives the values back."""
+    files = render(spec().model_copy(update={"workload_class": "web", "port": 9000, "health": "/alive"}))
+    dep = yaml.safe_load(files["k8s/base/deployment.yaml"])
+    c0 = dep["spec"]["template"]["spec"]["containers"][0]
+    assert c0["ports"][0] == {"name": "http", "containerPort": 9000}
+    assert c0["readinessProbe"]["httpGet"]["path"] == "/alive"
+    assert c0["livenessProbe"]["httpGet"]["path"] == "/alive"
+    assert "port: 9000" in files["gojira.yaml"] and "health: /alive" in files["gojira.yaml"]
+    got = read_app_needs(files["gojira.yaml"])
+    assert got["port"] == 9000 and got["health"] == "/alive"
+
+
+def test_defaults_stay_the_class_opinion():
+    files = render(spec().model_copy(update={"workload_class": "web"}))
+    assert "port:" not in files["gojira.yaml"] and "health:" not in files["gojira.yaml"]
+    dep = yaml.safe_load(files["k8s/base/deployment.yaml"])
+    c0 = dep["spec"]["template"]["spec"]["containers"][0]
+    assert c0["ports"][0]["containerPort"] == 8080
+    assert c0["readinessProbe"]["httpGet"]["path"] == "/health"
+
+
+def test_port_and_health_reject_junk():
+    """`port: true`, an out-of-range port, a relative health path: ignored,
+    never rendered. admin_port equal to the app's real port is ignored too."""
+    assert "port" not in read_app_needs("port: true\n")
+    assert "port" not in read_app_needs("port: 70000\n")
+    assert "health" not in read_app_needs("health: alive\n")
+    assert read_app_needs("port: 9000\nadmin_port: 9000\n") == {"port": 9000}
+    import pytest
+
+    with pytest.raises(ValueError):
+        spec(port=9000, admin_port=9000)
+
+
+def test_infer_reads_port_and_health_from_the_running_deployment():
+    """Adopt mode: a foreign app on port 9000 with /alive probes comes in with
+    its own contract — no SDK or runtime change to be hosted."""
+    from gojira.generator import infer_app_needs
+
+    text = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: segment-proxy }
+spec:
+  template:
+    spec:
+      containers:
+        - name: proxy
+          image: x
+          ports:
+            - containerPort: 9000
+          readinessProbe:
+            httpGet: { path: /alive, port: 9000 }
+          livenessProbe:
+            httpGet: { path: /alive, port: 9000 }
+"""
+    got = infer_app_needs(text)
+    assert got["port"] == 9000 and got["health"] == "/alive"
+    # an app on the default port with no http probes infers neither
+    assert not {"port", "health"} & set(infer_app_needs(text.replace("9000", "8080").replace("readinessProbe", "x").replace("livenessProbe", "y")))
