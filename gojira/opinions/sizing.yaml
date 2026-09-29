@@ -13,6 +13,10 @@ ephemeral_storage:
   limits: 8Gi
 
 classes:
+  # Probe paths and port 8080 are DEFAULTS: an app that listens elsewhere or
+  # answers /alive says so in gojira.yaml (`port:`, `health:`), and adopt mode
+  # reads both from the deployment it already runs. The probe *shape* (http vs
+  # tcp, which probes exist) is the class opinion.
   web:
     requests: { cpu: 250m, memory: 256Mi }
     limits: { cpu: 500m, memory: 512Mi }

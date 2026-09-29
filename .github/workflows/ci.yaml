@@ -1,5 +1,9 @@
 name: ci
 
+# CI_RUNNER (repo variable) names a self-hosted runner label (spark, an arm64
+# box); unset, jobs fall back to GitHub-hosted ubuntu-latest. Tests, kustomize
+# and terraform validate are arch-neutral; images build in Cloud Build.
+
 on:
   pull_request:
   push:
@@ -7,21 +11,21 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]"
-      - run: ruff check gojira tests
-      - run: pytest -q
+      - run: rm -rf .venv && python -m venv .venv && .venv/bin/pip install -q -e ".[dev]"  # fresh per job: self-hosted workspaces persist
+      - run: .venv/bin/ruff check gojira tests
+      - run: .venv/bin/pytest -q
 
   scripts:
     # Every script must at least parse; the deploy manifests must render.
     # The install path (bootstrap.sh + deploy/) had drifted apart unnoticed for
     # six weeks before this job existed — see tests/test_deploy_contract.py.
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - run: for f in scripts/*.sh; do bash -n "$f"; done
@@ -29,9 +33,11 @@ jobs:
       - run: kubectl kustomize deploy/ingress/ > /dev/null
 
   terraform:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false  # the wrapper needs a `node` on PATH; self-hosted runners don't expose theirs
       - run: terraform -chdir=terraform init -backend=false -input=false
       - run: terraform -chdir=terraform validate

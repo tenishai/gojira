@@ -89,9 +89,11 @@ has measured your app, Gojira writes that justification for you. All opinions
 live in [`gojira/opinions/`](gojira/opinions/) — visible, documented,
 overridable. That's the point of the tool.
 
-Every Gojira app serves HTTP on **8080** with `/health` and `/metrics`. That
-uniformity is what makes generated probes and scrape configs work with zero
-per-app configuration.
+By default an app serves HTTP on **8080** with `/health` and `/metrics`, so
+probes and scrape configs need zero per-app configuration. An app that
+listens elsewhere or answers `/alive` says so in `gojira.yaml` (`port:`,
+`health:`), and adopt mode reads both from the deployment it already runs:
+nothing about an app's SDK or runtime decides whether Gojira can host it.
 
 ## Quickstart
 
