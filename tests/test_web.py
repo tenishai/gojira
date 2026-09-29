@@ -1008,3 +1008,39 @@ def test_api_sync_requires_configured_token(session_factory, clients):
     app_id = client.post("/api/v1/apps", json=_api_body(), headers={"Authorization": "Bearer s3cr3t"}).json()["id"]
     assert client.post(f"/api/v1/apps/{app_id}/sync").status_code == 401
     assert client.post(f"/api/v1/apps/{app_id}/sync", headers={"Authorization": "Bearer s3cr3t"}).status_code == 200
+
+
+# --- list routes: what uninstall (and any other machine) walks ----------------
+
+
+def test_api_list_apps_names_every_app_and_where_it_runs(client, session_factory):
+    _register_three(session_factory)
+    assert client.get("/api/v1/apps").json() == {"apps": []}
+    first = client.post("/api/v1/apps", json=_api_body()).json()["id"]
+    second = client.post(
+        "/api/v1/apps",
+        json=_api_body(name="web", repo_full_name="acme/web", workload_class="web",
+                       environments=[{"name": "dev", "cluster": "dev", "namespace": ""}]),
+    ).json()["id"]
+
+    apps = client.get("/api/v1/apps").json()["apps"]
+    assert [a["id"] for a in apps] == [first, second]
+    assert apps[0]["repo_full_name"] == "acme/agent-clio"
+    assert apps[0]["environments"] == [{"name": "dev", "cluster": "dev", "namespace": "clio"}]
+    assert apps[1]["environments"][0]["namespace"] == "web"  # blank = the app name
+
+
+def test_api_list_clusters(client, session_factory):
+    _register_three(session_factory)
+    clusters = client.get("/api/v1/clusters").json()["clusters"]
+    assert {c["name"] for c in clusters} >= {"dev"}
+    assert {"name", "gcp_project", "location", "gke_cluster", "ar_repo"} == set(clusters[0])
+
+
+def test_api_list_routes_are_token_gated(session_factory, clients):
+    cfg = Config()
+    cfg.auth.api_token = "s3cr3t"
+    client = TestClient(create_app(session_factory, clients=clients, config=cfg))
+    for path in ("/api/v1/apps", "/api/v1/clusters"):
+        assert client.get(path).status_code == 401
+        assert client.get(path, headers={"Authorization": "Bearer s3cr3t"}).status_code == 200

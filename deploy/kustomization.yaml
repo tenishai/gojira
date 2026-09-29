@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
+  - priorityclass.yaml
   - serviceaccount.yaml
   - configmap.yaml
   - pvc.yaml

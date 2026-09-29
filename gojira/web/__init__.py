@@ -469,6 +469,50 @@ def create_app(
         )
         return JSONResponse({"id": app_obj.id, "status": status}, status_code=201)
 
+    @app.get("/api/v1/apps")
+    def api_list_apps(request: Request, session: Session = Depends(get_session)):
+        # What is connected, and where it runs. scripts/uninstall.sh walks
+        # this to remove every app while Gojira still knows what it created.
+        if err := auth.api_token_error(request, request.app.state.config.auth):
+            return err
+        return JSONResponse(
+            {
+                "apps": [
+                    {
+                        "id": a.id,
+                        "name": a.name,
+                        "repo_full_name": a.repo_full_name,
+                        "workload_class": a.workload_class,
+                        "status": a.status,
+                        "environments": [
+                            {"name": e.name, "cluster": e.cluster.name, "namespace": e.namespace}
+                            for e in a.environments
+                        ],
+                    }
+                    for a in sorted(service.list_apps(session), key=lambda a: a.id)
+                ]
+            }
+        )
+
+    @app.get("/api/v1/clusters")
+    def api_list_clusters(request: Request, session: Session = Depends(get_session)):
+        if err := auth.api_token_error(request, request.app.state.config.auth):
+            return err
+        return JSONResponse(
+            {
+                "clusters": [
+                    {
+                        "name": c.name,
+                        "gcp_project": c.gcp_project,
+                        "location": c.location,
+                        "gke_cluster": c.gke_cluster,
+                        "ar_repo": c.ar_repo,
+                    }
+                    for c in service.list_clusters(session)
+                ]
+            }
+        )
+
     @app.get("/api/v1/apps/{app_id}")
     def api_app_status(app_id: int, request: Request, session: Session = Depends(get_session)):
         if err := auth.api_token_error(request, request.app.state.config.auth):
