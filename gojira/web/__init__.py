@@ -537,6 +537,23 @@ def create_app(
         )
         return JSONResponse({"id": app_id, "status": "provisioning"}, status_code=202)
 
+    @app.post("/api/v1/apps/{app_id}/sync")
+    def api_sync(app_id: int, request: Request, session: Session = Depends(get_session)):
+        # The automation-tier twin of the UI's "check PR merge" button. A
+        # caller that parked an app on a person (kobo's connected-repo
+        # pipeline, 2026-09-29) needs a way to ask "has the setup PR merged?"
+        # that does not depend on the webhook being wired — on installs
+        # without it, GET /api/v1/apps/{id} reads the DB and would say
+        # awaiting_pr forever. Cheap: one GitHub read, no provisioning.
+        if err := auth.api_token_error(request, request.app.state.config.auth):
+            return err
+        app_obj = session.get(models.App, app_id)
+        if app_obj is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        changed = service.sync_app(session, app_id, request.app.state.clients.github)
+        session.refresh(app_obj)
+        return JSONResponse({"id": app_id, "status": app_obj.status, "changed": bool(changed)})
+
     class DeleteAppIn(BaseModel):
         delete_namespaces: bool = True
         teardown_identity: bool = True
