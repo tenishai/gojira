@@ -30,3 +30,8 @@ htmlcov/
 .vscode/
 *.swp
 .DS_Store
+# Terraform (sandbox/dogfood runs from this tree; state stays local, never in git)
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/terraform.tfvars
