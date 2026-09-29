@@ -218,3 +218,66 @@ def test_image_digest_other_failure_raises():
     runner = FakeRunner(CommandResult(1, "", "PERMISSION_DENIED"))
     with pytest.raises(GCPError, match="tags list"):
         GcloudClient(runner=runner).image_digest("r/x", "t")
+
+
+# --- identity pools: deleted is not gone ----------------------------------------
+
+
+class ScriptedRunner:
+    """Answers by verb: the first of describe/create/undelete found in the args."""
+
+    def __init__(self, answers: dict[str, CommandResult]):
+        self.answers = answers
+        self.calls: list[list[str]] = []
+
+    def run(self, args, stdin=None):
+        self.calls.append(args)
+        verb = next(a for a in args if a in self.answers)
+        return self.answers[verb]
+
+    def verbs(self) -> list[str]:
+        return [next(a for a in c if a in self.answers) for c in self.calls]
+
+
+OK = CommandResult(0, "", "")
+NOT_FOUND = CommandResult(1, "", "ERROR: NOT_FOUND: Requested entity was not found.")
+
+
+def test_a_deleted_pool_does_not_count_as_existing():
+    """describe answers for a soft-deleted pool; the provisioner used to read
+    that as "exists", skip the create, and then fail on the provider."""
+    gone = ScriptedRunner({"describe": CommandResult(0, "DELETED\n", "")})
+    assert GcloudClient(runner=gone).wif_pool_exists("p", "gojira") is False
+    live = ScriptedRunner({"describe": CommandResult(0, "ACTIVE\n", "")})
+    assert GcloudClient(runner=live).wif_pool_exists("p", "gojira") is True
+    never = ScriptedRunner({"describe": NOT_FOUND})
+    assert GcloudClient(runner=never).wif_pool_exists("p", "gojira") is False
+
+
+def test_creating_a_deleted_pool_restores_it():
+    runner = ScriptedRunner(
+        {"describe": CommandResult(0, "DELETED\n", ""), "undelete": OK, "create": OK}
+    )
+    GcloudClient(runner=runner).create_wif_pool("p", "gojira", "Gojira")
+    assert runner.verbs() == ["describe", "undelete"]  # create would say ALREADY_EXISTS
+    assert runner.calls[1][:4] == ["gcloud", "iam", "workload-identity-pools", "undelete"]
+
+
+def test_creating_a_pool_that_never_existed_creates_it():
+    runner = ScriptedRunner({"describe": NOT_FOUND, "undelete": OK, "create": OK})
+    GcloudClient(runner=runner).create_wif_pool("p", "gojira", "Gojira")
+    assert runner.verbs() == ["describe", "create"]
+    assert "--display-name=Gojira" in runner.calls[1]
+
+
+def test_a_deleted_provider_is_restored_and_a_new_one_created():
+    runner = ScriptedRunner(
+        {"describe": CommandResult(0, "DELETED\n", ""), "undelete": OK, "create-oidc": OK}
+    )
+    GcloudClient(runner=runner).create_wif_provider("p", "gojira", "github", "acme")
+    assert runner.verbs() == ["describe", "undelete"]
+
+    runner = ScriptedRunner({"describe": NOT_FOUND, "undelete": OK, "create-oidc": OK})
+    GcloudClient(runner=runner).create_wif_provider("p", "gojira", "github", "acme")
+    assert runner.verbs() == ["describe", "create-oidc"]
+    assert "--attribute-condition=assertion.repository_owner == 'acme'" in runner.calls[1]
