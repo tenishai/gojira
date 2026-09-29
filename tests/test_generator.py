@@ -265,11 +265,19 @@ def test_ci_check_computes_the_same_hash_as_the_generator(tmp_path):
     sha = wf["env"]["GOJIRA_CONTRACT"]
     assert sha == contract_fingerprint(files["gojira.yaml"])
 
+    # `python3` on the snippet's PATH is this interpreter (it has PyYAML, a
+    # gojira dependency) — the shape of a GitHub-hosted runner, where python3
+    # ships with yaml. On a self-hosted runner setup-python's pristine build
+    # came first and the fallback pip install decided the test, not the hash.
+    import sys
+    path = f"{os.path.dirname(sys.executable)}:{os.environ['PATH']}"
+
     def run(contract: str) -> int:
         (tmp_path / "gojira.yaml").write_text(contract)
         return subprocess.run(
             ["bash", "-e", "-c", step["run"]], cwd=tmp_path,
-            env={"PATH": os.environ["PATH"], "GOJIRA_CONTRACT": sha}, capture_output=True,
+            env={"PATH": path, "HOME": os.environ.get("HOME", str(tmp_path)), "GOJIRA_CONTRACT": sha},
+            capture_output=True,
         ).returncode
 
     assert run(files["gojira.yaml"]) == 0

@@ -40,7 +40,7 @@ jobs:
         # these manifests were rendered from — same canonical hash as
         # gojira.generator.contract_fingerprint. Fail here, before a build.
         run: |
-          python3 -c 'import yaml' 2>/dev/null || pip install -q pyyaml
+          python3 -c 'import yaml' 2>/dev/null || python3 -m pip install -q pyyaml
           actual=$(python3 -c 'import hashlib, json, yaml; doc = yaml.safe_load(open("gojira.yaml")); print(hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest())')
           if [ "$actual" != "$GOJIRA_CONTRACT" ]; then
             echo "::error::k8s/ and workflows are stale for this gojira.yaml (contract $actual, manifests rendered from $GOJIRA_CONTRACT). Merge Gojira's setup PR, or press Provision again, then redeploy."
@@ -136,7 +136,7 @@ jobs:
         # these manifests were rendered from — same canonical hash as
         # gojira.generator.contract_fingerprint. Fail here, before a build.
         run: |
-          python3 -c 'import yaml' 2>/dev/null || pip install -q pyyaml
+          python3 -c 'import yaml' 2>/dev/null || python3 -m pip install -q pyyaml
           actual=$(python3 -c 'import hashlib, json, yaml; doc = yaml.safe_load(open("gojira.yaml")); print(hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest())')
           if [ "$actual" != "$GOJIRA_CONTRACT" ]; then
             echo "::error::k8s/ and workflows are stale for this gojira.yaml (contract $actual, manifests rendered from $GOJIRA_CONTRACT). Merge Gojira's setup PR, or press Provision again, then redeploy."

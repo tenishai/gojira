@@ -120,10 +120,18 @@ class: web
 cluster: my-dev-cluster          # must match a Gojira-registered cluster
 namespace: clips
 environments: [dev, qa, prod]
+port: 9000                       # optional; the class default is 8080
+health: /alive                   # optional; the class's http probe path otherwise
 overrides:                       # optional; justification required
   requests: { cpu: "1", memory: "1Gi" }
   justification: "p99 CPU is 800m measured over 14 days"
 ```
+
+Every class opinion is a default with an override. Port and health path were
+constants until 2026-09-28; an app on another port or path had to change
+itself to be hosted, which contradicts the goal (deploy, measure, rightsize
+any app without the team writing pipeline YAML). Adopt mode infers both from
+the deployment the app already runs.
 
 ### Workload classes — the opinion
 

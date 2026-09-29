@@ -122,6 +122,15 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
         needs["service_account"] = str(doc["service_account"])
     if isinstance(doc.get("env"), dict):
         needs["env_vars"] = {str(k): str(v) for k, v in doc["env"].items()}
+    # The app's own listener and health path (2026-09-28: port 8080 and the
+    # class's probe path had been constants, so any app that listened
+    # elsewhere or answered /alive had to change itself to be hosted —
+    # the opposite of the design goal). Class opinions stay the defaults.
+    if _is_port(doc.get("port")) and doc["port"] != APP_PORT:
+        needs["port"] = doc["port"]
+    health = doc.get("health")
+    if isinstance(health, str) and health.startswith("/"):
+        needs["health"] = health
     raw_admin = doc.get("admin_port")
     # bool is an int in Python, so `admin_port: true` would render
     # `containerPort: True` and break every apply until hand-fixed; and an
@@ -129,12 +138,7 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
     # whose {app}-admin Service routes to the data-plane listener - the
     # shared-listener accident this field exists to prevent. Both get the
     # absent/unusable -> ignore treatment (review findings on #43).
-    if (
-        isinstance(raw_admin, int)
-        and not isinstance(raw_admin, bool)
-        and 0 < raw_admin < 65536
-        and raw_admin != APP_PORT
-    ):
+    if _is_port(raw_admin) and raw_admin != needs.get("port", APP_PORT):
         needs["admin_port"] = raw_admin
     mount = doc.get("data_mount")
     if isinstance(mount, dict) and mount.get("pvc") and mount.get("path"):
@@ -143,6 +147,10 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
             **({"fs_group": int(mount["fs_group"])} if str(mount.get("fs_group", "")).isdigit() else {}),
         )
     return needs
+
+
+def _is_port(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and 0 < value < 65536
 
 
 def read_app_class(gojira_yaml_text: str) -> str | None:
@@ -192,6 +200,16 @@ def infer_app_needs(deployment_text: str) -> dict:
     needs: dict = {}
     if pod.get("serviceAccountName"):
         needs["service_account"] = str(pod["serviceAccountName"])
+    # The listener and health path the app already runs with — so a foreign
+    # app is hosted as it is, on whatever SDK or runtime it has.
+    ports = [p.get("containerPort") for p in c0.get("ports") or [] if isinstance(p, dict)]
+    if ports and _is_port(ports[0]) and ports[0] != APP_PORT:
+        needs["port"] = ports[0]
+    for probe in ("readinessProbe", "livenessProbe"):
+        path = ((c0.get(probe) or {}).get("httpGet") or {}).get("path")
+        if isinstance(path, str) and path.startswith("/"):
+            needs["health"] = path
+            break
     secrets = [
         e["secretRef"]["name"]
         for e in c0.get("envFrom") or []
@@ -255,9 +273,20 @@ class GeneratorSpec(BaseModel):
     # caller decision, never a shared-listener accident. The app port stays
     # the only port the main Service routes.
     admin_port: int | None = None
+    # The app's listener and http health path. Class opinions are the
+    # defaults (8080; /health or /healthz per class); the contract overrides
+    # them, and adopt mode reads them from the deployment the app already runs.
+    port: int = APP_PORT
+    health: str = ""  # empty: the class's probe path
 
     @model_validator(mode="after")
     def validate_spec(self):
+        if not _is_port(self.port):
+            raise ValueError(f"port must be 1-65535, got {self.port!r}")
+        if self.health and not self.health.startswith("/"):
+            raise ValueError(f"health must be an absolute path, got {self.health!r}")
+        if self.admin_port == self.port:
+            raise ValueError("admin_port must differ from the app port")
         if self.workload_class not in WORKLOAD_CLASSES:
             raise ValueError(
                 f"unknown workload class {self.workload_class!r}, "
@@ -528,11 +557,18 @@ def render(spec: GeneratorSpec) -> dict[str, str]:
             setattr(cls.requests, key, value)
         for key, value in spec.overrides.limits.items():
             setattr(cls.limits, key, value)
+    # Effective probes: the class's shape (http/tcp, which probes exist),
+    # with the contract's health path where the class probes over http.
+    probes = {
+        name: (p.model_copy(update={"path": spec.health}) if spec.health and p.type == "http" else p)
+        for name, p in cls.probes.items()
+    }
     ctx = {
         "spec": spec,
         "cls": cls,
+        "probes": probes,
         "ephemeral": sizing.ephemeral_storage,
-        "port": APP_PORT,
+        "port": spec.port,
         "is_cron": spec.workload_class == "cron",
         "has_service": _has_service(cls),
     }
