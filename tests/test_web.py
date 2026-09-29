@@ -974,3 +974,37 @@ def test_rollback_banner_renders_with_revert_button(client, session_factory):
     assert "Open revert PR" in r.text
     assert f"/apps/{app_id}/revert-pr" in r.text
     assert ("c" * 12) in r.text
+
+
+def test_api_sync_advances_a_merged_setup_pr(client, session_factory, clients):
+    """The automation-tier "check PR merge": a caller that parked an app on a
+    person (a connected repo in kobo) asks whether the setup PR merged. On an
+    install without the webhook, the status read alone says awaiting_pr for
+    ever — this is the pull that answers it, with one GitHub read."""
+    _register_three(session_factory)
+    app_id = client.post("/api/v1/apps", json=_api_body()).json()["id"]
+    status = _settle(client, app_id)
+    assert status["status"] == "awaiting_pr"
+
+    resp = client.post(f"/api/v1/apps/{app_id}/sync")
+    assert resp.json() == {"id": app_id, "status": "awaiting_pr", "changed": False}
+
+    clients.github._repo_ever_merged = True  # a person merged it (sync_app asks repo history)
+    resp = client.post(f"/api/v1/apps/{app_id}/sync")
+    assert resp.json() == {"id": app_id, "status": "active", "changed": True}
+    assert client.get(f"/api/v1/apps/{app_id}").json()["status"] == "active"
+
+
+def test_api_sync_unknown_id_404(client, session_factory):
+    _register_three(session_factory)
+    assert client.post("/api/v1/apps/999/sync").status_code == 404
+
+
+def test_api_sync_requires_configured_token(session_factory, clients):
+    cfg = Config()
+    cfg.auth.api_token = "s3cr3t"
+    client = TestClient(create_app(session_factory, clients=clients, config=cfg))
+    _register_three(session_factory)
+    app_id = client.post("/api/v1/apps", json=_api_body(), headers={"Authorization": "Bearer s3cr3t"}).json()["id"]
+    assert client.post(f"/api/v1/apps/{app_id}/sync").status_code == 401
+    assert client.post(f"/api/v1/apps/{app_id}/sync", headers={"Authorization": "Bearer s3cr3t"}).status_code == 200
