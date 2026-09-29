@@ -83,8 +83,15 @@ resource "google_project_iam_member" "gojira" {
 }
 
 # Workload Identity: let the in-cluster KSA impersonate the GSA.
+# The <project>.svc.id.goog identity pool comes into being with the first
+# Workload-Identity cluster; nothing in this binding's own arguments names the
+# cluster, so without depends_on terraform applies it first and IAM answers
+# "Identity Pool does not exist". Hit on the first apply into a fresh
+# project (dogfood, 2026-09-29); a second apply then succeeded.
 resource "google_service_account_iam_member" "wi" {
   service_account_id = google_service_account.gojira.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${var.project_id}.svc.id.goog[${var.gojira_namespace}/${var.gojira_ksa}]"
+
+  depends_on = [google_container_cluster.sandbox]
 }
