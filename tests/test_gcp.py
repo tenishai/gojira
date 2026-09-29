@@ -83,7 +83,9 @@ def test_remove_project_binding_other_failure_raises():
 
 
 def test_delete_service_account_happy_path():
-    runner = RecordingRunner()
+    runner = RecordingRunner(
+        results={"list": CommandResult(0, "sa@p.iam.gserviceaccount.com\n", "")}
+    )
     client = GcloudClient(runner=runner)
 
     deleted = client.delete_service_account("p", "sa@p.iam.gserviceaccount.com")
@@ -91,8 +93,8 @@ def test_delete_service_account_happy_path():
     assert deleted is True
     assert runner.calls == [
         [
-            "gcloud", "iam", "service-accounts", "describe", "sa@p.iam.gserviceaccount.com",
-            "--project=p", "--format=value(email)",
+            "gcloud", "iam", "service-accounts", "list", "--project=p",
+            "--filter=email=sa@p.iam.gserviceaccount.com", "--format=value(email)",
         ],
         [
             "gcloud", "iam", "service-accounts", "delete", "sa@p.iam.gserviceaccount.com",
@@ -102,20 +104,31 @@ def test_delete_service_account_happy_path():
 
 
 def test_delete_service_account_absent_issues_no_delete_call():
-    runner = RecordingRunner(
-        results={
-            "describe": CommandResult(
-                1, "", "ERROR: (gcloud.iam.service-accounts.describe) NOT_FOUND: "
-                "Service account sa@p.iam.gserviceaccount.com does not exist."
-            )
-        }
-    )
+    runner = RecordingRunner(results={"list": CommandResult(0, "", "")})
     client = GcloudClient(runner=runner)
 
     deleted = client.delete_service_account("p", "sa@p.iam.gserviceaccount.com")
 
     assert deleted is False
-    assert len(runner.calls) == 1  # describe only, no delete issued
+    assert len(runner.calls) == 1  # list only, no delete issued
+
+
+def test_a_recently_deleted_service_account_does_not_exist():
+    """describe says PERMISSION_DENIED for one, to the owner too; the check
+    must not ask describe. list leaves it out, and so answers the question."""
+    runner = RecordingRunner(
+        results={
+            "describe": CommandResult(
+                1, "", "ERROR: PERMISSION_DENIED: Permission 'iam.serviceAccounts.get' "
+                "denied on resource (or it may not exist)."
+            ),
+            "list": CommandResult(0, "", ""),
+        }
+    )
+    client = GcloudClient(runner=runner)
+
+    assert client.service_account_exists("p", "sa@p.iam.gserviceaccount.com") is False
+    assert "describe" not in runner.calls[0]
 
 
 # --- teardown: delete_app_images ----------------------------------------------
