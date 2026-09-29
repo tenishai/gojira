@@ -989,7 +989,7 @@ def test_api_sync_advances_a_merged_setup_pr(client, session_factory, clients):
     resp = client.post(f"/api/v1/apps/{app_id}/sync")
     assert resp.json() == {"id": app_id, "status": "awaiting_pr", "changed": False}
 
-    clients.github.merged_urls.add(status["setup_pr_url"])  # a person merged it
+    clients.github._repo_ever_merged = True  # a person merged it (sync_app asks repo history)
     resp = client.post(f"/api/v1/apps/{app_id}/sync")
     assert resp.json() == {"id": app_id, "status": "active", "changed": True}
     assert client.get(f"/api/v1/apps/{app_id}").json()["status"] == "active"
