@@ -47,6 +47,9 @@ overrides:
 {% if spec.overrides.limits %}
   limits: { {% for k, v in spec.overrides.limits | dictsort %}{{ k }}: "{{ v }}"{% if not loop.last %}, {% endif %}{% endfor %} }
 {% endif %}
+{% if spec.overrides.hpa %}
+  hpa: { {% for k in ["min", "max", "cpu", "memory"] if spec.overrides.hpa[k] is not none %}{{ k }}: {{ spec.overrides.hpa[k] }}{% if not loop.last %}, {% endif %}{% endfor %} }
+{% endif %}
   justification: {{ spec.overrides.justification | tojson }}
 {% else %}
 # overrides:                  # needs a justification — see docs

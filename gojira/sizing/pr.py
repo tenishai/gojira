@@ -17,7 +17,7 @@ from pathlib import Path
 import yaml
 from sqlalchemy.orm import Session
 
-from gojira.generator import apply_resource_overrides, stamp_contract
+from gojira.generator import apply_resource_overrides, read_overrides, stamp_contract
 from gojira.github import GitHubClient
 from gojira.models import App, RecommendationStatus, SizingRecommendation
 
@@ -28,11 +28,16 @@ log = logging.getLogger(__name__)
 _OVERRIDES_BLOCK = re.compile(r"^overrides:\n(?:[ \t].*\n|\n)*", re.MULTILINE)
 
 
-def render_overrides_block(proposed: dict, justification: str) -> str:
+def render_overrides_block(proposed: dict, justification: str, hpa=None) -> str:
     """The overrides block for gojira.yaml from a recommendation's proposal.
 
     `proposed` is the recommendation's proposed_json shape:
     {"cpu": {"request": "800m", "limit": "1250m"}, ...}
+
+    `hpa` is the app's existing overrides.hpa (HpaOverride), if any: the
+    sizing loop rewrites the whole block, and a scaling bound the team set
+    must not vanish because a request was resized (finding #9's shape,
+    one key over).
     """
     requests = {res: v["request"] for res, v in proposed.items()}
     limits = {res: v["limit"] for res, v in proposed.items()}
@@ -42,10 +47,16 @@ def render_overrides_block(proposed: dict, justification: str) -> str:
         # and "1" (one core) is a string in the k8s quantity dialect.
         return "{ " + ", ".join(f'{k}: "{v}"' for k, v in sorted(d.items())) + " }"
 
+    hpa_line = ""
+    if hpa is not None:
+        fields = {k: getattr(hpa, k) for k in ("min", "max", "cpu", "memory") if getattr(hpa, k) is not None}
+        if fields:
+            hpa_line = "  hpa: { " + ", ".join(f"{k}: {v}" for k, v in fields.items()) + " }\n"
     return (
         "overrides:\n"
         f"  requests: {inline(requests)}\n"
         f"  limits: {inline(limits)}\n"
+        f"{hpa_line}"
         f"  justification: {json.dumps(justification)}\n"
     )
 
@@ -94,7 +105,8 @@ def open_override_pr(
         return None
 
     proposed = json.loads(rec.proposed_json)
-    block = render_overrides_block(proposed, rec.justification)
+    current = read_overrides(spec_path.read_text())
+    block = render_overrides_block(proposed, rec.justification, hpa=current.hpa if current else None)
     spec_path.write_text(apply_overrides(spec_path.read_text(), block))
     restamp_workflows(workdir)
 
