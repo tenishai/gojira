@@ -293,16 +293,25 @@ class GcloudClient(GCPClient):
         # Registry role carries. We asked for a digest and got a security
         # report's ACL instead (first rollback dogfood, 2026-09-17). tags
         # list answers from AR alone, covered by reader and up.
+        # gcloud's `tag:` filter is a prefix match (tag:dev listed three rows
+        # on the live registry, 2026-09-29), and the old value(version) output
+        # would have joined them into one newline-riddled "digest" — a broken
+        # image ref, or a wrong pin. Ask for the tag column too and pick the
+        # exact tag ourselves.
         result = self._run([
             self._gcloud, "artifacts", "docker", "tags", "list", image,
-            f"--filter=tag:{tag}", "--format=value(version)",
+            f"--filter=tag:{tag}", "--format=value(tag,version)",
         ])
         if result.returncode != 0:
             err = result.stderr or ""
             if "not found" in err.lower() or "NOT_FOUND" in err:
                 return None
             raise GCPError(f"tags list {image}:{tag} failed: {err}")
-        return result.stdout.strip() or None
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[0] == tag:
+                return parts[1]
+        return None
     def get_gke_credentials(self, project: str, location: str, cluster: str) -> str:
         # The pipeline has already ensured DNS access (ensure_cluster_dns_access);
         # the default endpoint form writes a private IP that is unreachable
