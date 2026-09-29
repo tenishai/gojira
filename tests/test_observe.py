@@ -102,10 +102,11 @@ def test_observe_job_spec_and_summary(session):
     assert job["spec"]["activeDeadlineSeconds"] == 900
     assert job["spec"]["ttlSecondsAfterFinished"] == 600
     assert container["securityContext"]["readOnlyRootFilesystem"] is True
-    # The pod, not just the image, names the uid: without runAsUser/fsGroup the
-    # kubelet leaves the projected token 0600 root-owned, argus's uid 10001
-    # cannot read it, and kubectl in the Job dials localhost:8080 instead of
-    # the API server (the first live run's "platform record unreadable").
+    # The pod, not just the image, names the uid — pinned like every other
+    # token-reading workload on the estate. (The first theory, that an unpinned
+    # uid left the projected token unreadable and caused the first live run's
+    # "platform record unreadable", was falsified — see the pinning commit's
+    # message; the pin stayed as hardening.)
     sc = pod["securityContext"]
     assert sc["runAsNonRoot"] is True
     assert (sc["runAsUser"], sc["runAsGroup"], sc["fsGroup"]) == (10001, 10001, 10001)
