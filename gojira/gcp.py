@@ -208,28 +208,53 @@ class GcloudClient(GCPClient):
 
     # --- workload identity federation ----------------------------------------
 
-    def wif_pool_exists(self, project: str, pool: str) -> bool:
-        return self._exists(
-            "iam", "workload-identity-pools", "describe", pool,
-            "--location=global", f"--project={project}", "--format=value(name)",
+    def _wif_state(self, *describe: str) -> str | None:
+        """ACTIVE, DELETED, or None for never-existed. A deleted pool or
+        provider is kept for 30 days: describe still answers (state DELETED)
+        and create answers ALREADY_EXISTS, so "describe succeeded" is not
+        "exists" — seen on the first reinstall after an uninstall --purge
+        (2026-09-29). Within those 30 days the way back is undelete."""
+        result = self._run([self._gcloud, *describe, "--format=value(state)"])
+        if result.returncode == 0:
+            return result.stdout.strip() or "ACTIVE"
+        if "NOT_FOUND" in result.stderr or "not found" in result.stderr.lower():
+            return None
+        raise GCPError(f"gcloud {' '.join(describe)} failed: {result.stderr}")
+
+    def _pool_args(self, verb: str, project: str, pool: str) -> tuple[str, ...]:
+        return (
+            "iam", "workload-identity-pools", verb, pool,
+            "--location=global", f"--project={project}",
         )
 
+    def _provider_args(self, verb: str, project: str, pool: str, provider: str) -> tuple[str, ...]:
+        return (
+            "iam", "workload-identity-pools", "providers", verb, provider,
+            f"--workload-identity-pool={pool}", "--location=global", f"--project={project}",
+        )
+
+    def wif_pool_exists(self, project: str, pool: str) -> bool:
+        return self._wif_state(*self._pool_args("describe", project, pool)) == "ACTIVE"
+
     def create_wif_pool(self, project: str, pool: str, display_name: str) -> None:
+        if self._wif_state(*self._pool_args("describe", project, pool)) == "DELETED":
+            self._exec(*self._pool_args("undelete", project, pool))
+            return
         self._exec(
-            "iam", "workload-identity-pools", "create", pool,
-            "--location=global", f"--display-name={display_name}", f"--project={project}",
+            *self._pool_args("create", project, pool), f"--display-name={display_name}"
         )
 
     def wif_provider_exists(self, project: str, pool: str, provider: str) -> bool:
-        return self._exists(
-            "iam", "workload-identity-pools", "providers", "describe", provider,
-            f"--workload-identity-pool={pool}", "--location=global",
-            f"--project={project}", "--format=value(name)",
-        )
+        state = self._wif_state(*self._provider_args("describe", project, pool, provider))
+        return state == "ACTIVE"
 
     def create_wif_provider(
         self, project: str, pool: str, provider: str, allowed_owner: str
     ) -> None:
+        describe = self._provider_args("describe", project, pool, provider)
+        if self._wif_state(*describe) == "DELETED":
+            self._exec(*self._provider_args("undelete", project, pool, provider))
+            return
         # The attribute-condition restricts token issuance to one GitHub owner —
         # defense in depth on top of the per-repo principalSet binding. v0.1
         # assumes one GitHub owner/org per Gojira install.
