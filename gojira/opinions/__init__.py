@@ -22,6 +22,9 @@ class HPA(BaseModel):
     target_cpu_percent: int
     min_replicas: int
     max_replicas: int
+    # No class sets this; gojira.yaml's overrides.hpa.memory can. A memory
+    # target scales on the resource many proxies and caches actually exhaust.
+    target_memory_percent: int | None = None
 
 
 class Probe(BaseModel):

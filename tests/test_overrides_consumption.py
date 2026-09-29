@@ -106,3 +106,46 @@ def test_rendered_gojira_yaml_round_trips_overrides():
     assert back == ov
     # and without overrides, the commented example remains for humans
     assert "# overrides:" in render(_spec())["gojira.yaml"]
+
+
+# --- overrides.hpa: the app's own bounds over the class's scaling shape ------
+
+def test_hpa_override_renders_bounds_and_memory_target():
+    """A proxy that runs 30-500 replicas on CPU 60% and memory 70% is a web
+    app with its own bounds, not a new class."""
+    from gojira.generator import HpaOverride, Overrides
+
+    ov = Overrides(hpa=HpaOverride(min=30, max=500, cpu=60, memory=70), justification="prod traffic")
+    files = render(_spec(overrides=ov).model_copy(update={"workload_class": "web"}))
+    hpa = yaml.safe_load(files["k8s/base/hpa.yaml"])
+    assert hpa["spec"]["minReplicas"] == 30 and hpa["spec"]["maxReplicas"] == 500
+    metrics = {m["resource"]["name"]: m["resource"]["target"]["averageUtilization"] for m in hpa["spec"]["metrics"]}
+    assert metrics == {"cpu": 60, "memory": 70}
+    assert "hpa: { min: 30, max: 500, cpu: 60, memory: 70 }" in files["gojira.yaml"]
+    assert read_overrides(files["gojira.yaml"]).hpa == ov.hpa  # round trip
+
+
+def test_hpa_override_partial_keeps_class_for_the_rest():
+    from gojira.generator import HpaOverride, Overrides
+
+    files = render(_spec(overrides=Overrides(hpa=HpaOverride(max=40), justification="x"))
+                   .model_copy(update={"workload_class": "web"}))
+    hpa = yaml.safe_load(files["k8s/base/hpa.yaml"])
+    assert (hpa["spec"]["minReplicas"], hpa["spec"]["maxReplicas"]) == (2, 40)  # web min stays
+    assert [m["resource"]["name"] for m in hpa["spec"]["metrics"]] == ["cpu"]  # no memory metric
+
+
+def test_hpa_override_ignored_where_the_class_does_not_scale():
+    """The agent class is one Socket Mode consumer; a bound cannot make it two."""
+    from gojira.generator import HpaOverride, Overrides
+
+    files = render(_spec(overrides=Overrides(hpa=HpaOverride(min=2, max=5), justification="x"))
+                   .model_copy(update={"workload_class": "agent"}))
+    assert "k8s/base/hpa.yaml" not in files
+
+
+def test_read_overrides_hpa_rejects_junk():
+    assert read_overrides("overrides:\n  hpa: { min: true, max: 5 }\n").hpa.min is None
+    assert read_overrides("overrides:\n  hpa: { min: 10, max: 5 }\n").hpa is None   # min > max
+    assert read_overrides("overrides:\n  hpa: { cpu: 150 }\n").hpa is None           # not a percent
+    assert read_overrides("overrides:\n  hpa: nonsense\n").hpa is None

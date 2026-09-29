@@ -267,3 +267,17 @@ def test_open_pr_flow_retires_drift_patch(session, app_rec, tmp_path):
     res = doc["spec"]["template"]["spec"]["containers"][0]["resources"]
     assert "cpu" not in res.get("requests", {})       # PROPOSED covers cpu only
     assert res["requests"]["memory"] == "768Mi"       # memory not proposed -> kept
+
+
+def test_sizing_pr_block_carries_the_apps_hpa_bounds():
+    """The sizing loop rewrites the whole overrides block; the team's
+    scaling bounds must survive a request resize."""
+    from gojira.generator import HpaOverride, read_overrides
+    from gojira.sizing.pr import apply_overrides, render_overrides_block
+
+    before = "app: x\nclass: web\noverrides:\n  requests: { cpu: \"1\" }\n  hpa: { min: 30, max: 500, memory: 70 }\n  justification: \"old\"\n"
+    block = render_overrides_block({"cpu": {"request": "800m", "limit": "1250m"}}, "measured", hpa=read_overrides(before).hpa)
+    after = apply_overrides(before, block)
+    got = read_overrides(after)
+    assert got.requests == {"cpu": "800m"} and got.hpa == HpaOverride(min=30, max=500, memory=70)
+    assert got.justification == "measured"
