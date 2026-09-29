@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m venv .venv && .venv/bin/pip install -q -e ".[dev]"
+      - run: rm -rf .venv && python -m venv .venv && .venv/bin/pip install -q -e ".[dev]"  # fresh per job: self-hosted workspaces persist
       - run: .venv/bin/ruff check gojira tests
       - run: .venv/bin/pytest -q
 
