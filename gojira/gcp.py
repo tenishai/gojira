@@ -194,10 +194,17 @@ class GcloudClient(GCPClient):
     # --- service accounts ----------------------------------------------------
 
     def service_account_exists(self, project: str, email: str) -> bool:
-        return self._exists(
-            "iam", "service-accounts", "describe", email,
-            f"--project={project}", "--format=value(email)",
+        # list, not describe. For a service account deleted in the recent
+        # past describe answers PERMISSION_DENIED "(or it may not exist)" —
+        # to the project's owner as well — where a name never used answers
+        # NOT_FOUND. An app removed and connected again could not get its
+        # identity back (cinder, 2026-07-27; the dogfood reinstall,
+        # 2026-09-29). list simply leaves the deleted account out.
+        out = self._exec(
+            "iam", "service-accounts", "list", f"--project={project}",
+            f"--filter=email={email}", "--format=value(email)",
         )
+        return email in out.split()
 
     def create_service_account(self, project: str, account_id: str, display_name: str) -> str:
         self._exec(
