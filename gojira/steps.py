@@ -821,12 +821,11 @@ def _observe_job(name, ocfg, cfg, contract_yaml, sha, env_name) -> dict:
                 "restartPolicy": "Never",
                 "securityContext": {
                     "runAsNonRoot": True,
-                    # The uid argus's Dockerfile runs as. Stated here, not left
-                    # to the image, because the kubelet writes the projected SA
-                    # token 0600 root-owned unless the POD names a runAsUser or
-                    # fsGroup; an image-level USER cannot read it, kubectl then
-                    # falls back to localhost:8080 and every observe fails with
-                    # "platform record unreadable" (first live run, 2026-09-25).
+                    # Pinned like every other token-reading workload on the estate. (The
+                    # first theory — that without a pod-level uid the projected token was
+                    # unreadable, causing the first live run's "platform record
+                    # unreadable" — was falsified; see this pin's commit message. The pin
+                    # stayed as hardening.)
                     "runAsUser": ARGUS_IMAGE_UID,
                     "runAsGroup": ARGUS_IMAGE_UID,
                     "fsGroup": ARGUS_IMAGE_UID,
