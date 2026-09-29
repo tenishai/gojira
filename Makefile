@@ -1,4 +1,4 @@
-.PHONY: venv dev install test lint check build run preflight clean
+.PHONY: venv dev install uninstall test lint check build run preflight clean
 
 VENV := venv
 # env -u PYTHONPATH: a globally-set PYTHONPATH leaks foreign packages into
@@ -14,6 +14,11 @@ dev: venv
 # Install Gojira into your cluster from gojira.env (cp gojira.env.example).
 install:
 	./scripts/install.sh
+
+# Remove Gojira again, in the order that works. ARGS="--purge --yes", or
+# ARGS=--check to only list what an install left behind.
+uninstall:
+	./scripts/uninstall.sh $(ARGS)
 
 test:
 	$(PY) -m pytest -q

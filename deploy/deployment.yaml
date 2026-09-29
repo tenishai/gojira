@@ -20,6 +20,8 @@ spec:
         app.kubernetes.io/name: gojira
     spec:
       serviceAccountName: gojira
+      # See priorityclass.yaml: evicted after tenants, never evicts one.
+      priorityClassName: gojira-platform
       # The Service is named "gojira", so K8s would inject the Docker-links var
       # GOJIRA_PORT=tcp://<clusterIP>:80 — clobbering the app's numeric port env.
       enableServiceLinks: false
