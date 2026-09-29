@@ -188,7 +188,7 @@ def test_image_digest_uses_tags_list_not_describe():
     """images describe smuggles a Container Analysis call
     (containeranalysis.occurrences.list) into a digest lookup — a permission
     no AR role carries. First rollback dogfood finding, 2026-09-17."""
-    runner = FakeRunner(CommandResult(0, "sha256:abc123\n", ""))
+    runner = FakeRunner(CommandResult(0, "cafe12\tsha256:abc123\n", ""))
     client = GcloudClient(runner=runner)
 
     digest = client.image_digest("us-east4-docker.pkg.dev/p/apps/web", "cafe12")
@@ -196,8 +196,17 @@ def test_image_digest_uses_tags_list_not_describe():
     args = runner.calls[0][0]
     assert args[:5] == ["gcloud", "artifacts", "docker", "tags", "list"]
     assert "describe" not in args
-    assert "--filter=tag:cafe12" in args and "--format=value(version)" in args
+    assert "--filter=tag:cafe12" in args and "--format=value(tag,version)" in args
     assert digest == "sha256:abc123"
+
+
+def test_image_digest_picks_the_exact_tag_among_prefix_matches():
+    """gcloud's tag: filter is a prefix match. Live, 2026-09-29: tag:dev
+    returned three rows, and value(version) alone would have produced a
+    three-line 'digest'. The exact tag wins; a prefix-only match is None."""
+    rows = "cafe12ab\tsha256:wrong1\ncafe12\tsha256:right\ncafe1200\tsha256:wrong2\n"
+    assert GcloudClient(runner=FakeRunner(CommandResult(0, rows, ""))).image_digest("r/x", "cafe12") == "sha256:right"
+    assert GcloudClient(runner=FakeRunner(CommandResult(0, "cafe12ab\tsha256:wrong1\n", ""))).image_digest("r/x", "cafe12") is None
 
 
 def test_image_digest_not_found_returns_none():
