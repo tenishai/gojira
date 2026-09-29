@@ -124,6 +124,7 @@ port: 9000                       # optional; the class default is 8080
 health: /alive                   # optional; the class's http probe path otherwise
 overrides:                       # optional; justification required
   requests: { cpu: "1", memory: "1Gi" }
+  hpa: { min: 30, max: 500, cpu: 60, memory: 70 }   # any subset; classes with an HPA only
   justification: "p99 CPU is 800m measured over 14 days"
 ```
 

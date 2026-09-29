@@ -26,6 +26,11 @@ manifests, resource specs, auth plumbing. The results are inconsistent,
 over-provisioned, and expensive to change org-wide. Gojira makes those
 decisions for you — visibly, with an escape hatch for justified overrides.
 
+Every opinion is a default with an override: sizing through
+`overrides.requests`/`limits`, scaling bounds and targets through
+`overrides.hpa` (`min`, `max`, `cpu`, `memory` percent), the listener and
+health path through `port:` and `health:`. All justified, all in `gojira.yaml`.
+
 Three opinions define it:
 
 1. **The platform decides sizing.** Workload classes (`web`, `worker`,

@@ -58,15 +58,55 @@ class EnvSpec(BaseModel):
         return self.ar_repo.split("/")[0]
 
 
+class HpaOverride(BaseModel):
+    """overrides.hpa: the app's own scaling bounds and targets, any subset.
+
+    Honored only where the class opinion has an HPA (web, heavy); a class
+    that must not scale (agent: one Socket Mode consumer) ignores it. A Go
+    proxy that runs 30-500 replicas on CPU and memory is a web app, not a
+    new class — the bounds are the app's, the shape is the platform's.
+    """
+
+    min: int | None = None
+    max: int | None = None
+    cpu: int | None = None     # target CPU utilization, percent
+    memory: int | None = None  # target memory utilization, percent
+
+    @model_validator(mode="after")
+    def validate_bounds(self):
+        for name in ("min", "max"):
+            v = getattr(self, name)
+            if v is not None and v < 1:
+                raise ValueError(f"hpa.{name} must be >= 1")
+        if self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError("hpa.min must be <= hpa.max")
+        for name in ("cpu", "memory"):
+            v = getattr(self, name)
+            if v is not None and not 1 <= v <= 100:
+                raise ValueError(f"hpa.{name} must be a percent, 1-100")
+        return self
+
+    def apply(self, hpa):
+        """The class HPA with these bounds laid over it."""
+        return hpa.model_copy(update={
+            k: v for k, v in {
+                "min_replicas": self.min, "max_replicas": self.max,
+                "target_cpu_percent": self.cpu, "target_memory_percent": self.memory,
+            }.items() if v is not None
+        })
+
+
 class Overrides(BaseModel):
     """gojira.yaml's justified escape hatch, as the generator consumes it.
 
-    Only cpu/memory land here — the sizing loop doesn't touch gpu or
-    ephemeral-storage. Unknown keys in the file are ignored, not errors.
+    Only cpu/memory land in requests/limits — the sizing loop doesn't touch
+    gpu or ephemeral-storage. Unknown keys in the file are ignored, not
+    errors.
     """
 
     requests: dict[str, str] = {}
     limits: dict[str, str] = {}
+    hpa: HpaOverride | None = None
     justification: str = ""
 
 
@@ -80,9 +120,21 @@ def read_overrides(gojira_yaml_text: str) -> Overrides | None:
     if not isinstance(raw, dict):
         return None
     keep = {"cpu", "memory"}
+    hpa = None
+    raw_hpa = raw.get("hpa")
+    if isinstance(raw_hpa, dict):
+        ints = {
+            k: raw_hpa[k] for k in ("min", "max", "cpu", "memory")
+            if isinstance(raw_hpa.get(k), int) and not isinstance(raw_hpa.get(k), bool)
+        }
+        try:
+            hpa = HpaOverride(**ints) if ints else None
+        except ValueError:
+            hpa = None  # unusable bounds are ignored, like every other junk key
     return Overrides(
         requests={k: str(v) for k, v in (raw.get("requests") or {}).items() if k in keep},
         limits={k: str(v) for k, v in (raw.get("limits") or {}).items() if k in keep},
+        hpa=hpa,
         justification=str(raw.get("justification") or ""),
     )
 
@@ -557,6 +609,8 @@ def render(spec: GeneratorSpec) -> dict[str, str]:
             setattr(cls.requests, key, value)
         for key, value in spec.overrides.limits.items():
             setattr(cls.limits, key, value)
+        if spec.overrides.hpa is not None and cls.hpa is not None:
+            cls.hpa = spec.overrides.hpa.apply(cls.hpa)
     # Effective probes: the class's shape (http/tcp, which probes exist),
     # with the contract's health path where the class probes over http.
     probes = {
