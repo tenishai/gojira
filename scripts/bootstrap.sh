@@ -115,7 +115,23 @@ sed -i.bak "s#REPLACE_AR_PATH#${AR_PATH}#" "$TMP/kustomization.yaml"
 rm -f "$TMP"/*.bak
 kubectl apply -k "$TMP"
 
-step "5/5 wait for Gojira to come up"
+step "5/5 roll onto the image just built, then wait for Gojira to come up"
+# Gojira's own image ships under the mutable :dev tag, so a rebuild with no
+# manifest change is an apply no-op and the old pod keeps running the old
+# image (#37's shape, on our own install — found 2026-09-25). Compare the
+# digest the registry holds for the tag with the digest the pod is running
+# and restart when they differ. `tags list` is pure Artifact Registry
+# (describe pays Container Analysis's toll, #47).
+# gcloud's tag: filter is a prefix match (tag:dev also lists dev-…, and
+# other rows besides) — select the exact tag ourselves.
+WANT="$(gcloud artifacts docker tags list "${AR_PATH}/gojira" --filter=tag:dev \
+  --format='value(tag,version)' --project "$PROJECT" 2>/dev/null | awk '$1=="dev"{print $2; exit}')"
+HAVE="$(kubectl -n gojira get pods -l app.kubernetes.io/name=gojira \
+  -o jsonpath='{.items[0].status.containerStatuses[0].imageID}' 2>/dev/null | sed 's/.*@//')"
+if [ -n "$WANT" ] && [ "$WANT" != "$HAVE" ]; then
+  echo "rolling: registry has ${WANT:0:19}, pod runs ${HAVE:0:19}"
+  kubectl -n gojira rollout restart deploy/gojira
+fi
 kubectl -n gojira rollout status deploy/gojira --timeout=300s
 
 if [ -n "${GOJIRA_HOSTNAME:-}" ]; then
