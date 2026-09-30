@@ -50,7 +50,7 @@ spec:
           env:
 {% for k, v in spec.env_vars | dictsort %}
             - name: {{ k }}
-              value: {{ v | tojson }}
+              value: {{ v | quoted }}
 {% endfor %}
 {% endif %}
 {% if spec.secrets_from or spec.config_from %}

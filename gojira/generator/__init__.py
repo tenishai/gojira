@@ -38,6 +38,17 @@ _env = Environment(
 )
 
 
+def _quoted(value) -> str:
+    """A YAML double-quoted scalar. Jinja's tojson is for HTML: it writes
+    '>' as \\u003e, which YAML reads correctly and a person reads as
+    damage — a sizing justification's "250m -> 50m" came out as
+    "250m -\\u003e 50m" on a setup PR (gojira-demo, 2026-09-30)."""
+    return json.dumps(value, ensure_ascii=False)
+
+
+_env.filters["quoted"] = _quoted
+
+
 class EnvSpec(BaseModel):
     """One environment's deploy target + project-scoped identity."""
 

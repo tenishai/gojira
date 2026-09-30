@@ -149,3 +149,17 @@ def test_read_overrides_hpa_rejects_junk():
     assert read_overrides("overrides:\n  hpa: { min: 10, max: 5 }\n").hpa is None   # min > max
     assert read_overrides("overrides:\n  hpa: { cpu: 150 }\n").hpa is None           # not a percent
     assert read_overrides("overrides:\n  hpa: nonsense\n").hpa is None
+
+
+def test_rendered_strings_are_yaml_not_html():
+    """'>' and non-ASCII survive as themselves in gojira.yaml and the
+    Deployment's env — quoted for YAML, not escaped for a browser."""
+    spec = _spec()
+    spec.overrides = Overrides(
+        requests={"cpu": "50m"}, justification="p99 45m over 14d; request 250m -> 50m — ok"
+    )
+    spec.env_vars = {"GREETING": "<hi> & bye"}
+    out = render(spec)
+    assert "\\u003e" not in out["gojira.yaml"] and "250m -> 50m — ok" in out["gojira.yaml"]
+    assert "\\u003c" not in out["k8s/base/deployment.yaml"]
+    assert read_overrides(out["gojira.yaml"]).justification == spec.overrides.justification
