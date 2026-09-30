@@ -70,7 +70,24 @@ gcloud container clusters get-credentials "$CLUSTER" --region "$REGION" --projec
 
 step "2/5 build + push image via Cloud Build (avoids the ARM/amd64 trap)"
 gcloud services enable cloudbuild.googleapis.com --project "$PROJECT" --quiet
-gcloud builds submit --tag "${AR_PATH}/gojira:dev" --project "$PROJECT" "$REPO_ROOT"
+# A project that has never built before answers PERMISSION_DENIED — to its own
+# owner — for about a minute after the API is enabled, while Google grants the
+# build service its identity (first install into a fresh project, 2026-09-29).
+# Wait and retry that one error; any other failure is the build's own.
+BUILD_LOG="$(mktemp)"
+for attempt in 1 2 3; do
+  if gcloud builds submit --tag "${AR_PATH}/gojira:dev" --project "$PROJECT" "$REPO_ROOT" \
+      2>&1 | tee "$BUILD_LOG"; then
+    break
+  fi
+  if [ "$attempt" = 3 ] || ! grep -q PERMISSION_DENIED "$BUILD_LOG"; then
+    rm -f "$BUILD_LOG"
+    echo "error: Cloud Build failed" >&2; exit 1
+  fi
+  echo "Cloud Build is not ready in this project yet — waiting 45s (attempt $attempt of 3)"
+  sleep 45
+done
+rm -f "$BUILD_LOG"
 
 step "3/5 namespace + Gojira secret"
 kubectl create namespace gojira --dry-run=client -o yaml | kubectl apply -f -
@@ -128,7 +145,10 @@ WANT="$(gcloud artifacts docker tags list "${AR_PATH}/gojira" --filter=tag:dev \
   --format='value(tag,version)' --project "$PROJECT" 2>/dev/null | awk '$1=="dev"{print $2; exit}')"
 HAVE="$(kubectl -n gojira get pods -l app.kubernetes.io/name=gojira \
   -o jsonpath='{.items[0].status.containerStatuses[0].imageID}' 2>/dev/null | sed 's/.*@//')"
-if [ -n "$WANT" ] && [ "$WANT" != "$HAVE" ]; then
+# No digest on the pod = nothing has run yet (first install): the pod being
+# created pulls what was just built (imagePullPolicy: Always), so a restart
+# would only kill it mid-pull.
+if [ -n "$WANT" ] && [ -n "$HAVE" ] && [ "$WANT" != "$HAVE" ]; then
   echo "rolling: registry has ${WANT:0:19}, pod runs ${HAVE:0:19}"
   kubectl -n gojira rollout restart deploy/gojira
 fi
@@ -196,9 +216,9 @@ Gojira is running. Reach the UI:
   open http://localhost:8080
 
 Then register your cluster (Clusters page):
-  name: sandbox   gcp_project: ${PROJECT}   location: ${REGION}   gke_cluster: ${CLUSTER}
+  name: ${CLUSTER}   gcp_project: ${PROJECT}   location: ${REGION}   gke_cluster: ${CLUSTER}
 
-and connect a repo (Connect page). Full walkthrough: docs/dogfood.md
+and connect a repo (Connect page). Full walkthrough: docs/install.md
 
 Secrets minted for you (stable across reruns):
   webhook secret — set it on the GitHub App's webhook (Settings → Webhook):
