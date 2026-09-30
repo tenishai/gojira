@@ -32,7 +32,8 @@ jobs:
 {% if not loop.first %}
     needs: deploy-{{ spec.promote_envs[loop.index0 - 1].name }}
 {% endif %}
-    runs-on: ubuntu-latest
+    # A repo or org variable CI_RUNNER names a self-hosted runner label; unset, GitHub's.
+    runs-on: {{ "${{ vars.CI_RUNNER || 'ubuntu-latest' }}" }}
 {% if env.gated %}
     environment: production
 {% endif %}

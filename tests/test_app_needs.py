@@ -749,3 +749,59 @@ def test_adopt_infers_file_mounts_from_the_deployment_the_app_runs():
     assert needs["data_mount"].pvc == "pr-reviewer-cache"  # untouched by the new inference
     rendered = render(spec(**needs))
     assert read_app_needs(rendered["gojira.yaml"])["config_mounts"] == needs["config_mounts"]
+
+
+# --- arch: the image's platform and the node it lands on (2026-09-30) ----------
+# The dogfood builds on an arm64 machine that cannot emulate amd64, and
+# Autopilot hands out arm64 nodes only to pods that also name its compute
+# class. The contract says the arch; how a cluster provides it is the
+# cluster's, said through node_selector.
+
+
+def test_arm64_renders_platform_selector_and_toleration():
+    files = render(spec(arch="arm64", node_selector={"cloud.google.com/compute-class": "Scale-Out"}))
+    pod, _ = _first_container(files)
+    assert pod["nodeSelector"] == {
+        "kubernetes.io/arch": "arm64", "cloud.google.com/compute-class": "Scale-Out",
+    }
+    assert pod["tolerations"] == [
+        {"key": "kubernetes.io/arch", "operator": "Equal", "value": "arm64", "effect": "NoSchedule"}
+    ]
+    assert "docker build --platform linux/arm64 " in files[".github/workflows/gojira-ci.yaml"]
+    contract = files["gojira.yaml"]
+    assert "arch: arm64" in contract and "cloud.google.com/compute-class" in contract
+    needs = read_app_needs(contract)
+    assert needs["arch"] == "arm64" and needs["node_selector"] == {"cloud.google.com/compute-class": "Scale-Out"}
+
+
+def test_amd64_is_the_quiet_default():
+    files = render(spec())
+    pod, _ = _first_container(files)
+    assert "nodeSelector" not in pod and "tolerations" not in pod
+    assert "arch:" not in files["gojira.yaml"]
+    assert "docker build --platform linux/amd64 " in files[".github/workflows/gojira-ci.yaml"]
+    assert read_app_needs("arch: sparc\n") == {}  # not an arch we build: ignored, not rendered
+
+
+def test_adopt_infers_arch_and_selector_from_the_running_deployment():
+    from gojira.generator import infer_app_needs
+
+    needs = infer_app_needs("""
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: fast}
+spec:
+  template:
+    spec:
+      nodeSelector: {kubernetes.io/arch: arm64, cloud.google.com/gke-nodepool: axion}
+      containers: [{name: app, image: fast:latest}]
+""")
+    assert needs["arch"] == "arm64"
+    assert needs["node_selector"] == {"cloud.google.com/gke-nodepool": "axion"}  # arch is said once
+
+
+def test_every_generated_workflow_takes_the_runner_from_a_variable():
+    files = render(spec_class("web"))  # web has both workflows: ci and promote
+    for path, text in files.items():
+        if path.startswith(".github/workflows/"):
+            assert "runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}" in text, path

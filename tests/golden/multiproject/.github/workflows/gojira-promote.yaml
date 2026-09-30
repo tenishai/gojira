@@ -25,7 +25,8 @@ env:
 
 jobs:
   deploy-qa:
-    runs-on: ubuntu-latest
+    # A repo or org variable CI_RUNNER names a self-hosted runner label; unset, GitHub's.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       IMAGE: us-central1-docker.pkg.dev/example-project/apps/clips-api
     steps:
@@ -120,7 +121,8 @@ jobs:
 
   deploy-prod:
     needs: deploy-qa
-    runs-on: ubuntu-latest
+    # A repo or org variable CI_RUNNER names a self-hosted runner label; unset, GitHub's.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     environment: production
     env:
       IMAGE: us-central1-docker.pkg.dev/prod-project/apps/clips-api
