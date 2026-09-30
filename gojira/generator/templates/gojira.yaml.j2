@@ -24,7 +24,7 @@ config_from: [{{ spec.config_from | join(", ") }}]
 {% if spec.env_vars %}
 env:
 {% for k, v in spec.env_vars | dictsort %}
-  {{ k }}: {{ v | tojson }}
+  {{ k }}: {{ v | quoted }}
 {% endfor %}
 {% endif %}
 {% if spec.data_mount %}
@@ -50,7 +50,7 @@ overrides:
 {% if spec.overrides.hpa %}
   hpa: { {% for k in ["min", "max", "cpu", "memory"] if spec.overrides.hpa[k] is not none %}{{ k }}: {{ spec.overrides.hpa[k] }}{% if not loop.last %}, {% endif %}{% endfor %} }
 {% endif %}
-  justification: {{ spec.overrides.justification | tojson }}
+  justification: {{ spec.overrides.justification | quoted }}
 {% else %}
 # overrides:                  # needs a justification — see docs
 #   requests: { cpu: "1", memory: 1Gi }
