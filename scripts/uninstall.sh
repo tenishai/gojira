@@ -51,7 +51,7 @@ PROJECT="${PROJECT:?set PROJECT in gojira.env (or the environment)}"
 REGION="${REGION:-us-central1}"
 CLUSTER="${CLUSTER:-gojira-sandbox}"
 GSA="gojira@${PROJECT}.iam.gserviceaccount.com"
-TF_DIR="$REPO_ROOT/terraform"
+. "$REPO_ROOT/scripts/tf.sh"
 IP_NAME="gojira-ingress-ip"
 POOL="gojira"
 AGENT="gojira-sizing-agent"
@@ -66,7 +66,7 @@ for tool in gcloud kubectl curl python3; do
 done
 
 # Which hand built the platform decides who takes it down.
-if [ -f "$TF_DIR/terraform.tfstate" ] && grep -q "\"project\": \"$PROJECT\"" "$TF_DIR/terraform.tfstate"; then
+if tf_owns_project; then
   MODE=terraform
 elif [ "${GOJIRA_PREPARE_PROJECT:-}" = "1" ]; then
   MODE=prepared
@@ -251,10 +251,7 @@ quiet gcloud projects remove-iam-policy-binding "$PROJECT" --role roles/monitori
 step "4/6 the platform ($MODE)"
 case "$MODE" in
   terraform)
-    command -v terraform >/dev/null || { echo "error: terraform not installed" >&2; exit 1; }
-    # Same identity as every other step, without a second login.
-    export GOOGLE_OAUTH_ACCESS_TOKEN="${GOOGLE_OAUTH_ACCESS_TOKEN:-$(gcloud auth print-access-token)}"
-    terraform -chdir="$TF_DIR" destroy -auto-approve -input=false
+    tf_destroy
     # Volumes of apps whose namespaces were still terminating outlive the
     # cluster. Nothing can mount them now.
     while read -r disk zone; do

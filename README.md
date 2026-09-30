@@ -126,12 +126,12 @@ it opens → push to main. Your app deploys.
 ### Production-shaped sandbox (~20 minutes)
 
 Runs Gojira *in-cluster* under Workload Identity with a GitHub App — the way
-you'd run it for a team. One values file, then two commands:
+you'd run it for a team. One values file, one command each way:
 
 ```bash
-cd terraform && terraform apply        # Autopilot cluster + Gojira's identity
-cd .. && cp gojira.env.example gojira.env   # fill in project, App id, pem path
-make install                           # preflight, image, secrets, manifests, rollout
+cp gojira.env.example gojira.env       # project, App id, pem path, GOJIRA_TERRAFORM=1
+make install                           # cluster, identity, image, secrets, manifests, rollout
+make uninstall                         # all of it gone again, and checked
 ```
 
 Every optional knob — front door hostname and IAP members, Gojira's own
@@ -143,13 +143,13 @@ The full walkthrough — GitHub App setup, connecting a demo app, exercising
 drift capture — is in
 [docs/install.md](docs/install.md). `make uninstall` removes it again, apps
 first and cluster last, and fails if anything of Gojira's is still in the
-project. Rebuilding from nothing is the same two commands; the platform's
-state that matters lives in your repos, and survives.
+project. Rebuilding from nothing is the same command; the platform's state
+that matters lives in your repos, and survives.
 
 ### Existing cluster (brownfield)
 
-Already have a cluster that terraform didn't create? Swap the terraform step
-for [scripts/prepare-project.sh](scripts/prepare-project.sh) — it grants the
+Already have a cluster? Leave `GOJIRA_TERRAFORM` empty and let
+[scripts/prepare-project.sh](scripts/prepare-project.sh) run instead — it grants the
 same platform identity (APIs, GSA, roles, AR, Workload Identity) into your
 existing project, then `bootstrap.sh` proceeds unchanged with `CLUSTER`
 pointed at your cluster:
@@ -158,6 +158,9 @@ pointed at your cluster:
 # in gojira.env: CLUSTER=<your-cluster>  GOJIRA_PREPARE_PROJECT=1
 make install
 ```
+
+`make uninstall` there removes Gojira and its identity, and leaves your
+cluster alone.
 
 ## Feeding the rightsizing loop
 
