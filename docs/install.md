@@ -227,7 +227,7 @@ before installing. For a cluster with no public endpoint also set
 
 ```bash
 make uninstall                       # shows the plan, asks for the project id
-make uninstall ARGS=--check          # changes nothing; lists what Gojira left
+make uninstall ARGS=--check          # changes nothing; lists what Gojira has here
 make uninstall ARGS="--purge --yes"  # everything, no question
 ```
 
