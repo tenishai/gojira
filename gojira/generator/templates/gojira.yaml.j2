@@ -30,6 +30,24 @@ env:
 {% if spec.data_mount %}
 data_mount: { pvc: {{ spec.data_mount.pvc }}, path: {{ spec.data_mount.path }}, fs_group: {{ spec.data_mount.fs_group }} }
 {% endif %}
+{% if spec.config_mounts %}
+config_mounts:                # ConfigMaps read as files (key: one entry as that file)
+{% for m in spec.config_mounts %}
+  - { name: {{ m.name }}, path: {{ m.path }}{% if m.key %}, key: {{ m.key }}{% endif %} }
+{% endfor %}
+{% endif %}
+{% if spec.secret_mounts %}
+secret_mounts:                # Secrets read as files
+{% for m in spec.secret_mounts %}
+  - { name: {{ m.name }}, path: {{ m.path }}{% if m.key %}, key: {{ m.key }}{% endif %} }
+{% endfor %}
+{% endif %}
+{% if spec.build_args %}
+build_args:                   # passed to docker build; in git, so never a secret
+{% for k, v in spec.build_args | dictsort %}
+  {{ k }}: {{ v | quoted }}
+{% endfor %}
+{% endif %}
 {% if spec.port != 8080 %}
 port: {{ spec.port }}
 {% endif %}
