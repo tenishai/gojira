@@ -213,6 +213,7 @@ class FakeGitHubClient(GitHubClient):
             self.prs[SETUP_BRANCH] = existing_pr
         self.cloned = None
         self.branch = None
+        self.variables: dict[tuple[str, str], str] = {}  # (repo, name) -> value
         self.committed = False
         self.pushed = None
         self.tags: list[tuple[str, str, str]] = []  # (repo, tag, sha)
@@ -253,6 +254,12 @@ class FakeGitHubClient(GitHubClient):
     def create_tag(self, repo, tag, sha):
         self.calls.append(f"tag:{tag}")
         self.tags.append((repo, tag, sha))
+
+    def repo_variable(self, repo, name):
+        return self.variables.get((repo, name))
+
+    def set_repo_variable(self, repo, name, value):
+        self.variables[(repo, name)] = value
 
     def dispatch_workflow(self, repo, workflow, ref):
         if self.dispatch_error:

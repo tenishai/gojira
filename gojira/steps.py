@@ -888,6 +888,32 @@ def per_env_steps() -> list[Step]:
     return [EnsureClusterDnsAccess(), EnsureNamespace(), GrantPromoteSourceReader()]
 
 
+class SetCiRunner:
+    """CI_RUNNER on the repo, when the install names a self-hosted label.
+
+    Generated workflows run on `vars.CI_RUNNER || ubuntu-latest`. The
+    variable has to be the repository's own: on GitHub's Free plan an
+    organization variable is listed for a private repo and empty at run
+    time, which cost a whole afternoon on the dogfood (2026-09-30). Nothing
+    to set when the install uses hosted runners.
+    """
+
+    name = "set_ci_runner"
+    VARIABLE = "CI_RUNNER"
+
+    def check(self, ctx: ProvisionContext) -> str | None:
+        want = ctx.config.ci.runner
+        if not want:
+            return "hosted runners"
+        have = _github(ctx).repo_variable(ctx.app.repo_full_name, self.VARIABLE)
+        return f"{self.VARIABLE}={want}" if have == want else None
+
+    def apply(self, ctx: ProvisionContext) -> str:
+        want = ctx.config.ci.runner
+        _github(ctx).set_repo_variable(ctx.app.repo_full_name, self.VARIABLE, want)
+        return f"{self.VARIABLE}={want}"
+
+
 def per_app_steps() -> list[Step]:
-    """The repo flow: clone, render artifacts, open the setup PR, optionally merge it."""
-    return [PrepareWorkdir(), GenerateArtifacts(), OpenSetupPr(), MergeSetupPr()]
+    """The repo flow: clone, render artifacts, the runner variable, open the setup PR, optionally merge it."""
+    return [PrepareWorkdir(), GenerateArtifacts(), SetCiRunner(), OpenSetupPr(), MergeSetupPr()]

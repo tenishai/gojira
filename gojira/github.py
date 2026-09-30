@@ -84,6 +84,16 @@ class GitHubClient(ABC):
         ...
 
     @abstractmethod
+    def repo_variable(self, repo: str, name: str) -> str | None:
+        """An Actions repository variable's value, or None when unset."""
+        ...
+
+    @abstractmethod
+    def set_repo_variable(self, repo: str, name: str, value: str) -> None:
+        """Create or update an Actions repository variable."""
+        ...
+
+    @abstractmethod
     def default_branch(self, repo: str) -> str: ...
 
     @abstractmethod
@@ -244,6 +254,16 @@ class GhCLI(_LocalGit, GitHubClient):
             [self._gh, "api", "-X", "POST", f"repos/{repo}/git/refs",
              "-f", f"ref=refs/tags/{tag}", "-f", f"sha={sha}"]
         )
+
+    def repo_variable(self, repo: str, name: str) -> str | None:
+        out = self._exec([self._gh, "variable", "list", "--repo", repo, "--json", "name,value"])
+        for v in json.loads(out) if out.strip() else []:
+            if v.get("name") == name:
+                return str(v.get("value", ""))
+        return None
+
+    def set_repo_variable(self, repo: str, name: str, value: str) -> None:
+        self._exec([self._gh, "variable", "set", name, "--repo", repo, "--body", value])
 
     def dispatch_workflow(self, repo: str, workflow: str, ref: str) -> None:
         self._exec(
@@ -440,6 +460,22 @@ class GitHubAppClient(_LocalGit, GitHubClient):
             json={"ref": ref},
         )
         self._check(r, f"dispatch {workflow} in {repo}")
+
+    def repo_variable(self, repo: str, name: str) -> str | None:
+        r = self._request("GET", f"/repos/{repo}/actions/variables/{name}", repo)
+        if r.status_code == 404:
+            return None
+        self._check(r, f"read variable {name} in {repo}")
+        return str(r.json().get("value", ""))
+
+    def set_repo_variable(self, repo: str, name: str, value: str) -> None:
+        # Needs the App's "Actions: write". PATCH updates; a 404 means it
+        # does not exist yet and POST creates it.
+        body = {"name": name, "value": value}
+        r = self._request("PATCH", f"/repos/{repo}/actions/variables/{name}", repo, json=body)
+        if r.status_code == 404:
+            r = self._request("POST", f"/repos/{repo}/actions/variables", repo, json=body)
+        self._check(r, f"set variable {name} in {repo}")
 
     def deploy_history(self, repo: str, workflow: str, branch: str, limit: int = 10) -> list[dict]:
         r = self._request(
