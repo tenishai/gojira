@@ -27,7 +27,6 @@ repo of yours. Already have a cluster? Read
 ```bash
 git clone https://github.com/tenishai/gojira && cd gojira
 gcloud auth login
-gcloud auth application-default login     # terraform reads these credentials
 gcloud config set project <your-project>
 ```
 
@@ -39,41 +38,50 @@ gcloud config set project <your-project>
 
 ---
 
-## 1. Create the cluster (about 12 minutes)
-
-```bash
-cd terraform
-cp terraform.tfvars.example terraform.tfvars   # set project_id
-terraform init
-terraform apply
-eval "$(terraform output -raw get_credentials_cmd)"
-cd ..
-```
-
-This makes an Autopilot cluster named `gojira-sandbox`, an Artifact Registry
-repo for Gojira's own image, and Gojira's service account bound to its
-in-cluster identity. State stays on your machine (`terraform/` ignores it);
-keep it, teardown needs it.
-
-## 2. Install Gojira (about 6 minutes)
+## 1. Fill in the values
 
 ```bash
 cp gojira.env.example gojira.env
-$EDITOR gojira.env        # PROJECT, REGION, GOJIRA_GITHUB_APP_ID, GOJIRA_GITHUB_APP_PEM
+$EDITOR gojira.env
+```
+
+| Set | To |
+|---|---|
+| `PROJECT`, `REGION` | your project, and the region for the cluster |
+| `GOJIRA_GITHUB_APP_ID`, `GOJIRA_GITHUB_APP_PEM` | the App's numeric id, the path to its key |
+| `GOJIRA_TERRAFORM` | `1` |
+
+## 2. Install (about 16 minutes the first time)
+
+```bash
 make install
 ```
 
-`make install` checks your tools and the cluster, builds the image in Cloud
-Build, creates the secret (your App key, plus a webhook secret and an API
-token it mints), applies the manifests and waits for the pod. It is safe to
-rerun; rerunning is also how you upgrade and how you change any value in
-`gojira.env`.
+With `GOJIRA_TERRAFORM=1` this first runs terraform: an Autopilot cluster
+named `gojira-sandbox`, an image repo for Gojira's own image, and Gojira's
+service account bound to its in-cluster identity (about 9 minutes). Terraform
+reads its values from `gojira.env` and signs in as your `gcloud` account;
+there is no second file and no second login. State stays on your machine in
+`terraform/`, ignored by git. Keep it: `make uninstall` needs it.
+
+Then it checks your tools and the cluster, builds the image in Cloud Build,
+creates the secret (your App key, plus a webhook secret and an API token it
+mints), applies the manifests and waits for the pod.
+
+It is safe to rerun. Rerunning is also how you upgrade and how you change any
+value in `gojira.env`. On a rerun terraform takes seconds, and it will not
+delete or replace anything: if a change would, `make install` stops and
+names what, for you to review.
 
 In a project that has never used Cloud Build, the first build is refused for
 about a minute after the API is enabled. The script waits and retries; you
 will see `Cloud Build is not ready in this project yet`.
 
 It finishes by printing how to open the UI and how to read the two secrets.
+
+Prefer to run terraform yourself, or keep its state on another machine?
+Leave `GOJIRA_TERRAFORM` empty and run `terraform apply` in `terraform/`
+before `make install`.
 
 ## 3. Open the UI
 
@@ -207,8 +215,8 @@ sets storage limits itself. The capture PR records them too.
 
 ## Existing cluster
 
-Skip step 1. In `gojira.env` set `CLUSTER=<your cluster>` and
-`GOJIRA_PREPARE_PROJECT=1`; `make install` then grants Gojira's identity into
+In `gojira.env` leave `GOJIRA_TERRAFORM` empty, set `CLUSTER=<your cluster>`
+and `GOJIRA_PREPARE_PROJECT=1`; `make install` then grants Gojira's identity into
 your project (APIs, service account, roles, image repo, Workload Identity)
 before installing. For a cluster with no public endpoint also set
 `GOJIRA_DNS_ENDPOINT=1`. Steps 3 onward are unchanged.
@@ -253,10 +261,13 @@ Never touched: enabled APIs (disabling one can break things Gojira never
 knew about), and the files the setup PR added to your repos (`gojira.yaml`,
 `k8s/`, `.github/workflows/gojira-ci.yaml`). Those are yours.
 
-**Installing again** into the same project works, `--purge` or not: steps 1
-to 7 unchanged. Google keeps a deleted identity pool's name for 30 days, and
+**Installing again** into the same project works, `--purge` or not:
+`make install`, then steps 3 to 7 unchanged. Google keeps a deleted identity pool's name for 30 days, and
 Gojira restores the pool instead of creating it. A repo that still holds
-Gojira's files gets a small refresh PR instead of the full setup PR.
+Gojira's files gets a small refresh PR instead of the full setup PR, or no
+PR at all when nothing changed. In that case the app reads `active` with
+nothing running, because no merge started a deploy: press **Redeploy** on
+the app page.
 
 If the project was made for this, `gcloud projects delete <project>` is the
 shortest uninstall there is.
@@ -267,12 +278,15 @@ shortest uninstall there is.
 
 | You see | Cause | Do |
 |---|---|---|
-| `terraform apply`: `Identity Pool does not exist` | The identity binding ran before the cluster existed (fixed 2026-09-29) | Pull, or run `terraform apply` again |
+| `make install`: `terraform wants to delete or replace` | A change to `terraform/` or the provider would rebuild something. `make install` never does that on its own. | `terraform -chdir=terraform plan`, read it, apply it yourself if it is what you want |
+| `make install`: `terraform.tfvars names another project` | A leftover `terraform/terraform.tfvars` would win over `gojira.env` | Delete it; `gojira.env` is enough |
 | `make install`: `PERMISSION_DENIED` from `gcloud.builds.submit`, three times | Not the first-use delay: your account cannot use Cloud Build | Grant yourself Cloud Build Editor, or use an Owner account |
 | `kubectl`: `User "<other account>" cannot ...` | The per-cluster token cache, see the note at the top | `rm ~/.kube/gke_gcloud_auth_plugin_cache`, or use a separate `KUBECONFIG` |
 | Registration: cluster unreachable | DNS-based access is off on the cluster | `./scripts/preflight.sh --fix` |
 | Connect: `repo has no Dockerfile at its root`, or the repo is not listed | No `Dockerfile` on the default branch, or the App is not installed on that repo | Add one, or [github-app-setup.md](github-app-setup.md) §3 |
 | `/api/v1/...`: `404 Not Found` on a route this page names | The running image is older than your checkout | `make install` |
+| App is `active` but its namespace is empty | Connected a repo that already held Gojira's files; nothing was merged, so nothing deployed | **Redeploy** on the app page |
+| Redeploy: `403 Resource not accessible by integration` | The GitHub App has Actions: Read | Set Actions to Read & write on the App, accept the change on the installation ([github-app-setup.md](github-app-setup.md) §1) |
 | App stays `awaiting_pr` after the merge | Gojira has not been told | Step 7: **check PR merge** or the `sync` call |
 | Pod `exec format error` | An image built on ARM for amd64 nodes | Build through `make install` (Cloud Build), not local Docker |
 
