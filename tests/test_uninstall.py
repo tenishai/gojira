@@ -132,7 +132,7 @@ def test_check_changes_nothing_and_judges_nothing(run):
     assert not [c for c in calls if c.startswith(("kubectl", "curl", "terraform"))]
     assert done.returncode == 0
     assert "found image repo gojira" in done.stdout and "left" not in done.stdout
-    assert "not a verdict" in done.stdout
+    assert "only kept lines should remain" in done.stdout
 
 
 def test_an_app_gojira_could_not_fully_remove_fails_the_uninstall(run):
