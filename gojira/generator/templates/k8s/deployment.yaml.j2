@@ -64,10 +64,20 @@ spec:
                 name: {{ cm }}
 {% endfor %}
 {% endif %}
-{% if spec.data_mount %}
+{% if spec.data_mount or spec.config_mounts or spec.secret_mounts %}
           volumeMounts:
+{% if spec.data_mount %}
             - name: data
               mountPath: {{ spec.data_mount.path }}
+{% endif %}
+{% for m in spec.config_mounts + spec.secret_mounts %}
+            - name: {{ m.volume }}
+              mountPath: {{ m.path }}
+{% if m.key %}
+              subPath: {{ m.key }}
+{% endif %}
+              readOnly: true
+{% endfor %}
 {% endif %}
           resources:
             requests:
@@ -110,9 +120,21 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 20
 {% endif %}
-{% if spec.data_mount %}
+{% if spec.data_mount or spec.config_mounts or spec.secret_mounts %}
       volumes:
+{% if spec.data_mount %}
         - name: data
           persistentVolumeClaim:
             claimName: {{ spec.data_mount.pvc }}
+{% endif %}
+{% for m in spec.config_mounts %}
+        - name: {{ m.volume }}
+          configMap:
+            name: {{ m.name }}
+{% endfor %}
+{% for m in spec.secret_mounts %}
+        - name: {{ m.volume }}
+          secret:
+            secretName: {{ m.name }}
+{% endfor %}
 {% endif %}

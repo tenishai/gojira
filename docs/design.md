@@ -126,13 +126,33 @@ overrides:                       # optional; justification required
   requests: { cpu: "1", memory: "1Gi" }
   hpa: { min: 30, max: 500, cpu: 60, memory: 70 }   # any subset; classes with an HPA only
   justification: "p99 CPU is 800m measured over 14 days"
+# what the app needs from outside the image — the objects stay app-authored
+service_account: clips-api
+secrets_from: [clips-api-secrets]           # envFrom Secrets
+config_from: [clips-api-env]                # envFrom ConfigMaps
+env: { LOG_LEVEL: info }                    # plain, non-secret, in git
+data_mount: { pvc: clips-cache, path: /data, fs_group: 999 }
+config_mounts:                              # ConfigMaps read as files
+  - { name: clips-config, path: /app/config.yaml, key: config.yaml }   # one entry, as that file
+secret_mounts:                              # Secrets read as files
+  - { name: clips-github, path: /secrets/github }                      # the whole object, as a dir
+build_args:                                 # to docker build; in git, so never a secret
+  EXTRA_INDEX_URL: https://us-central1-python.pkg.dev/p/tenish/simple/
 ```
 
 Every class opinion is a default with an override. Port and health path were
 constants until 2026-09-28; an app on another port or path had to change
 itself to be hosted, which contradicts the goal (deploy, measure, rightsize
 any app without the team writing pipeline YAML). Adopt mode infers both from
-the deployment the app already runs.
+the deployment the app already runs, and the same for every need above that
+a deployment can show: env, envFrom, PVC, ConfigMap and Secret mounts.
+
+The needs vocabulary grows only when an app arrives that cannot say what it
+needs. `config_mounts`, `secret_mounts` and `build_args` came from the tenish
+stack's own apps (2026-09-30): a config file, a key file, and an image that
+installs private packages from an index named at build time. `build_args`
+values live in the contract and so in git; the one secret a build gets,
+`AR_TOKEN`, the platform adds itself.
 
 ### Workload classes — the opinion
 
