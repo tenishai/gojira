@@ -1,0 +1,16 @@
+# Gojira at priority 0 was the pod a full node gave up when Google's managed
+# Prometheus (priority 1,000,000,000) needed room: the first app connected on
+# a fresh install brought alert rules, the rule evaluator started, and the
+# platform was evicted by its own tenant's arrival (2026-09-29).
+#
+# A modest priority puts Gojira behind ordinary workloads in that queue.
+# preemptionPolicy: Never keeps the other half of the bargain: Gojira waits
+# for room (Autopilot adds a node) rather than evicting a tenant to get it.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: gojira-platform
+value: 1000
+preemptionPolicy: Never
+globalDefault: false
+description: Gojira's own pod. Evicted after ordinary workloads; never evicts one.

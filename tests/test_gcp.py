@@ -83,7 +83,9 @@ def test_remove_project_binding_other_failure_raises():
 
 
 def test_delete_service_account_happy_path():
-    runner = RecordingRunner()
+    runner = RecordingRunner(
+        results={"list": CommandResult(0, "sa@p.iam.gserviceaccount.com\n", "")}
+    )
     client = GcloudClient(runner=runner)
 
     deleted = client.delete_service_account("p", "sa@p.iam.gserviceaccount.com")
@@ -91,8 +93,8 @@ def test_delete_service_account_happy_path():
     assert deleted is True
     assert runner.calls == [
         [
-            "gcloud", "iam", "service-accounts", "describe", "sa@p.iam.gserviceaccount.com",
-            "--project=p", "--format=value(email)",
+            "gcloud", "iam", "service-accounts", "list", "--project=p",
+            "--filter=email=sa@p.iam.gserviceaccount.com", "--format=value(email)",
         ],
         [
             "gcloud", "iam", "service-accounts", "delete", "sa@p.iam.gserviceaccount.com",
@@ -102,20 +104,31 @@ def test_delete_service_account_happy_path():
 
 
 def test_delete_service_account_absent_issues_no_delete_call():
-    runner = RecordingRunner(
-        results={
-            "describe": CommandResult(
-                1, "", "ERROR: (gcloud.iam.service-accounts.describe) NOT_FOUND: "
-                "Service account sa@p.iam.gserviceaccount.com does not exist."
-            )
-        }
-    )
+    runner = RecordingRunner(results={"list": CommandResult(0, "", "")})
     client = GcloudClient(runner=runner)
 
     deleted = client.delete_service_account("p", "sa@p.iam.gserviceaccount.com")
 
     assert deleted is False
-    assert len(runner.calls) == 1  # describe only, no delete issued
+    assert len(runner.calls) == 1  # list only, no delete issued
+
+
+def test_a_recently_deleted_service_account_does_not_exist():
+    """describe says PERMISSION_DENIED for one, to the owner too; the check
+    must not ask describe. list leaves it out, and so answers the question."""
+    runner = RecordingRunner(
+        results={
+            "describe": CommandResult(
+                1, "", "ERROR: PERMISSION_DENIED: Permission 'iam.serviceAccounts.get' "
+                "denied on resource (or it may not exist)."
+            ),
+            "list": CommandResult(0, "", ""),
+        }
+    )
+    client = GcloudClient(runner=runner)
+
+    assert client.service_account_exists("p", "sa@p.iam.gserviceaccount.com") is False
+    assert "describe" not in runner.calls[0]
 
 
 # --- teardown: delete_app_images ----------------------------------------------
@@ -218,3 +231,66 @@ def test_image_digest_other_failure_raises():
     runner = FakeRunner(CommandResult(1, "", "PERMISSION_DENIED"))
     with pytest.raises(GCPError, match="tags list"):
         GcloudClient(runner=runner).image_digest("r/x", "t")
+
+
+# --- identity pools: deleted is not gone ----------------------------------------
+
+
+class ScriptedRunner:
+    """Answers by verb: the first of describe/create/undelete found in the args."""
+
+    def __init__(self, answers: dict[str, CommandResult]):
+        self.answers = answers
+        self.calls: list[list[str]] = []
+
+    def run(self, args, stdin=None):
+        self.calls.append(args)
+        verb = next(a for a in args if a in self.answers)
+        return self.answers[verb]
+
+    def verbs(self) -> list[str]:
+        return [next(a for a in c if a in self.answers) for c in self.calls]
+
+
+OK = CommandResult(0, "", "")
+NOT_FOUND = CommandResult(1, "", "ERROR: NOT_FOUND: Requested entity was not found.")
+
+
+def test_a_deleted_pool_does_not_count_as_existing():
+    """describe answers for a soft-deleted pool; the provisioner used to read
+    that as "exists", skip the create, and then fail on the provider."""
+    gone = ScriptedRunner({"describe": CommandResult(0, "DELETED\n", "")})
+    assert GcloudClient(runner=gone).wif_pool_exists("p", "gojira") is False
+    live = ScriptedRunner({"describe": CommandResult(0, "ACTIVE\n", "")})
+    assert GcloudClient(runner=live).wif_pool_exists("p", "gojira") is True
+    never = ScriptedRunner({"describe": NOT_FOUND})
+    assert GcloudClient(runner=never).wif_pool_exists("p", "gojira") is False
+
+
+def test_creating_a_deleted_pool_restores_it():
+    runner = ScriptedRunner(
+        {"describe": CommandResult(0, "DELETED\n", ""), "undelete": OK, "create": OK}
+    )
+    GcloudClient(runner=runner).create_wif_pool("p", "gojira", "Gojira")
+    assert runner.verbs() == ["describe", "undelete"]  # create would say ALREADY_EXISTS
+    assert runner.calls[1][:4] == ["gcloud", "iam", "workload-identity-pools", "undelete"]
+
+
+def test_creating_a_pool_that_never_existed_creates_it():
+    runner = ScriptedRunner({"describe": NOT_FOUND, "undelete": OK, "create": OK})
+    GcloudClient(runner=runner).create_wif_pool("p", "gojira", "Gojira")
+    assert runner.verbs() == ["describe", "create"]
+    assert "--display-name=Gojira" in runner.calls[1]
+
+
+def test_a_deleted_provider_is_restored_and_a_new_one_created():
+    runner = ScriptedRunner(
+        {"describe": CommandResult(0, "DELETED\n", ""), "undelete": OK, "create-oidc": OK}
+    )
+    GcloudClient(runner=runner).create_wif_provider("p", "gojira", "github", "acme")
+    assert runner.verbs() == ["describe", "undelete"]
+
+    runner = ScriptedRunner({"describe": NOT_FOUND, "undelete": OK, "create-oidc": OK})
+    GcloudClient(runner=runner).create_wif_provider("p", "gojira", "github", "acme")
+    assert runner.verbs() == ["describe", "create-oidc"]
+    assert "--attribute-condition=assertion.repository_owner == 'acme'" in runner.calls[1]
