@@ -14,6 +14,7 @@ semantics.
 """
 
 import logging
+import re
 from abc import ABC, abstractmethod
 
 from gojira.shell import CommandRunner
@@ -21,6 +22,30 @@ from gojira.shell import CommandRunner
 log = logging.getLogger(__name__)
 
 GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com"
+
+# The provider's attribute condition names the GitHub owners (users or orgs)
+# whose repos may exchange tokens at all — defense in depth on top of the
+# per-repo binding. Gojira writes one of two shapes and reads both back;
+# anything else is a person's own condition and is left alone.
+_OWNER_EQ = re.compile(r"^assertion\.repository_owner\s*==\s*'([^']+)'$")
+_OWNER_IN = re.compile(r"^assertion\.repository_owner\s+in\s+\[([^\]]*)\]$")
+
+
+def owner_condition(owners: list[str]) -> str:
+    names = sorted(set(owners))
+    if len(names) == 1:
+        return f"assertion.repository_owner == '{names[0]}'"
+    return "assertion.repository_owner in [" + ", ".join(f"'{n}'" for n in names) + "]"
+
+
+def owners_in_condition(condition: str) -> list[str] | None:
+    """The owners a Gojira-written condition admits; None for any other shape."""
+    text = condition.strip()
+    if m := _OWNER_EQ.match(text):
+        return [m.group(1)]
+    if m := _OWNER_IN.match(text):
+        return re.findall(r"'([^']+)'", m.group(1))
+    return None
 WIF_ATTRIBUTE_MAPPING = (
     "google.subject=assertion.sub,"
     "attribute.repository=assertion.repository,"
@@ -58,6 +83,16 @@ class GCPClient(ABC):
 
     @abstractmethod
     def wif_provider_exists(self, project: str, pool: str, provider: str) -> bool: ...
+
+    def wif_provider_condition(self, project: str, pool: str, provider: str) -> str:
+        """The provider's attribute condition, verbatim ("" when none)."""
+        ...
+
+    def set_wif_provider_owners(
+        self, project: str, pool: str, provider: str, owners: list[str]
+    ) -> None:
+        """Rewrite the condition to admit exactly these GitHub owners."""
+        ...
 
     @abstractmethod
     def create_wif_provider(
@@ -255,6 +290,20 @@ class GcloudClient(GCPClient):
         state = self._wif_state(*self._provider_args("describe", project, pool, provider))
         return state == "ACTIVE"
 
+    def wif_provider_condition(self, project: str, pool: str, provider: str) -> str:
+        return self._exec(
+            *self._provider_args("describe", project, pool, provider),
+            "--format=value(attributeCondition)",
+        ).strip()
+
+    def set_wif_provider_owners(
+        self, project: str, pool: str, provider: str, owners: list[str]
+    ) -> None:
+        self._exec(
+            *self._provider_args("update-oidc", project, pool, provider),
+            f"--attribute-condition={owner_condition(owners)}",
+        )
+
     def create_wif_provider(
         self, project: str, pool: str, provider: str, allowed_owner: str
     ) -> None:
@@ -270,7 +319,7 @@ class GcloudClient(GCPClient):
             f"--workload-identity-pool={pool}", "--location=global",
             f"--issuer-uri={GITHUB_OIDC_ISSUER}",
             f"--attribute-mapping={WIF_ATTRIBUTE_MAPPING}",
-            f"--attribute-condition=assertion.repository_owner == '{allowed_owner}'",
+            f"--attribute-condition={owner_condition([allowed_owner])}",
             f"--project={project}",
         )
 
