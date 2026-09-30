@@ -32,7 +32,7 @@ Fill in:
 | Pull requests | Read & write | open the setup PR, detect merge |
 | Workflows | Read & write | the setup branch adds `.github/workflows/*.yaml`; GitHub rejects that push without this, separately from Contents |
 | Metadata | Read | repo info, default branch (GitHub sets it for you) |
-| Actions | Read | needed to subscribe to `workflow_run` |
+| Actions | Read & write | Redeploy, rollback and promotion start the workflow themselves, and GitHub answers 403 `Resource not accessible by integration` without write; read alone only covers subscribing to `workflow_run` |
 
 No organization or account permissions.
 

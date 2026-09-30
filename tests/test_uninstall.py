@@ -162,7 +162,7 @@ def test_terraform_state_for_this_project_means_terraform_takes_it_down(run, tmp
     tree = tmp_path / "tree"
     (tree / "scripts").mkdir(parents=True)
     (tree / "terraform").mkdir()
-    for name in ("uninstall.sh", "env.sh"):
+    for name in ("uninstall.sh", "env.sh", "tf.sh"):
         (tree / "scripts" / name).write_text((ROOT / "scripts" / name).read_text())
     (tree / "terraform" / "terraform.tfstate").write_text('{"x": {"project": "proj"}}')
     bindir = tmp_path / "bin"
