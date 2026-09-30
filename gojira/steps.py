@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 import yaml
 
-from gojira.gcp import GCPClient
+from gojira.gcp import GCPClient, owners_in_condition
 from gojira.generator import (
     EnvSpec,
     GeneratorSpec,
@@ -179,19 +179,40 @@ class EnsureWifPool:
 
 
 class EnsureWifProvider:
+    """The pool's GitHub provider, admitting this repo's owner.
+
+    "Exists" was the whole check until 2026-09-30: the provider a first
+    owner's connect created said `repository_owner == 'shaz'`, and every repo
+    a second owner (the tenishai org) connected passed provisioning and then
+    failed its first token exchange in CI. Now the condition is read, and a
+    missing owner is added to it. A condition Gojira did not write (any other
+    shape) is a person's, and is kept with a warning rather than rewritten.
+    """
+
     name = "ensure_wif_provider"
 
     def check(self, ctx: ProvisionContext) -> str | None:
         n = Names.derive(ctx)
-        return (
-            WIF_PROVIDER
-            if _gcp(ctx).wif_provider_exists(n.project, WIF_POOL, WIF_PROVIDER)
-            else None
-        )
+        gcp = _gcp(ctx)
+        if not gcp.wif_provider_exists(n.project, WIF_POOL, WIF_PROVIDER):
+            return None
+        owners = owners_in_condition(gcp.wif_provider_condition(n.project, WIF_POOL, WIF_PROVIDER))
+        if owners is None:
+            log.warning(
+                "wif provider %s/%s has a hand-written condition; not touching it — "
+                "make sure it admits repository_owner %r", WIF_POOL, WIF_PROVIDER, n.repo_owner,
+            )
+            return WIF_PROVIDER
+        return WIF_PROVIDER if n.repo_owner in owners else None
 
     def apply(self, ctx: ProvisionContext) -> str:
         n = Names.derive(ctx)
-        _gcp(ctx).create_wif_provider(n.project, WIF_POOL, WIF_PROVIDER, n.repo_owner)
+        gcp = _gcp(ctx)
+        if gcp.wif_provider_exists(n.project, WIF_POOL, WIF_PROVIDER):
+            owners = owners_in_condition(gcp.wif_provider_condition(n.project, WIF_POOL, WIF_PROVIDER)) or []
+            gcp.set_wif_provider_owners(n.project, WIF_POOL, WIF_PROVIDER, [*owners, n.repo_owner])
+        else:
+            gcp.create_wif_provider(n.project, WIF_POOL, WIF_PROVIDER, n.repo_owner)
         return WIF_PROVIDER
 
 
