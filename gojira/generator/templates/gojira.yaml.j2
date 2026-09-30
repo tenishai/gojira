@@ -51,6 +51,15 @@ build_args:                   # passed to docker build; in git, so never a secre
 {% if spec.port != 8080 %}
 port: {{ spec.port }}
 {% endif %}
+{% if spec.arch != "amd64" %}
+arch: {{ spec.arch }}                  # image platform + node arch; amd64 otherwise
+{% endif %}
+{% if spec.node_selector %}
+node_selector:                # added to the pod verbatim (how this cluster provides arm64, a pool, …)
+{% for k, v in spec.node_selector | dictsort %}
+  {{ k }}: {{ v | quoted }}
+{% endfor %}
+{% endif %}
 {% if spec.health %}
 health: {{ spec.health }}
 {% endif %}

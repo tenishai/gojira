@@ -29,6 +29,7 @@ from gojira.opinions import WORKLOAD_CLASSES, WorkloadClass, load_sizing
 log = logging.getLogger(__name__)
 
 APP_PORT = 8080
+ARCHES = ("amd64", "arm64")
 
 _env = Environment(
     loader=PackageLoader("gojira.generator", "templates"),
@@ -217,6 +218,10 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
         needs["secret_mounts"] = secrets
     if isinstance(doc.get("build_args"), dict):
         needs["build_args"] = {str(k): str(v) for k, v in doc["build_args"].items() if k}
+    if doc.get("arch") in ARCHES and doc["arch"] != "amd64":
+        needs["arch"] = doc["arch"]
+    if isinstance(doc.get("node_selector"), dict):
+        needs["node_selector"] = {str(k): str(v) for k, v in doc["node_selector"].items() if k}
     return needs
 
 
@@ -271,6 +276,12 @@ def infer_app_needs(deployment_text: str) -> dict:
     needs: dict = {}
     if pod.get("serviceAccountName"):
         needs["service_account"] = str(pod["serviceAccountName"])
+    selector = {str(k): str(v) for k, v in (pod.get("nodeSelector") or {}).items()}
+    if selector.get("kubernetes.io/arch") in ARCHES and selector["kubernetes.io/arch"] != "amd64":
+        needs["arch"] = selector["kubernetes.io/arch"]
+    selector.pop("kubernetes.io/arch", None)
+    if selector:
+        needs["node_selector"] = selector
     # The listener and health path the app already runs with — so a foreign
     # app is hosted as it is, on whatever SDK or runtime it has.
     ports = [p.get("containerPort") for p in c0.get("ports") or [] if isinstance(p, dict)]
@@ -422,6 +433,13 @@ class GeneratorSpec(BaseModel):
     # them, and adopt mode reads them from the deployment the app already runs.
     port: int = APP_PORT
     health: str = ""  # empty: the class's probe path
+    # The CPU architecture the image is built for and the pod is scheduled
+    # on. amd64 is the default because most clusters are; arm64 renders the
+    # build platform, the arch nodeSelector and the toleration arm64 pools
+    # carry. How a cluster provides arm64 is its own business (Autopilot
+    # wants a compute class too) — that is what node_selector is for.
+    arch: str = "amd64"
+    node_selector: dict[str, str] = {}
 
     @model_validator(mode="after")
     def validate_spec(self):

@@ -36,6 +36,19 @@ spec:
       securityContext:
         fsGroup: {{ spec.data_mount.fs_group }}
 {% endif %}
+{% if spec.arch != "amd64" or spec.node_selector %}
+      nodeSelector:
+{% if spec.arch != "amd64" %}
+        kubernetes.io/arch: {{ spec.arch }}
+{% endif %}
+{% for k, v in spec.node_selector | dictsort %}
+        {{ k }}: {{ v | quoted }}
+{% endfor %}
+{% endif %}
+{% if spec.arch == "arm64" %}
+      tolerations:
+        - { key: kubernetes.io/arch, operator: Equal, value: arm64, effect: NoSchedule }
+{% endif %}
       containers:
         - name: app
           image: gojira-app
