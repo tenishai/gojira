@@ -123,10 +123,16 @@ def test_nothing_happens_without_the_project_id(run):
     assert done.returncode == 0 and _mutations(calls)
 
 
-def test_check_changes_nothing(run):
-    _, calls = run("--check")
+def test_check_changes_nothing_and_judges_nothing(run):
+    """--check on a healthy install lists everything Gojira has. It read as a
+    failed teardown the first time Shaz ran it (2026-09-30): "left" lines and
+    exit 1 before any uninstall. Now it is an inventory: "found", exit 0."""
+    done, calls = run("--check")
     assert _mutations(calls) == []
     assert not [c for c in calls if c.startswith(("kubectl", "curl", "terraform"))]
+    assert done.returncode == 0
+    assert "found image repo gojira" in done.stdout and "left" not in done.stdout
+    assert "only kept lines should remain" in done.stdout
 
 
 def test_an_app_gojira_could_not_fully_remove_fails_the_uninstall(run):

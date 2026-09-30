@@ -84,31 +84,33 @@ else
 fi
 
 # --- 6. the sweep (also all of --check) ----------------------------------------
-# Prints one line per thing found. "left" lines are failures of this script or
-# of an earlier teardown; "kept" lines are the documented survivors.
+# One line per thing of Gojira's in the project. After an uninstall a "left"
+# line is a failure of this script or of an earlier teardown and "kept" is a
+# documented survivor. --check runs the same sweep on whatever is there,
+# installed or not, and only reports: a healthy install lists everything.
 sweep() {
-  local left=0 line
-  found() { printf '  %-5s %s\n' "$1" "$2"; [ "$1" = left ] && left=1; return 0; }
-  kept_or_left() { if [ "$PURGE" = 1 ]; then found left "$1"; else found kept "$1"; fi; }
+  local left=0 line word="${1:-left}"
+  found() { printf '  %-5s %s\n' "$1" "$2"; [ "$1" = "$word" ] && left=1; return 0; }
+  kept_or_left() { if [ "$PURGE" = 1 ]; then found "$word" "$1"; else found kept "$1"; fi; }
 
-  while read -r line; do [ -n "$line" ] && found left "service account $line"; done < <(
+  while read -r line; do [ -n "$line" ] && found "$word" "service account $line"; done < <(
     gcloud iam service-accounts list --project "$PROJECT" \
       --filter='displayName~^Gojira' --format='value(email)' 2>/dev/null)
-  while read -r line; do [ -n "$line" ] && found left "role grant $line"; done < <(
+  while read -r line; do [ -n "$line" ] && found "$word" "role grant $line"; done < <(
     gcloud projects get-iam-policy "$PROJECT" --flatten='bindings[].members' \
       --format='value(bindings.role,bindings.members)' 2>/dev/null \
       | grep -E "(gojira|-deploy)@${PROJECT}\.iam|/sa/${AGENT}\$" | tr '\t' ' ' || true)
-  while read -r line; do [ -n "$line" ] && found left "disk $line"; done < <(
+  while read -r line; do [ -n "$line" ] && found "$word" "disk $line"; done < <(
     gcloud compute disks list --project "$PROJECT" --filter="$DISK_FILTER" \
       --format='value(name,zone.basename())' 2>/dev/null | tr '\t' ' ')
   quiet gcloud compute addresses describe "$IP_NAME" --global --project "$PROJECT" \
-    && found left "static IP $IP_NAME"
+    && found "$word" "static IP $IP_NAME"
   if [ "$MODE" != prepared ]; then
     quiet gcloud container clusters describe "$CLUSTER" --location "$REGION" --project "$PROJECT" \
-      && found left "cluster $CLUSTER"
+      && found "$word" "cluster $CLUSTER"
   fi
   quiet gcloud artifacts repositories describe gojira --location "$REGION" --project "$PROJECT" \
-    && found left "image repo gojira"
+    && found "$word" "image repo gojira"
   quiet gcloud artifacts repositories describe apps --location "$REGION" --project "$PROJECT" \
     && kept_or_left "image repo apps"
   [ "$(gcloud iam workload-identity-pools describe "$POOL" --location global \
@@ -120,9 +122,10 @@ sweep() {
 }
 
 if [ "$CHECK" = 1 ]; then
-  step "what Gojira left in $PROJECT"
-  if sweep; then echo "nothing unexpected."; exit 0; fi
-  exit 1
+  step "what Gojira has in $PROJECT"
+  sweep found || true
+  echo "(an inventory, not a verdict: after 'make uninstall' only kept lines should remain)"
+  exit 0
 fi
 
 # --- the plan, and the question -------------------------------------------------
@@ -258,7 +261,7 @@ case "$MODE" in
       [ -n "$disk" ] || continue
       gcloud compute disks delete "$disk" --zone "$zone" --project "$PROJECT" --quiet
     done < <(gcloud compute disks list --project "$PROJECT" --filter="$DISK_FILTER" \
-      --format='value(name,zone.basename())')
+      --format='value(name,zone.basename())' 2>/dev/null)  # no disks = a gcloud WARNING about filter keys
     CTX="gke_${PROJECT}_${REGION}_${CLUSTER}"
     quiet kubectl config delete-context "$CTX" || true
     quiet kubectl config delete-cluster "$CTX" || true
