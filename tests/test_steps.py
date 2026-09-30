@@ -558,3 +558,67 @@ def test_namespace_labels_stamped_and_converged():
     assert kubectl.namespaces["scout"]["example.com/team"] == "sre"
     assert kubectl.namespaces["scout"][next(iter(MANAGED_LABEL))] == "true"
     assert step.check(ctx) == "scout"          # converged → done
+
+
+# --- the provider admits this repo's owner, not just "exists" (2026-09-30) ----
+
+
+def test_second_owner_is_added_to_the_provider_condition(session, project_ctx):
+    """The dogfood: a provider made by a personal-account connect said
+    repository_owner == 'shaz'; the org's repos then failed their first token
+    exchange in CI. Provisioning had skipped the provider as existing."""
+    gcp = FakeGCPClient(
+        existing={
+            "apis": list(REQUIRED_APIS),
+            "wif_pools": [WIF_POOL],
+            "wif_providers": [(WIF_POOL, WIF_PROVIDER)],
+            "provider_condition": "assertion.repository_owner == 'shaz'",
+        }
+    )
+    result = ProvisionEngine(per_project_steps()).run(session, project_ctx(gcp), "acme-499303")
+    assert result.completed
+    assert "update_provider:gojira/github:acme,shaz" in gcp.calls
+    assert not [c for c in gcp.calls if c.startswith("create_provider")]
+    assert gcp.provider_condition == "assertion.repository_owner in ['acme', 'shaz']"
+
+
+def test_an_admitted_owner_leaves_the_provider_alone(session, project_ctx):
+    gcp = FakeGCPClient(
+        existing={
+            "apis": list(REQUIRED_APIS),
+            "wif_pools": [WIF_POOL],
+            "wif_providers": [(WIF_POOL, WIF_PROVIDER)],
+            "provider_condition": "assertion.repository_owner in ['acme', 'shaz']",
+        }
+    )
+    result = ProvisionEngine(per_project_steps()).run(session, project_ctx(gcp), "acme-499303")
+    assert "ensure_wif_provider@acme-499303" in result.steps_skipped
+    assert not [c for c in gcp.calls if "provider" in c]
+
+
+def test_a_hand_written_condition_is_kept_with_a_warning(session, project_ctx, caplog):
+    """A condition Gojira did not write is a person's decision; widening it
+    silently would be worse than the failure it prevents."""
+    gcp = FakeGCPClient(
+        existing={
+            "apis": list(REQUIRED_APIS),
+            "wif_pools": [WIF_POOL],
+            "wif_providers": [(WIF_POOL, WIF_PROVIDER)],
+            "provider_condition": "assertion.repository == 'acme/one' || assertion.ref == 'refs/heads/main'",
+        }
+    )
+    with caplog.at_level("WARNING"):
+        result = ProvisionEngine(per_project_steps()).run(session, project_ctx(gcp), "acme-499303")
+    assert result.completed
+    assert not [c for c in gcp.calls if "provider" in c]
+    assert "hand-written condition" in caplog.text and "'acme'" in caplog.text
+
+
+def test_owner_conditions_round_trip():
+    from gojira.gcp import owner_condition, owners_in_condition
+
+    assert owner_condition(["shaz"]) == "assertion.repository_owner == 'shaz'"
+    assert owners_in_condition(owner_condition(["tenishai", "shaz"])) == ["shaz", "tenishai"]
+    assert owners_in_condition("assertion.repository_owner == 'x'") == ["x"]
+    assert owners_in_condition("assertion.repository == 'a/b'") is None
+    assert owners_in_condition("") is None

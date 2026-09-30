@@ -21,6 +21,7 @@ class FakeGCPClient(GCPClient):
         self.service_accounts = set(e.get("service_accounts", []))
         self.wif_pools = set(e.get("wif_pools", []))
         self.wif_providers = set(e.get("wif_providers", []))
+        self.provider_condition = e.get("provider_condition", "assertion.repository_owner == 'acme'")
         self.sa_bindings = set(e.get("sa_bindings", []))
         self.project_bindings = set(e.get("project_bindings", []))  # (project, member, role)
         self.artifact_repos = set(e.get("artifact_repos", []))
@@ -62,9 +63,24 @@ class FakeGCPClient(GCPClient):
     def wif_provider_exists(self, project, pool, provider):
         return (pool, provider) in self.wif_providers
 
+    def wif_provider_condition(self, project, pool, provider):
+        # A provider seeded through `existing` admits whatever owner the
+        # fixture names (default: the fixture repo's), unless a test set
+        # `provider_condition` to something else.
+        return self.provider_condition
+
+    def set_wif_provider_owners(self, project, pool, provider, owners):
+        from gojira.gcp import owner_condition
+
+        self.calls.append(f"update_provider:{pool}/{provider}:{','.join(sorted(set(owners)))}")
+        self.provider_condition = owner_condition(owners)
+
     def create_wif_provider(self, project, pool, provider, allowed_owner):
+        from gojira.gcp import owner_condition
+
         self.calls.append(f"create_provider:{pool}/{provider}:{allowed_owner}")
         self.wif_providers.add((pool, provider))
+        self.provider_condition = owner_condition([allowed_owner])
 
     def sa_has_binding(self, project, sa_email, member, role):
         return (sa_email, member, role) in self.sa_bindings
