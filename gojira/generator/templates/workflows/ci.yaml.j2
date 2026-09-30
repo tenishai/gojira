@@ -23,7 +23,8 @@ env:
 
 jobs:
   build-and-deploy-{{ env.name }}:
-    runs-on: ubuntu-latest
+    # A repo or org variable CI_RUNNER names a self-hosted runner label; unset, GitHub's.
+    runs-on: {{ "${{ vars.CI_RUNNER || 'ubuntu-latest' }}" }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,7 +47,7 @@ jobs:
         # identity. Dockerfiles that declare no such ARG ignore it.
         run: |
           TAG="${GITHUB_SHA::12}"
-          docker build --build-arg AR_TOKEN="$(gcloud auth print-access-token)"{% for k, v in spec.build_args | dictsort %} \
+          docker build --platform linux/{{ spec.arch }} --build-arg AR_TOKEN="$(gcloud auth print-access-token)"{% for k, v in spec.build_args | dictsort %} \
             --build-arg {{ (k ~ "=" ~ v) | shell }}{% endfor %} -t "$IMAGE:$TAG" .
           docker push "$IMAGE:$TAG"
 

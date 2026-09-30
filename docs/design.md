@@ -138,7 +138,16 @@ secret_mounts:                              # Secrets read as files
   - { name: clips-github, path: /secrets/github }                      # the whole object, as a dir
 build_args:                                 # to docker build; in git, so never a secret
   EXTRA_INDEX_URL: https://us-central1-python.pkg.dev/p/tenish/simple/
+arch: arm64                                 # image platform + node arch; amd64 otherwise
+node_selector:                              # added to the pod verbatim: how THIS cluster
+  cloud.google.com/compute-class: Scale-Out #   provides arm64 (Autopilot), a pool, …
 ```
+
+Generated workflows run on `${{ vars.CI_RUNNER || 'ubuntu-latest' }}`: a
+repo or org variable names a self-hosted runner label; unset, GitHub's
+runners. An install whose runners are arm64 machines builds arm64 images and
+says `arch: arm64` in its contracts; the platform never assumes the
+runner's and the cluster's architectures agree.
 
 Every class opinion is a default with an override. Port and health path were
 constants until 2026-09-28; an app on another port or path had to change
