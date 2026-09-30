@@ -46,7 +46,8 @@ jobs:
         # identity. Dockerfiles that declare no such ARG ignore it.
         run: |
           TAG="${GITHUB_SHA::12}"
-          docker build --build-arg AR_TOKEN="$(gcloud auth print-access-token)" -t "$IMAGE:$TAG" .
+          docker build --build-arg AR_TOKEN="$(gcloud auth print-access-token)"{% for k, v in spec.build_args | dictsort %} \
+            --build-arg {{ (k ~ "=" ~ v) | shell }}{% endfor %} -t "$IMAGE:$TAG" .
           docker push "$IMAGE:$TAG"
 
       - uses: google-github-actions/get-gke-credentials@v2
