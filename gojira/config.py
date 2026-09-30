@@ -143,8 +143,19 @@ class ObserveConfig(BaseModel):
         return v
 
 
+class CIConfig(BaseModel):
+    # A self-hosted runner label (e.g. "spark"). Generated workflows run on
+    # `${{ vars.CI_RUNNER || 'ubuntu-latest' }}`; when set, provisioning
+    # writes CI_RUNNER as a repository variable on every connected repo. A
+    # repository variable, not an organization one: on GitHub's Free plan
+    # org-level variables never reach private repositories (2026-09-30).
+    # Empty: GitHub's hosted runners.
+    runner: str = ""
+
+
 class Config(BaseModel):
     auth: AuthConfig = AuthConfig()
+    ci: CIConfig = CIConfig()
     github: GitHubConfig = GitHubConfig()
     database: DatabaseConfig = DatabaseConfig()
     defaults: DefaultsConfig = DefaultsConfig()
