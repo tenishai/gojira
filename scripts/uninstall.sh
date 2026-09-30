@@ -124,7 +124,7 @@ sweep() {
 if [ "$CHECK" = 1 ]; then
   step "what Gojira has in $PROJECT"
   sweep found || true
-  echo "(an inventory, not a verdict: after 'make uninstall' this list should be empty)"
+  echo "(an inventory, not a verdict: after 'make uninstall' only kept lines should remain)"
   exit 0
 fi
 
@@ -261,7 +261,7 @@ case "$MODE" in
       [ -n "$disk" ] || continue
       gcloud compute disks delete "$disk" --zone "$zone" --project "$PROJECT" --quiet
     done < <(gcloud compute disks list --project "$PROJECT" --filter="$DISK_FILTER" \
-      --format='value(name,zone.basename())')
+      --format='value(name,zone.basename())' 2>/dev/null)  # no disks = a gcloud WARNING about filter keys
     CTX="gke_${PROJECT}_${REGION}_${CLUSTER}"
     quiet kubectl config delete-context "$CTX" || true
     quiet kubectl config delete-cluster "$CTX" || true
