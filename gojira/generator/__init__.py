@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import re
+import shlex
 
 import yaml
 from jinja2 import Environment, PackageLoader, StrictUndefined
@@ -47,6 +48,7 @@ def _quoted(value) -> str:
 
 
 _env.filters["quoted"] = _quoted
+_env.filters["shell"] = shlex.quote  # a value inside a `run:` step, as one word
 
 
 class EnvSpec(BaseModel):
@@ -209,6 +211,12 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
             pvc=str(mount["pvc"]), path=str(mount["path"]),
             **({"fs_group": int(mount["fs_group"])} if str(mount.get("fs_group", "")).isdigit() else {}),
         )
+    if cms := _read_mounts(doc.get("config_mounts"), ConfigMount):
+        needs["config_mounts"] = cms
+    if secrets := _read_mounts(doc.get("secret_mounts"), SecretMount):
+        needs["secret_mounts"] = secrets
+    if isinstance(doc.get("build_args"), dict):
+        needs["build_args"] = {str(k): str(v) for k, v in doc["build_args"].items() if k}
     return needs
 
 
@@ -308,7 +316,72 @@ def infer_app_needs(deployment_text: str) -> dict:
                 **({"fs_group": int(fs_group)} if fs_group else {}),
             )
             break
+    # Files the app reads from ConfigMaps and Secrets: a config file, a key
+    # file. A subPath mount is one entry as one file; a plain mount is the
+    # whole object as a directory. Either way the app said so.
+    cm_by_volume = {
+        v["name"]: v["configMap"]["name"]
+        for v in pod.get("volumes") or []
+        if isinstance(v, dict) and (v.get("configMap") or {}).get("name")
+    }
+    secret_by_volume = {
+        v["name"]: v["secret"]["secretName"]
+        for v in pod.get("volumes") or []
+        if isinstance(v, dict) and (v.get("secret") or {}).get("secretName")
+    }
+    for m in c0.get("volumeMounts") or []:
+        if not (isinstance(m, dict) and m.get("mountPath")):
+            continue
+        key = str(m.get("subPath") or "")
+        if m.get("name") in cm_by_volume:
+            needs.setdefault("config_mounts", []).append(
+                ConfigMount(name=cm_by_volume[m["name"]], path=str(m["mountPath"]), key=key)
+            )
+        elif m.get("name") in secret_by_volume:
+            needs.setdefault("secret_mounts", []).append(
+                SecretMount(name=secret_by_volume[m["name"]], path=str(m["mountPath"]), key=key)
+            )
     return needs
+
+
+class FileMount(BaseModel):
+    """A ConfigMap or Secret the app reads as a file, not as env.
+
+    Many apps take a config file (cabal's identity.toml, kobo's config.yaml)
+    or a key file (a GitHub App's .pem) and cannot take the same thing as
+    env. `key` picks one entry of the object and mounts it at `path` as that
+    file (a subPath mount); no key mounts the whole object at `path` as a
+    directory, one file per entry. The object itself stays app-authored,
+    like the PVC behind data_mount (2026-09-30, the cabal install).
+    """
+
+    name: str
+    path: str
+    key: str = ""
+
+    @property
+    def volume(self) -> str:
+        # A DNS label: the object name is one already; the prefix keeps a
+        # ConfigMap and a Secret of the same name apart.
+        return f"{self.kind_prefix}-{self.name}"[:63].rstrip("-")
+
+    kind_prefix: str = "file"
+
+
+class ConfigMount(FileMount):
+    kind_prefix: str = "cm"
+
+
+class SecretMount(FileMount):
+    kind_prefix: str = "secret"
+
+
+def _read_mounts(raw, cls):
+    out = []
+    for m in raw if isinstance(raw, list) else []:
+        if isinstance(m, dict) and m.get("name") and m.get("path"):
+            out.append(cls(name=str(m["name"]), path=str(m["path"]), key=str(m.get("key") or "")))
+    return out
 
 
 class GeneratorSpec(BaseModel):
@@ -326,6 +399,14 @@ class GeneratorSpec(BaseModel):
     config_from: list[str] = []  # envFrom ConfigMaps — non-secret config
     service_account: str = ""
     data_mount: DataMount | None = None
+    config_mounts: list[ConfigMount] = []  # ConfigMaps read as files
+    secret_mounts: list[SecretMount] = []  # Secrets read as files (key files)
+    # Arguments to `docker build`, from the contract and so from git: never a
+    # secret. AR_TOKEN is the one the platform adds itself. What a build
+    # needs to say to reach a package index, pick a base image, or set a
+    # version is the app's to declare (2026-09-30: the tenish stack's images
+    # install private packages from an index named this way).
+    build_args: dict[str, str] = {}
     # Plain, non-secret configuration (tenant identity, endpoints). Rendered
     # inline into the deployment: config changes stay reviewed git commits,
     # not secret-store writes (a tenant's finding).

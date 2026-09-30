@@ -638,3 +638,114 @@ spec:
     assert got["port"] == 9000 and got["health"] == "/alive"
     # an app on the default port with no http probes infers neither
     assert not {"port", "health"} & set(infer_app_needs(text.replace("9000", "8080").replace("readinessProbe", "x").replace("livenessProbe", "y")))
+
+
+# --- files and build args: the needs the tenish stack's own apps arrived with ---
+# (2026-09-30: cabal takes identity.toml as a file and its image installs
+# private packages from an index named at build time; kobo reads a GitHub
+# App key from a file. None of that was sayable in the contract.)
+
+
+def _first_container(files):
+    dep = yaml.safe_load(files["k8s/base/deployment.yaml"])
+    pod = dep["spec"]["template"]["spec"]
+    return pod, pod["containers"][0]
+
+
+def test_config_and_secret_mounts_render_as_files():
+    from gojira.generator import ConfigMount, SecretMount
+
+    files = render(spec(
+        config_mounts=[ConfigMount(name="cabal-identity", path="/app/identity.toml", key="identity.toml")],
+        secret_mounts=[SecretMount(name="kobo-github", path="/secrets/github")],
+    ))
+    pod, c0 = _first_container(files)
+    mounts = {m["mountPath"]: m for m in c0["volumeMounts"]}
+    assert mounts["/app/identity.toml"]["subPath"] == "identity.toml"  # one entry, as that file
+    assert "subPath" not in mounts["/secrets/github"]                  # the whole object, as a dir
+    assert all(m["readOnly"] for m in mounts.values())
+    volumes = {v["name"]: v for v in pod["volumes"]}
+    assert volumes[mounts["/app/identity.toml"]["name"]]["configMap"] == {"name": "cabal-identity"}
+    assert volumes[mounts["/secrets/github"]["name"]]["secret"] == {"secretName": "kobo-github"}
+
+
+def test_a_configmap_and_a_secret_of_the_same_name_get_distinct_volumes():
+    from gojira.generator import ConfigMount, SecretMount
+
+    files = render(spec(
+        config_mounts=[ConfigMount(name="cfg", path="/a")],
+        secret_mounts=[SecretMount(name="cfg", path="/b")],
+    ))
+    pod, _ = _first_container(files)
+    names = [v["name"] for v in pod["volumes"]]
+    assert len(names) == len(set(names)) == 2
+
+
+def test_mounts_and_build_args_round_trip_through_the_contract():
+    from gojira.generator import ConfigMount, SecretMount
+
+    s = spec(
+        config_mounts=[ConfigMount(name="cabal-identity", path="/app/identity.toml", key="identity.toml")],
+        secret_mounts=[SecretMount(name="kobo-github", path="/secrets/github")],
+        build_args={"EXTRA_INDEX_URL": "https://us-central1-python.pkg.dev/p/tenish/simple/"},
+    )
+    needs = read_app_needs(render(s)["gojira.yaml"])
+    assert needs["config_mounts"] == s.config_mounts
+    assert needs["secret_mounts"] == s.secret_mounts
+    assert needs["build_args"] == s.build_args
+
+
+def test_build_args_reach_docker_build_as_single_shell_words():
+    files = render(spec(build_args={"MODEL": "claude sonnet $LATEST", "EXTRA_INDEX_URL": "https://x/simple/"}))
+    ci = files[".github/workflows/gojira-ci.yaml"]
+    build = next(line for line in ci.splitlines() if "docker build" in line)
+    assert '--build-arg AR_TOKEN="$(gcloud auth print-access-token)"' in build  # the platform's own
+    assert "--build-arg EXTRA_INDEX_URL=https://x/simple/" in ci
+    assert "--build-arg 'MODEL=claude sonnet $LATEST'" in ci  # quoted: no word split, no expansion
+
+
+def test_no_build_args_leaves_the_build_line_as_it_was():
+    ci = render(spec())[".github/workflows/gojira-ci.yaml"]
+    build = next(line for line in ci.splitlines() if "docker build" in line)
+    assert build.strip().endswith('-t "$IMAGE:$TAG" .')
+
+
+PRUDENCE_SHAPED = """
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: pr-reviewer}
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: pr-reviewer:latest
+          volumeMounts:
+            - {name: config, mountPath: /app/config.yaml, subPath: config.yaml}
+            - {name: github-key, mountPath: /secrets/github, readOnly: true}
+            - {name: cache, mountPath: /data}
+      volumes:
+        - name: config
+          configMap: {name: pr-reviewer-config}
+        - name: github-key
+          secret: {secretName: github-private-key}
+        - name: cache
+          persistentVolumeClaim: {claimName: pr-reviewer-cache}
+"""
+
+
+def test_adopt_infers_file_mounts_from_the_deployment_the_app_runs():
+    """A file the app already reads is a need; dropping it on adopt is how a
+    reviewer loses her config (the #35 shape)."""
+    from gojira.generator import infer_app_needs
+
+    needs = infer_app_needs(PRUDENCE_SHAPED)
+    assert [(m.name, m.path, m.key) for m in needs["config_mounts"]] == [
+        ("pr-reviewer-config", "/app/config.yaml", "config.yaml")
+    ]
+    assert [(m.name, m.path, m.key) for m in needs["secret_mounts"]] == [
+        ("github-private-key", "/secrets/github", "")
+    ]
+    assert needs["data_mount"].pvc == "pr-reviewer-cache"  # untouched by the new inference
+    rendered = render(spec(**needs))
+    assert read_app_needs(rendered["gojira.yaml"])["config_mounts"] == needs["config_mounts"]
