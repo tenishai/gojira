@@ -140,10 +140,10 @@ too; nothing under `deploy/` is edited by hand, and rerunning `make install`
 applies changes.
 
 The full walkthrough — GitHub App setup, connecting a demo app, exercising
-drift capture and the rightsizing loop end to end — is in
-[docs/dogfood.md](docs/dogfood.md). Teardown is `terraform destroy`, and
-rebuilding from nothing is the same two commands; the platform's state that
-matters lives in your repos, and survives.
+drift capture — is in
+[docs/install.md](docs/install.md), which also covers removing it again, in
+order, and what removal leaves behind. Rebuilding from nothing is the same two
+commands; the platform's state that matters lives in your repos, and survives.
 
 ### Existing cluster (brownfield)
 
@@ -206,7 +206,7 @@ in-cluster) · a test suite with golden-file snapshots for everything generated.
 
 ## Docs
 
-[Design](docs/design.md) · [Dogfood runbook](docs/dogfood.md) ·
+[Design](docs/design.md) · [Install walkthrough](docs/install.md) ·
 [GitHub App setup](docs/github-app-setup.md) ·
 [Environments](docs/environments.md) ·
 [Sizing loop design](docs/sizing-feedback-design.md)

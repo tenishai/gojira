@@ -135,3 +135,68 @@ def test_committed_configmap_loads_like_the_pod(monkeypatch, tmp_path):
     assert cfg.sizing.agent_image == "img:dev"
     assert cfg.observe.job_image.startswith("argus@sha256:")
     assert set(cfg.observe.clusters) == {"dev", "qa"}
+
+
+# --- first install into a project that has never seen Gojira -------------------
+
+
+def test_bootstrap_names_docs_that_exist():
+    """The closing message sent operators to docs/dogfood.md for a while
+    after the walkthrough could have moved; a printed path is a link too."""
+    named = set(re.findall(r"docs/[\w-]+\.md", BOOTSTRAP))
+    assert named and all((ROOT / doc).is_file() for doc in named), named
+
+
+def test_bootstrap_registers_the_cluster_under_its_real_name():
+    assert "name: ${CLUSTER} " in BOOTSTRAP and "name: sandbox" not in BOOTSTRAP
+
+
+FAKE_GCLOUD = """#!/usr/bin/env bash
+n=$(( $(cat "$STATE" 2>/dev/null || echo 0) + 1 )); echo $n > "$STATE"
+case "$MODE" in
+  lag) [ $n -lt 2 ] && { echo "ERROR: (gcloud.builds.submit) PERMISSION_DENIED: The caller does not have permission." >&2; exit 1; }
+       echo built ;;
+  broken) echo "ERROR: build step 0 failed" >&2; exit 1 ;;
+  denied) echo "ERROR: PERMISSION_DENIED" >&2; exit 1 ;;
+esac
+"""
+
+
+def _run_build_step(tmp_path, mode: str) -> tuple[int, int]:
+    """Run bootstrap's Cloud Build block against a fake gcloud; (exit, calls)."""
+    import os
+    import subprocess
+
+    lines = BOOTSTRAP.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("BUILD_LOG="))
+    end = next(i for i in range(start, len(lines)) if lines[i] == 'rm -f "$BUILD_LOG"')
+    block = "\n".join(lines[start : end + 1]).replace("sleep 45", "sleep 0")
+    bindir = tmp_path / "bin"
+    bindir.mkdir(parents=True)
+    (bindir / "gcloud").write_text(FAKE_GCLOUD)
+    (bindir / "gcloud").chmod(0o755)
+    state = tmp_path / "calls"
+    env = {
+        "PATH": f"{bindir}:{os.environ['PATH']}", "MODE": mode, "STATE": str(state),
+        "AR_PATH": "r", "PROJECT": "p", "REPO_ROOT": ".",
+    }
+    done = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", block], env=env, capture_output=True, text=True
+    )
+    return done.returncode, int(state.read_text())
+
+
+def test_cloud_build_waits_out_a_fresh_projects_permission_lag(tmp_path):
+    """A project's first build is refused for about a minute after the API is
+    enabled — to the project's own owner (first fresh-project install,
+    2026-09-29). That error is retried; a build that fails on its own merits
+    is not rebuilt three times."""
+    assert _run_build_step(tmp_path / "lag", "lag") == (0, 2)
+
+
+def test_cloud_build_does_not_retry_a_broken_build(tmp_path):
+    assert _run_build_step(tmp_path / "broken", "broken") == (1, 1)
+
+
+def test_cloud_build_gives_up_on_a_real_permission_problem(tmp_path):
+    assert _run_build_step(tmp_path / "denied", "denied") == (1, 3)
