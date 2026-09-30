@@ -141,9 +141,10 @@ applies changes.
 
 The full walkthrough — GitHub App setup, connecting a demo app, exercising
 drift capture — is in
-[docs/install.md](docs/install.md), which also covers removing it again, in
-order, and what removal leaves behind. Rebuilding from nothing is the same two
-commands; the platform's state that matters lives in your repos, and survives.
+[docs/install.md](docs/install.md). `make uninstall` removes it again, apps
+first and cluster last, and fails if anything of Gojira's is still in the
+project. Rebuilding from nothing is the same two commands; the platform's
+state that matters lives in your repos, and survives.
 
 ### Existing cluster (brownfield)
 

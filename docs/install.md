@@ -2,8 +2,9 @@
 
 From an empty GCP project to an app Gojira deployed, measured and can
 rightsize: about 40 minutes, most of it waiting for a cluster. Steps 1 to 8
-were run in this order into a project that had never seen Gojira (last run:
-2026-09-29). Where the run surprised us, the page says so.
+were run in this order into a project that had never seen Gojira, then
+removed and installed again (last run: 2026-09-29). Where the run surprised
+us, the page says so.
 
 You end with Gojira running in its own cluster under Workload Identity,
 authenticating to GitHub as a GitHub App, and
@@ -162,10 +163,11 @@ curl -s localhost:8081/health            # ok
 
 You have an app that Gojira deployed, with no pipeline you wrote.
 
-> **Gojira may restart once here.** The first app brings alert rules, which
-> makes Google's managed Prometheus start a high-priority pod; on a full node
-> that pod evicts Gojira. It is back in about 30 seconds with its state
-> intact. Re-run the port-forward if it dropped.
+> **If the port-forward drops here**, run it again. The first app brings
+> alert rules, which makes Google's managed Prometheus start a high-priority
+> pod, and on a full node something has to make room. Gojira runs at a modest
+> priority of its own so that it is not the first choice; if it is evicted
+> anyway it is back in about 30 seconds with its state intact.
 
 ---
 
@@ -215,34 +217,49 @@ before installing. For a cluster with no public endpoint also set
 
 ## Removing it
 
-Order matters. Gojira's record of what it created lives in the cluster, so
-remove the apps while Gojira is still running.
-
 ```bash
-# 1. each app: its namespace, deploy identity, role grants and images
-curl -s -X DELETE localhost:8080/api/v1/apps/1 -H "Authorization: Bearer $TOKEN"
-
-# 2. Gojira's own namespace, which releases its data disk
-#    (GKE keeps disks when a cluster is deleted)
-kubectl delete namespace gojira
-
-# 3. the cluster, Gojira's image repo and its identity
-cd terraform && terraform destroy
+make uninstall                       # shows the plan, asks for the project id
+make uninstall ARGS=--check          # changes nothing; lists what Gojira left
+make uninstall ARGS="--purge --yes"  # everything, no question
 ```
 
-What this leaves in the project, on purpose or not yet automated:
+`terraform destroy` on its own is not an uninstall. Terraform made the
+cluster; the install script and Gojira made the rest, and Gojira's record of
+what it created lives in the cluster. So the order is fixed, and the script
+keeps it:
 
-| Left behind | Why | Remove with |
-|---|---|---|
-| Workload identity pool `gojira` | Shared by every app. A deleted pool's name stays reserved for 30 days, so deleting it blocks a reinstall for a month. | Leave it, unless the project is done with Gojira |
-| Artifact Registry repo `apps` | Holds every app's images | `gcloud artifacts repositories delete apps --location <region>` |
-| Cloud Build bucket `<project>_cloudbuild` | Source uploads from `make install` | `gcloud storage rm -r gs://<project>_cloudbuild` |
-| Enabled APIs | Disabling an API can break things Gojira never touched | Leave them |
-| With a hostname: static IP `gojira-ingress-ip`, the load balancer, the sign-in client | Made by `make install`, outside terraform | Delete the ingress **before** step 3 (`kubectl -n gojira delete ingress --all`), then `gcloud compute addresses delete gojira-ingress-ip --global` |
-| The files the setup PR added to your repo | They are yours now | Delete `gojira.yaml`, `k8s/`, `.github/workflows/gojira-ci.yaml` |
+1. every connected app, through Gojira: namespaces, deploy service account,
+   role grants, images
+2. the front door, if you set a hostname (the ingress first, which releases
+   the load balancer)
+3. Gojira's namespace, which releases its data disk (GKE keeps disks when a
+   cluster is deleted)
+4. the platform: `terraform destroy` when `terraform/` holds the state. On an
+   [existing cluster](#existing-cluster) it removes Gojira's service account,
+   roles and image repo, and leaves your cluster alone.
+5. a sweep of the project. Anything of Gojira's still there is listed and
+   the command fails.
 
-If the project was made for this, `gcloud projects delete <project>` removes
-all of it at once.
+Last run against a real project (2026-09-29): six minutes, and the project
+held exactly what it held before Gojira.
+
+| Kept unless `--purge` | Why |
+|---|---|
+| Identity pool `gojira` | Every app shares it. It costs nothing and grants nothing once the apps are gone. |
+| Image repo `apps` | Deleted by `--purge` only when empty. |
+| Bucket `<project>_cloudbuild` | Cloud Build's, and other builds in the project may use it. |
+
+Never touched: enabled APIs (disabling one can break things Gojira never
+knew about), and the files the setup PR added to your repos (`gojira.yaml`,
+`k8s/`, `.github/workflows/gojira-ci.yaml`). Those are yours.
+
+**Installing again** into the same project works, `--purge` or not: steps 1
+to 7 unchanged. Google keeps a deleted identity pool's name for 30 days, and
+Gojira restores the pool instead of creating it. A repo that still holds
+Gojira's files gets a small refresh PR instead of the full setup PR.
+
+If the project was made for this, `gcloud projects delete <project>` is the
+shortest uninstall there is.
 
 ---
 
