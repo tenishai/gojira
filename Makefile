@@ -16,7 +16,7 @@ install:
 	./scripts/install.sh
 
 # Remove Gojira again, in the order that works. ARGS="--purge --yes", or
-# ARGS=--check to only list what an install left behind.
+# ARGS=--check to only list what Gojira has in the project (changes nothing).
 uninstall:
 	./scripts/uninstall.sh $(ARGS)
 
