@@ -24,6 +24,9 @@ data:
       webhook_secret: "${GOJIRA_WEBHOOK_SECRET}"
     database:
       url: sqlite:////data/gojira.db
+    ci:
+      # A self-hosted runner label; set on every connected repo as CI_RUNNER.
+      runner: "${GOJIRA_CI_RUNNER:-}"
     drift:
       enabled: "${GOJIRA_DRIFT_ENABLED:-true}"
       interval_seconds: 900

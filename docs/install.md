@@ -21,6 +21,7 @@ repo of yours. Already have a cluster? Read
 | A GCP project with billing | A throwaway. Gojira's identity gets broad IAM in it (it creates service accounts and grants roles), which is fine for a sandbox and nowhere else. |
 | To be Owner on that project | Or hold project IAM admin, service usage admin, and the GKE, Artifact Registry and IAM admin roles. |
 | `gcloud`, `kubectl`, `terraform`, `openssl`, `gh` | No Docker: images build in Cloud Build, so an ARM laptop is safe. |
+| GitHub Actions runners for your app repos | GitHub's hosted runners need nothing. Your own runners need `docker`, `gcloud`, `kubectl` and `kustomize` on them; put their label in `GOJIRA_CI_RUNNER` and Gojira sets `CI_RUNNER` on every repo it connects (an org-level variable would not reach private repos on GitHub Free). An arm64 runner builds arm64 images: say `arch: arm64` in those apps' `gojira.yaml`. **Give the runner its own `CLOUDSDK_CONFIG` and `KUBECONFIG`** (environment variables in its service unit): the generated workflow signs gcloud in with the app's identity, and on a runner that shares a person's home directory that sign-in replaces the person's active account. |
 | `gke-gcloud-auth-plugin` | `gcloud components install gke-gcloud-auth-plugin` |
 | A GitHub App | Ten minutes: [github-app-setup.md](github-app-setup.md) §1–§3. You need its numeric **App ID** and its **private key** (`.pem`). |
 
