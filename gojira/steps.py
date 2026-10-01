@@ -905,13 +905,30 @@ class SetCiRunner:
         want = ctx.config.ci.runner
         if not want:
             return "hosted runners"
-        have = _github(ctx).repo_variable(ctx.app.repo_full_name, self.VARIABLE)
+        have = self._github_call(ctx, lambda gh: gh.repo_variable(ctx.app.repo_full_name, self.VARIABLE))
         return f"{self.VARIABLE}={want}" if have == want else None
 
     def apply(self, ctx: ProvisionContext) -> str:
         want = ctx.config.ci.runner
-        _github(ctx).set_repo_variable(ctx.app.repo_full_name, self.VARIABLE, want)
+        self._github_call(ctx, lambda gh: gh.set_repo_variable(ctx.app.repo_full_name, self.VARIABLE, want))
         return f"{self.VARIABLE}={want}"
+
+    @staticmethod
+    def _github_call(ctx: ProvisionContext, call):
+        # GitHub files Actions variables under their own App permission,
+        # "Variables", not under "Actions". An App set up for everything else
+        # answers 403 here, and GitHub's sentence does not say which
+        # permission is missing (the dogfood's first run, 2026-10-01).
+        try:
+            return call(_github(ctx))
+        except Exception as exc:
+            if "403" in str(exc):
+                raise RuntimeError(
+                    "the GitHub App cannot manage Actions variables: give it the "
+                    "repository permission Variables: Read & write and accept the change "
+                    "on the installation (docs/github-app-setup.md), or unset GOJIRA_CI_RUNNER"
+                ) from exc
+            raise
 
 
 def per_app_steps() -> list[Step]:

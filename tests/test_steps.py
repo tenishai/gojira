@@ -662,3 +662,14 @@ def test_ci_runner_change_is_applied(single_env):
     assert SetCiRunner().check(ctx) is None
     SetCiRunner().apply(ctx)
     assert gh.variables[("acme/clips-api", "CI_RUNNER")] == "spark"
+
+
+def test_ci_runner_names_the_missing_app_permission_on_403(single_env):
+    from gojira.steps import SetCiRunner
+
+    class Forbidden(FakeGitHubClient):
+        def repo_variable(self, repo, name):
+            raise RuntimeError('read variable CI_RUNNER in acme/clips-api failed: 403 {"message":"Resource not accessible by integration"}')
+
+    with pytest.raises(RuntimeError, match="Variables: Read & write"):
+        SetCiRunner().check(_app_ctx(single_env, Forbidden(), runner="spark"))
