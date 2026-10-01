@@ -57,6 +57,8 @@ class FakeGitHubServer:
         self.deleted_refs: list[tuple[str, str]] = []  # (repo, branch)
         self.delete_ref_status = 204
         self.pull_get_status = 200  # non-200 simulates the post-merge GET failing
+        self.variables: dict[tuple[str, str], str] = {}  # Actions repository variables
+        self.variable_calls: list[str] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -70,6 +72,24 @@ class FakeGitHubServer:
 
         if method == "GET" and path == "/app/installations":
             return httpx.Response(200, json=self.installations)
+
+        m = re.fullmatch(r"/repos/([^/]+/[^/]+)/actions/variables(?:/([A-Z_]+))?", path)
+        if m:
+            repo, name = m.group(1), m.group(2)
+            self.variable_calls.append(method)
+            if method == "GET":
+                if (repo, name) not in self.variables:
+                    return httpx.Response(404, json={"message": "Not Found"})
+                return httpx.Response(200, json={"name": name, "value": self.variables[(repo, name)]})
+            if method == "PATCH":
+                if (repo, name) not in self.variables:
+                    return httpx.Response(404, json={"message": "Not Found"})
+                self.variables[(repo, name)] = _json(request)["value"]
+                return httpx.Response(204)
+            if method == "POST":
+                body = _json(request)
+                self.variables[(repo, body["name"])] = body["value"]
+                return httpx.Response(201)
 
         if method == "GET" and path == "/installation/repositories":
             iid = int(request.headers["Authorization"].rsplit("-", 1)[1])
@@ -345,3 +365,18 @@ def test_clone_failure_raises(keypair, tmp_path):
     client = make_client(server, keypair, runner=runner)
     with pytest.raises(GitHubError, match="clone acme/web failed"):
         client.clone("acme/web", tmp_path / "wt")
+
+
+# --- repository variables (CI_RUNNER) -------------------------------------------
+
+
+def test_set_repo_variable_creates_then_updates(keypair):
+    server = FakeGitHubServer()
+    client = make_client(server, keypair)
+    assert client.repo_variable("acme/web", "CI_RUNNER") is None
+    client.set_repo_variable("acme/web", "CI_RUNNER", "spark")   # PATCH 404 → POST
+    assert server.variables[("acme/web", "CI_RUNNER")] == "spark"
+    client.set_repo_variable("acme/web", "CI_RUNNER", "mash1")   # PATCH 204
+    assert server.variables[("acme/web", "CI_RUNNER")] == "mash1"
+    assert client.repo_variable("acme/web", "CI_RUNNER") == "mash1"
+    assert server.variable_calls == ["GET", "PATCH", "POST", "PATCH", "GET"]
