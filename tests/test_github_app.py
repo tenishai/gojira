@@ -376,7 +376,7 @@ def test_set_repo_variable_creates_then_updates(keypair):
     assert client.repo_variable("acme/web", "CI_RUNNER") is None
     client.set_repo_variable("acme/web", "CI_RUNNER", "spark")   # PATCH 404 → POST
     assert server.variables[("acme/web", "CI_RUNNER")] == "spark"
-    client.set_repo_variable("acme/web", "CI_RUNNER", "mash1")   # PATCH 204
-    assert server.variables[("acme/web", "CI_RUNNER")] == "mash1"
-    assert client.repo_variable("acme/web", "CI_RUNNER") == "mash1"
+    client.set_repo_variable("acme/web", "CI_RUNNER", "self-hosted-1")   # PATCH 204
+    assert server.variables[("acme/web", "CI_RUNNER")] == "self-hosted-1"
+    assert client.repo_variable("acme/web", "CI_RUNNER") == "self-hosted-1"
     assert server.variable_calls == ["GET", "PATCH", "POST", "PATCH", "GET"]
