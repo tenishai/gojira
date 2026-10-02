@@ -218,8 +218,8 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
         needs["secret_mounts"] = secrets
     if isinstance(doc.get("build_args"), dict):
         needs["build_args"] = {str(k): str(v) for k, v in doc["build_args"].items() if k}
-    if doc.get("arch") in ARCHES and doc["arch"] != "amd64":
-        needs["arch"] = doc["arch"]
+    if doc.get("arch") in ARCHES:
+        needs["arch"] = doc["arch"]  # said, so kept — even amd64 on an arm64 platform
     if isinstance(doc.get("node_selector"), dict):
         needs["node_selector"] = {str(k): str(v) for k, v in doc["node_selector"].items() if k}
     return needs
@@ -434,12 +434,26 @@ class GeneratorSpec(BaseModel):
     port: int = APP_PORT
     health: str = ""  # empty: the class's probe path
     # The CPU architecture the image is built for and the pod is scheduled
-    # on. amd64 is the default because most clusters are; arm64 renders the
-    # build platform, the arch nodeSelector and the toleration arm64 pools
-    # carry. How a cluster provides arm64 is its own business (Autopilot
-    # wants a compute class too) — that is what node_selector is for.
-    arch: str = "amd64"
-    node_selector: dict[str, str] = {}
+    # on. None: the contract did not say, so the platform's default applies
+    # (defaults.arch; amd64 when the operator set none) — a platform fact
+    # that never gets written into the repo. arm64 renders the build
+    # platform, the arch nodeSelector and the toleration arm64 pools carry.
+    # How a cluster provides arm64 is its own business (Autopilot wants a
+    # compute class too) — that is what node_selector is for, with the same
+    # contract-wins-over-platform rule (2026-10-02: the first agent kobo
+    # created landed an arm64 image on an amd64 node).
+    arch: str | None = None
+    node_selector: dict[str, str] | None = None
+    platform_arch: str = "amd64"
+    platform_node_selector: dict[str, str] = {}
+
+    @property
+    def effective_arch(self) -> str:
+        return self.arch or self.platform_arch or "amd64"
+
+    @property
+    def effective_node_selector(self) -> dict[str, str]:
+        return self.node_selector if self.node_selector is not None else self.platform_node_selector
 
     @model_validator(mode="after")
     def validate_spec(self):
@@ -449,6 +463,10 @@ class GeneratorSpec(BaseModel):
             raise ValueError(f"health must be an absolute path, got {self.health!r}")
         if self.admin_port == self.port:
             raise ValueError("admin_port must differ from the app port")
+        if self.arch is not None and self.arch not in ARCHES:
+            raise ValueError(f"arch must be one of {ARCHES}, got {self.arch!r}")
+        if self.platform_arch not in ARCHES:
+            raise ValueError(f"platform arch must be one of {ARCHES}, got {self.platform_arch!r}")
         if self.workload_class not in WORKLOAD_CLASSES:
             raise ValueError(
                 f"unknown workload class {self.workload_class!r}, "

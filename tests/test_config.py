@@ -61,6 +61,19 @@ def test_namespace_labels_and_emails_accept_install_value_strings():
     assert empty.defaults.namespace_labels == {} and empty.auth.allowed_emails == []
 
 
+def test_default_arch_and_node_selector_accept_install_value_strings():
+    cfg = Config.model_validate({"defaults": {
+        "arch": "arm64", "node_selector": "{cloud.google.com/compute-class: Scale-Out}",
+    }})
+    assert cfg.defaults.arch == "arm64"
+    assert cfg.defaults.node_selector == {"cloud.google.com/compute-class": "Scale-Out"}
+    empty = Config.model_validate({"defaults": {"arch": "", "node_selector": ""}})
+    assert empty.defaults.arch == "" and empty.defaults.node_selector == {}
+    import pytest
+    with pytest.raises(ValueError, match="amd64 or arm64"):
+        Config.model_validate({"defaults": {"arch": "sparc"}})
+
+
 def test_observe_clusters_accept_install_value_string():
     """GOJIRA_OBSERVE_CLUSTERS arrives as one comma list; each name gets the
     argus defaults. Empty means no cluster is observed. The mapping form an

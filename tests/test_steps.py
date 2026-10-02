@@ -388,6 +388,23 @@ def test_build_spec_single_env(single_env):
     assert spec.promote_envs == []
 
 
+def test_build_spec_carries_the_platform_arch(single_env):
+    """defaults.arch / defaults.node_selector reach the spec as the platform's
+    values, leaving the contract's own arch unsaid (None) so GenerateArtifacts
+    lets gojira.yaml override them."""
+    app, cluster, env = single_env
+    gcp = FakeGCPClient(project_num="773958892580")
+    cfg = Config.model_validate({"defaults": {
+        "arch": "arm64", "node_selector": "{cloud.google.com/compute-class: Scale-Out}",
+    }})
+    ctx = ProvisionContext(app=app, config=cfg, clients={"gcp": gcp}, environments=[env])
+    spec = build_spec(ctx, gcp)
+    assert spec.arch is None and spec.effective_arch == "arm64"
+    assert spec.effective_node_selector == {"cloud.google.com/compute-class": "Scale-Out"}
+    plain = build_spec(ProvisionContext(app=app, config=Config(), clients={"gcp": gcp}, environments=[env]), gcp)
+    assert plain.effective_arch == "amd64" and plain.effective_node_selector == {}
+
+
 def test_build_spec_multi_project(session):
     app = _app(session)
     e_dev = _env(session, app, _cluster(session, "dev", "proj-a"), "dev")
