@@ -35,6 +35,10 @@ data:
       # Labels stamped on every namespace Gojira creates — secrets infra
       # (e.g. an ESO ClusterSecretStore) often gates on these. YAML flow map.
       namespace_labels: "${GOJIRA_NAMESPACE_LABELS:-}"
+      # The arch apps get when their contract doesn't say (amd64 if empty),
+      # and how your clusters provide it. A platform fact, never in a repo.
+      arch: "${GOJIRA_DEFAULT_ARCH:-}"
+      node_selector: "${GOJIRA_DEFAULT_NODE_SELECTOR:-}"
     sizing:
       # Your build of github.com/tenishai/gojira-sizing-agent — set to enable
       # the Clusters-page "Deploy agent" button.

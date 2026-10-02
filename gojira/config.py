@@ -30,14 +30,34 @@ class DefaultsConfig(BaseModel):
     # (e.g. an ESO ClusterSecretStore matching example.com/team) — a missing
     # label means ExternalSecrets silently never sync (a tenant's finding).
     namespace_labels: dict[str, str] = {}
+    # The architecture apps are built for and scheduled on when their
+    # contract does not say (`arch:` in gojira.yaml wins). A platform fact:
+    # it depends on what your runners can build and your clusters can run,
+    # so it lives here and is never written into a repo. Empty = amd64.
+    # Prefer arm64 where both sides can (cheaper and more available than
+    # amd64 on GCP and AWS, 2026); a GitHub-hosted ubuntu-latest runner
+    # cannot build it without QEMU, so this is the operator's call.
+    arch: str = ""
+    # Added to every pod's nodeSelector when the contract has none: how
+    # your clusters provide that arch (Autopilot: a compute class; Standard:
+    # a pool label). YAML flow map, like namespace_labels.
+    node_selector: dict[str, str] = {}
 
-    @field_validator("namespace_labels", mode="before")
+    @field_validator("namespace_labels", "node_selector", mode="before")
     @classmethod
     def _labels_from_string(cls, v):
-        # The in-cluster configmap interpolates this from one env var
-        # (GOJIRA_NAMESPACE_LABELS, a YAML flow map); empty means none.
+        # The in-cluster configmap interpolates these from one env var each
+        # (GOJIRA_NAMESPACE_LABELS, GOJIRA_DEFAULT_NODE_SELECTOR: YAML flow
+        # maps); empty means none.
         if isinstance(v, str):
             return yaml.safe_load(v) or {}
+        return v
+
+    @field_validator("arch")
+    @classmethod
+    def _arch_known(cls, v: str) -> str:
+        if v and v not in ("amd64", "arm64"):
+            raise ValueError(f"defaults.arch must be amd64 or arm64, got {v!r}")
         return v
 
 

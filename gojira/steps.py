@@ -728,6 +728,11 @@ def build_spec(ctx: ProvisionContext, gcp: GCPClient) -> GeneratorSpec:
         repo_full_name=ctx.app.repo_full_name,
         workload_class=ctx.app.workload_class,
         environments=env_specs,
+        # The platform's architecture: what the runners build and the
+        # clusters run. The contract's own `arch:`/`node_selector:` replace
+        # these when GenerateArtifacts reads the repo's gojira.yaml.
+        platform_arch=ctx.config.defaults.arch or "amd64",
+        platform_node_selector=dict(ctx.config.defaults.node_selector),
     )
 
 

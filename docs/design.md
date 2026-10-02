@@ -138,7 +138,7 @@ secret_mounts:                              # Secrets read as files
   - { name: clips-github, path: /secrets/github }                      # the whole object, as a dir
 build_args:                                 # to docker build; in git, so never a secret
   EXTRA_INDEX_URL: https://us-central1-python.pkg.dev/p/tenish/simple/
-arch: arm64                                 # image platform + node arch; amd64 otherwise
+arch: arm64                                 # image platform + node arch; unset: the platform's default
 node_selector:                              # added to the pod verbatim: how THIS cluster
   cloud.google.com/compute-class: Scale-Out #   provides arm64 (Autopilot), a pool, …
 ```
@@ -162,6 +162,14 @@ stack's own apps (2026-09-30): a config file, a key file, and an image that
 installs private packages from an index named at build time. `build_args`
 values live in the contract and so in git; the one secret a build gets,
 `AR_TOKEN`, the platform adds itself.
+
+`arch` and `node_selector` are the one place the contract may stay silent and
+still be complete: what the runners can build and what the clusters can run
+are the platform's facts, so the operator states them once
+(`GOJIRA_DEFAULT_ARCH`, `GOJIRA_DEFAULT_NODE_SELECTOR`) and a silent contract
+gets them without ever having them written into the repo. A contract that
+says `arch:` wins (2026-10-02: the first agent kobo created said nothing,
+the runner built arm64 and the pod landed on amd64).
 
 ### Workload classes — the opinion
 
