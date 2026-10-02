@@ -805,3 +805,50 @@ def test_every_generated_workflow_takes_the_runner_from_a_variable():
     for path, text in files.items():
         if path.startswith(".github/workflows/"):
             assert "runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}" in text, path
+
+
+# --- the platform's arch: applies when the contract is silent (2026-10-02) ------
+# The first agent kobo created said nothing about arch; the runner built arm64
+# and the pod landed on an amd64 node ("exec format error"). Both facts are
+# the platform's, so the operator states them once (defaults.arch,
+# defaults.node_selector) and no repo has to know.
+
+
+def test_platform_arch_applies_when_the_contract_is_silent():
+    files = render(spec(platform_arch="arm64",
+                        platform_node_selector={"cloud.google.com/compute-class": "Scale-Out"}))
+    pod, _ = _first_container(files)
+    assert pod["nodeSelector"] == {
+        "kubernetes.io/arch": "arm64", "cloud.google.com/compute-class": "Scale-Out",
+    }
+    assert pod["tolerations"][0]["key"] == "kubernetes.io/arch"
+    assert "docker build --platform linux/arm64 " in files[".github/workflows/gojira-ci.yaml"]
+    # A platform fact never gets written into the repo's contract.
+    assert "arch:" not in files["gojira.yaml"] and "node_selector:" not in files["gojira.yaml"]
+
+
+def test_the_contract_wins_over_the_platform_arch():
+    # Said amd64 on an arm64 platform: built and scheduled amd64, and the
+    # contract keeps saying so (a silent contract would have gone arm64).
+    files = render(spec(arch="amd64", node_selector={},
+                        platform_arch="arm64",
+                        platform_node_selector={"cloud.google.com/compute-class": "Scale-Out"}))
+    pod, _ = _first_container(files)
+    assert "nodeSelector" not in pod and "tolerations" not in pod
+    assert "docker build --platform linux/amd64 " in files[".github/workflows/gojira-ci.yaml"]
+    assert "arch: amd64" in files["gojira.yaml"]
+    assert read_app_needs("arch: amd64\n") == {"arch": "amd64"}
+    # Said a selector: it replaces the platform's, not merges with it.
+    files = render(spec(node_selector={"cloud.google.com/gke-nodepool": "axion"},
+                        platform_arch="arm64",
+                        platform_node_selector={"cloud.google.com/compute-class": "Scale-Out"}))
+    pod, _ = _first_container(files)
+    assert pod["nodeSelector"] == {"kubernetes.io/arch": "arm64", "cloud.google.com/gke-nodepool": "axion"}
+
+
+def test_unknown_arch_is_refused():
+    import pytest
+    with pytest.raises(ValueError, match="arch"):
+        spec(arch="sparc")
+    with pytest.raises(ValueError, match="platform arch"):
+        spec(platform_arch="sparc")
