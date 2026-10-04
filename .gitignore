@@ -35,3 +35,8 @@ terraform/.terraform/
 terraform/*.tfstate
 terraform/*.tfstate.*
 terraform/terraform.tfvars
+
+# Operator/assistant session notes, never part of the repo
+CLAUDE.local.md
+scratch.txt
+.claude/
