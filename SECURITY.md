@@ -24,9 +24,8 @@ problem is enough to start.
 
 - We acknowledge your report within **14 days**.
 - We tell you whether we've confirmed the problem as soon as we know.
-- We fix confirmed problems in the next release, or sooner for serious ones,
-  and tell you before the fix is public.
-- We credit you in the release notes unless you'd rather we didn't.
+- We fix confirmed problems on `main`, and tell you before the fix is public.
+- We credit you in the fix's commit or pull request unless you'd rather we didn't.
 
 We ask that you give us a reasonable chance to fix a problem before disclosing
 it publicly, and that you don't access or change data that isn't yours while
@@ -34,9 +33,9 @@ testing.
 
 ## Supported versions
 
-gojira is pre-1.0. Security fixes go into the **latest release** only; older
-releases are not patched. If you're running an older version, upgrade to get
-fixes.
+gojira is pre-1.0 and has no tagged releases yet. Security fixes land on the
+`main` branch; run the current `main`. Once releases exist, only the latest one
+will be patched.
 
 ## Scope
 

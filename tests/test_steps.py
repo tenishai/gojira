@@ -655,11 +655,11 @@ def test_ci_runner_is_set_on_the_repo_when_the_install_names_one(single_env):
     from gojira.steps import SetCiRunner
 
     gh = FakeGitHubClient()
-    ctx = _app_ctx(single_env, gh, runner="spark")
+    ctx = _app_ctx(single_env, gh, runner="self-hosted-0")
     assert SetCiRunner().check(ctx) is None
-    assert SetCiRunner().apply(ctx) == "CI_RUNNER=spark"
-    assert gh.variables[("acme/clips-api", "CI_RUNNER")] == "spark"
-    assert SetCiRunner().check(ctx) == "CI_RUNNER=spark"  # idempotent: skipped next time
+    assert SetCiRunner().apply(ctx) == "CI_RUNNER=self-hosted-0"
+    assert gh.variables[("acme/clips-api", "CI_RUNNER")] == "self-hosted-0"
+    assert SetCiRunner().check(ctx) == "CI_RUNNER=self-hosted-0"  # idempotent: skipped next time
 
 
 def test_ci_runner_is_left_alone_for_hosted_runners(single_env):
@@ -675,10 +675,10 @@ def test_ci_runner_change_is_applied(single_env):
 
     gh = FakeGitHubClient()
     gh.variables[("acme/clips-api", "CI_RUNNER")] = "old"
-    ctx = _app_ctx(single_env, gh, runner="spark")
+    ctx = _app_ctx(single_env, gh, runner="self-hosted-0")
     assert SetCiRunner().check(ctx) is None
     SetCiRunner().apply(ctx)
-    assert gh.variables[("acme/clips-api", "CI_RUNNER")] == "spark"
+    assert gh.variables[("acme/clips-api", "CI_RUNNER")] == "self-hosted-0"
 
 
 def test_ci_runner_names_the_missing_app_permission_on_403(single_env):
@@ -689,4 +689,4 @@ def test_ci_runner_names_the_missing_app_permission_on_403(single_env):
             raise RuntimeError('read variable CI_RUNNER in acme/clips-api failed: 403 {"message":"Resource not accessible by integration"}')
 
     with pytest.raises(RuntimeError, match="Variables: Read & write"):
-        SetCiRunner().check(_app_ctx(single_env, Forbidden(), runner="spark"))
+        SetCiRunner().check(_app_ctx(single_env, Forbidden(), runner="self-hosted-0"))
