@@ -35,3 +35,7 @@ terraform/.terraform/
 terraform/*.tfstate
 terraform/*.tfstate.*
 terraform/terraform.tfvars
+
+# Local notes and scratch files
+scratch*.txt
+CLAUDE.local.md
