@@ -219,4 +219,4 @@ in-cluster) · a test suite with golden-file snapshots for everything generated.
 
 [AGPL-3.0-or-later](LICENSE)
 
-Copyright (C) 2026 tenishai
+Copyright (C) 2026 tenishai and the gojira contributors
