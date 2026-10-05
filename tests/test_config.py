@@ -80,9 +80,9 @@ def test_observe_clusters_accept_install_value_string():
     operator writes by hand still round-trips."""
     from gojira.config import ObserveClusterConfig
 
-    cfg = Config.model_validate({"observe": {"clusters": "fubo-dev, sandbox,"}})
+    cfg = Config.model_validate({"observe": {"clusters": "prod-east, sandbox,"}})
     assert cfg.observe.clusters == {
-        "fubo-dev": ObserveClusterConfig(), "sandbox": ObserveClusterConfig(),
+        "prod-east": ObserveClusterConfig(), "sandbox": ObserveClusterConfig(),
     }
     assert Config.model_validate({"observe": {"clusters": ""}}).observe.clusters == {}
     hand = Config.model_validate(
