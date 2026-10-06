@@ -1,5 +1,5 @@
 [project]
-name = "gojira"
+name = "tenish-gojira"
 version = "0.1.0"
 description = "Opinionated GKE deploy platform. It tramples your hand-rolled YAML."
 readme = "README.md"
