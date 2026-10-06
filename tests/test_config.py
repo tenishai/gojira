@@ -74,6 +74,12 @@ def test_default_arch_and_node_selector_accept_install_value_strings():
         Config.model_validate({"defaults": {"arch": "sparc"}})
 
 
+def test_environment_clusters_accept_install_value_string():
+    cfg = Config.model_validate({"defaults": {"environment_clusters": "{dev: gojira-sandbox, prod: gojira-prod}"}})
+    assert cfg.defaults.environment_clusters == {"dev": "gojira-sandbox", "prod": "gojira-prod"}
+    assert Config.model_validate({"defaults": {"environment_clusters": ""}}).defaults.environment_clusters == {}
+
+
 def test_observe_clusters_accept_install_value_string():
     """GOJIRA_OBSERVE_CLUSTERS arrives as one comma list; each name gets the
     argus defaults. Empty means no cluster is observed. The mapping form an

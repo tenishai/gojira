@@ -28,9 +28,30 @@ jobs:
     # A repo or org variable CI_RUNNER names a self-hosted runner label; unset, GitHub's.
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
-      IMAGE: us-central1-docker.pkg.dev/example-project/apps/clips-api
+      IMAGE: ${{ vars.GOJIRA_QA_AR_REPO }}/clips-api
     steps:
       - uses: actions/checkout@v4
+
+      - name: Platform variables for qa
+        # Gojira set these on the repository when it connected it (and sets
+        # them again on every Provision). Registry, deploy identity and
+        # cluster are the install's facts, so they live there and not here:
+        # this file is the same under any Gojira. Unset means this repo is
+        # not connected to the Gojira whose workflow is running.
+        env:
+          GOJIRA_QA_AR_REPO: ${{ vars.GOJIRA_QA_AR_REPO }}
+          GOJIRA_QA_WIF_PROVIDER: ${{ vars.GOJIRA_QA_WIF_PROVIDER }}
+          GOJIRA_QA_DEPLOY_SA: ${{ vars.GOJIRA_QA_DEPLOY_SA }}
+          GOJIRA_QA_PROJECT: ${{ vars.GOJIRA_QA_PROJECT }}
+          GOJIRA_QA_LOCATION: ${{ vars.GOJIRA_QA_LOCATION }}
+          GOJIRA_QA_GKE_CLUSTER: ${{ vars.GOJIRA_QA_GKE_CLUSTER }}
+        run: |
+          for name in GOJIRA_QA_AR_REPO GOJIRA_QA_WIF_PROVIDER GOJIRA_QA_DEPLOY_SA GOJIRA_QA_PROJECT GOJIRA_QA_LOCATION GOJIRA_QA_GKE_CLUSTER; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is not set on this repository — it is not connected to a Gojira that set it. Connect the repo there, or press Provision again."
+              exit 1
+            fi
+          done
 
       - name: Verify manifests match gojira.yaml
         # gojira.yaml and the manifests it implies can land in two commits
@@ -51,13 +72,13 @@ jobs:
       - id: auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/gojira/providers/github
-          service_account: clips-api-deploy@example-project.iam.gserviceaccount.com
+          workload_identity_provider: ${{ vars.GOJIRA_QA_WIF_PROVIDER }}
+          service_account: ${{ vars.GOJIRA_QA_DEPLOY_SA }}
 
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Configure docker for Artifact Registry
-        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+        run: gcloud auth configure-docker "${IMAGE%%/*}" --quiet
 
       - name: Build and push image
         # AR_TOKEN: see ci.yaml — private AR package indexes via WIF.
@@ -67,9 +88,9 @@ jobs:
 
       - uses: google-github-actions/get-gke-credentials@v2
         with:
-          cluster_name: qa-gke
-          location: us-central1
-          project_id: example-project
+          cluster_name: ${{ vars.GOJIRA_QA_GKE_CLUSTER }}
+          location: ${{ vars.GOJIRA_QA_LOCATION }}
+          project_id: ${{ vars.GOJIRA_QA_PROJECT }}
           use_dns_based_endpoint: true  # see gojira-ci.yaml (finding #14)
 
       - name: Deploy to qa
@@ -125,9 +146,51 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     environment: production
     env:
-      IMAGE: us-central1-docker.pkg.dev/prod-project/apps/clips-api
+      IMAGE: ${{ vars.GOJIRA_PROD_AR_REPO }}/clips-api
+      SOURCE_IMAGE: ${{ vars.GOJIRA_QA_AR_REPO }}/clips-api
     steps:
       - uses: actions/checkout@v4
+
+      - name: Platform variables for prod
+        # Gojira set these on the repository when it connected it (and sets
+        # them again on every Provision). Registry, deploy identity and
+        # cluster are the install's facts, so they live there and not here:
+        # this file is the same under any Gojira. Unset means this repo is
+        # not connected to the Gojira whose workflow is running.
+        env:
+          GOJIRA_PROD_AR_REPO: ${{ vars.GOJIRA_PROD_AR_REPO }}
+          GOJIRA_PROD_WIF_PROVIDER: ${{ vars.GOJIRA_PROD_WIF_PROVIDER }}
+          GOJIRA_PROD_DEPLOY_SA: ${{ vars.GOJIRA_PROD_DEPLOY_SA }}
+          GOJIRA_PROD_PROJECT: ${{ vars.GOJIRA_PROD_PROJECT }}
+          GOJIRA_PROD_LOCATION: ${{ vars.GOJIRA_PROD_LOCATION }}
+          GOJIRA_PROD_GKE_CLUSTER: ${{ vars.GOJIRA_PROD_GKE_CLUSTER }}
+        run: |
+          for name in GOJIRA_PROD_AR_REPO GOJIRA_PROD_WIF_PROVIDER GOJIRA_PROD_DEPLOY_SA GOJIRA_PROD_PROJECT GOJIRA_PROD_LOCATION GOJIRA_PROD_GKE_CLUSTER; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is not set on this repository — it is not connected to a Gojira that set it. Connect the repo there, or press Provision again."
+              exit 1
+            fi
+          done
+      - name: Platform variables for qa
+        # Gojira set these on the repository when it connected it (and sets
+        # them again on every Provision). Registry, deploy identity and
+        # cluster are the install's facts, so they live there and not here:
+        # this file is the same under any Gojira. Unset means this repo is
+        # not connected to the Gojira whose workflow is running.
+        env:
+          GOJIRA_QA_AR_REPO: ${{ vars.GOJIRA_QA_AR_REPO }}
+          GOJIRA_QA_WIF_PROVIDER: ${{ vars.GOJIRA_QA_WIF_PROVIDER }}
+          GOJIRA_QA_DEPLOY_SA: ${{ vars.GOJIRA_QA_DEPLOY_SA }}
+          GOJIRA_QA_PROJECT: ${{ vars.GOJIRA_QA_PROJECT }}
+          GOJIRA_QA_LOCATION: ${{ vars.GOJIRA_QA_LOCATION }}
+          GOJIRA_QA_GKE_CLUSTER: ${{ vars.GOJIRA_QA_GKE_CLUSTER }}
+        run: |
+          for name in GOJIRA_QA_AR_REPO GOJIRA_QA_WIF_PROVIDER GOJIRA_QA_DEPLOY_SA GOJIRA_QA_PROJECT GOJIRA_QA_LOCATION GOJIRA_QA_GKE_CLUSTER; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is not set on this repository — it is not connected to a Gojira that set it. Connect the repo there, or press Provision again."
+              exit 1
+            fi
+          done
 
       - name: Verify manifests match gojira.yaml
         # gojira.yaml and the manifests it implies can land in two commits
@@ -148,28 +211,30 @@ jobs:
       - id: auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: projects/987654321/locations/global/workloadIdentityPools/gojira/providers/github
-          service_account: clips-api-deploy@prod-project.iam.gserviceaccount.com
+          workload_identity_provider: ${{ vars.GOJIRA_PROD_WIF_PROVIDER }}
+          service_account: ${{ vars.GOJIRA_PROD_DEPLOY_SA }}
 
       - uses: google-github-actions/setup-gcloud@v2
-
-      - name: Configure docker for source + target registries
-        run: |
-          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
       - uses: imjasonh/setup-crane@v0.4
 
       - name: Copy tested image from qa (no rebuild)
+        # Whether the two environments share a registry is the install's
+        # business, so it is decided here from the variables, not rendered.
         run: |
-          crane copy \
-            "us-central1-docker.pkg.dev/example-project/apps/clips-api:$GITHUB_REF_NAME" \
-            "$IMAGE:$GITHUB_REF_NAME"
+          if [ "$SOURCE_IMAGE" = "$IMAGE" ]; then
+            echo "prod shares qa's registry — the tested image is already present"
+            exit 0
+          fi
+          gcloud auth configure-docker "${SOURCE_IMAGE%%/*}" --quiet
+          gcloud auth configure-docker "${IMAGE%%/*}" --quiet
+          crane copy "$SOURCE_IMAGE:$GITHUB_REF_NAME" "$IMAGE:$GITHUB_REF_NAME"
 
       - uses: google-github-actions/get-gke-credentials@v2
         with:
-          cluster_name: prod-gke
-          location: us-central1
-          project_id: prod-project
+          cluster_name: ${{ vars.GOJIRA_PROD_GKE_CLUSTER }}
+          location: ${{ vars.GOJIRA_PROD_LOCATION }}
+          project_id: ${{ vars.GOJIRA_PROD_PROJECT }}
           use_dns_based_endpoint: true  # see gojira-ci.yaml (finding #14)
 
       - name: Deploy to prod

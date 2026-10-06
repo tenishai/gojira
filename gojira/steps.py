@@ -893,30 +893,50 @@ def per_env_steps() -> list[Step]:
     return [EnsureClusterDnsAccess(), EnsureNamespace(), GrantPromoteSourceReader()]
 
 
-class SetCiRunner:
-    """CI_RUNNER on the repo, when the install names a self-hosted label.
+class SetRepoVariables:
+    """The install's facts on the repository, as Actions variables (issue #87).
 
-    Generated workflows run on `vars.CI_RUNNER || ubuntu-latest`. The
-    variable has to be the repository's own: on GitHub's Free plan an
-    organization variable is listed for a private repo and empty at run
-    time, which cost a whole afternoon on the dogfood (2026-09-30). Nothing
-    to set when the install uses hosted runners.
+    The generated workflows read the registry, the deploy identity and the
+    cluster coordinates of every environment from `vars.GOJIRA_<ENV>_*`,
+    and the runner label from `vars.CI_RUNNER` when the install names one.
+    Setting them here, before the setup PR is opened, is what lets the
+    workflow in the repo be identical under any Gojira: nothing of this
+    install is written into the repo, and a second install that connects
+    the same repo sets its own values instead of rewriting files.
+
+    Repository variables, not organization ones: on GitHub's Free plan an
+    org variable is listed for a private repo and empty at run time, which
+    cost a whole afternoon on the dogfood (2026-09-30).
     """
 
-    name = "set_ci_runner"
-    VARIABLE = "CI_RUNNER"
+    name = "set_repo_variables"
+
+    def _wanted(self, ctx: ProvisionContext) -> dict[str, str]:
+        want: dict[str, str] = {}
+        for env in build_spec(ctx, _gcp(ctx)).environments:
+            want.update(env.platform_variables())
+        if ctx.config.ci.runner:
+            want["CI_RUNNER"] = ctx.config.ci.runner
+        return want
+
+    def _stale(self, ctx: ProvisionContext, want: dict[str, str]) -> list[str]:
+        repo = ctx.app.repo_full_name
+        return [
+            k for k, v in want.items()
+            if self._github_call(ctx, lambda gh, k=k: gh.repo_variable(repo, k)) != v
+        ]
 
     def check(self, ctx: ProvisionContext) -> str | None:
-        want = ctx.config.ci.runner
-        if not want:
-            return "hosted runners"
-        have = self._github_call(ctx, lambda gh: gh.repo_variable(ctx.app.repo_full_name, self.VARIABLE))
-        return f"{self.VARIABLE}={want}" if have == want else None
+        want = self._wanted(ctx)
+        return None if self._stale(ctx, want) else f"{len(want)} variables current"
 
     def apply(self, ctx: ProvisionContext) -> str:
-        want = ctx.config.ci.runner
-        self._github_call(ctx, lambda gh: gh.set_repo_variable(ctx.app.repo_full_name, self.VARIABLE, want))
-        return f"{self.VARIABLE}={want}"
+        want = self._wanted(ctx)
+        stale = self._stale(ctx, want)
+        repo = ctx.app.repo_full_name
+        for k in stale:
+            self._github_call(ctx, lambda gh, k=k: gh.set_repo_variable(repo, k, want[k]))
+        return "set " + ", ".join(stale)
 
     @staticmethod
     def _github_call(ctx: ProvisionContext, call):
@@ -929,13 +949,14 @@ class SetCiRunner:
         except Exception as exc:
             if "403" in str(exc):
                 raise RuntimeError(
-                    "the GitHub App cannot manage Actions variables: give it the "
-                    "repository permission Variables: Read & write and accept the change "
-                    "on the installation (docs/github-app-setup.md), or unset GOJIRA_CI_RUNNER"
+                    "the GitHub App cannot manage Actions variables, which the generated "
+                    "workflows now depend on: give it the repository permission "
+                    "Variables: Read & write and accept the change on the installation "
+                    "(docs/github-app-setup.md)"
                 ) from exc
             raise
 
 
 def per_app_steps() -> list[Step]:
     """The repo flow: clone, render artifacts, the runner variable, open the setup PR, optionally merge it."""
-    return [PrepareWorkdir(), GenerateArtifacts(), SetCiRunner(), OpenSetupPr(), MergeSetupPr()]
+    return [PrepareWorkdir(), GenerateArtifacts(), SetRepoVariables(), OpenSetupPr(), MergeSetupPr()]

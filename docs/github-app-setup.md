@@ -33,7 +33,7 @@ Fill in:
 | Workflows | Read & write | the setup branch adds `.github/workflows/*.yaml`; GitHub rejects that push without this, separately from Contents |
 | Metadata | Read | repo info, default branch (GitHub sets it for you) |
 | Actions | Read & write | Redeploy, rollback and promotion start the workflow themselves, and GitHub answers 403 `Resource not accessible by integration` without write; read alone only covers subscribing to `workflow_run` |
-| Variables | Read & write | only with `GOJIRA_CI_RUNNER` set: Gojira writes the `CI_RUNNER` variable on each repo. GitHub keeps Actions variables under this permission, not under Actions (found 2026-10-01) |
+| Variables | Read & write | Gojira writes each repo's `GOJIRA_<ENV>_*` variables (registry, deploy identity, cluster) and `CI_RUNNER`; the generated workflows read them, so the repo carries none of your install's values. GitHub keeps Actions variables under this permission, not under Actions (found 2026-10-01) |
 
 No organization or account permissions.
 

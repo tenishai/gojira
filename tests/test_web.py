@@ -441,6 +441,27 @@ def test_api_connect_unknown_cluster_404(client, session_factory):
     assert resp.status_code == 404
 
 
+def test_api_connect_without_a_cluster_uses_the_installs_default(session_factory, clients):
+    """Issue #87: `environments: [{name: dev}]` means the cluster this install
+    registers for 'dev' (defaults.environment_clusters) — so a contract or a
+    kobo call need not name an install-specific cluster."""
+    cfg = Config.model_validate({"defaults": {"environment_clusters": {"dev": "dev"}}})
+    client = TestClient(create_app(session_factory, clients=clients, config=cfg))
+    _register_three(session_factory)
+    resp = client.post("/api/v1/apps", json=_api_body(environments=[{"name": "dev", "namespace": "clio"}]))
+    assert resp.status_code == 201
+    with session_factory() as s:
+        envs = [(e.name, e.cluster.name) for e in service.app_status(s, resp.json()["id"]).environments]
+    assert envs == [("dev", "dev")]
+
+
+def test_api_connect_without_a_cluster_and_no_default_is_422(client, session_factory):
+    _register_three(session_factory)
+    resp = client.post("/api/v1/apps", json=_api_body(environments=[{"name": "dev", "namespace": "clio"}]))
+    assert resp.status_code == 422
+    assert "defaults.environment_clusters" in resp.json()["error"]
+
+
 def test_api_connect_duplicate_repo_409(client, session_factory):
     _register_three(session_factory)
     assert client.post("/api/v1/apps", json=_api_body()).status_code == 201

@@ -8,7 +8,8 @@ resources:
 labels:
   - pairs:
       gojira.dev/env: prod
+# The registry is the install's (a repository variable CI reads), so the
+# image name is set by CI together with the tag; nothing of it lives here.
 images:
   - name: gojira-app
-    newName: us-central1-docker.pkg.dev/example-project/apps/clips-worker
     newTag: latest

@@ -39,6 +39,9 @@ data:
       # and how your clusters provide it. A platform fact, never in a repo.
       arch: "${GOJIRA_DEFAULT_ARCH:-}"
       node_selector: "${GOJIRA_DEFAULT_NODE_SELECTOR:-}"
+      # The cluster each environment name means here, for connect requests
+      # that name none: {dev: my-cluster}
+      environment_clusters: "${GOJIRA_ENVIRONMENT_CLUSTERS:-}"
     sizing:
       # Your build of github.com/tenishai/gojira-sizing-agent — set to enable
       # the Clusters-page "Deploy agent" button.

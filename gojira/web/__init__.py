@@ -369,7 +369,7 @@ def create_app(
 
     class EnvIn(BaseModel):
         name: str
-        cluster: str
+        cluster: str = ""  # blank: the install's cluster for this environment name
         namespace: str = ""
 
         @field_validator("namespace")
@@ -427,11 +427,19 @@ def create_app(
         if not service.repo_has_dockerfile(request.app.state.clients.github, body.repo_full_name):
             return JSONResponse({"error": "repo has no Dockerfile at its root"}, status_code=422)
         env_map: dict[str, tuple[int, str]] = {}
+        defaults = request.app.state.config.defaults.environment_clusters
         for env in body.environments:
-            cluster = session.query(models.Cluster).filter_by(name=env.cluster).one_or_none()
+            cluster_name = env.cluster or defaults.get(env.name, "")
+            if not cluster_name:
+                return JSONResponse(
+                    {"error": f"no cluster for environment {env.name!r}: name one, or set "
+                              f"defaults.environment_clusters on this install"},
+                    status_code=422,
+                )
+            cluster = session.query(models.Cluster).filter_by(name=cluster_name).one_or_none()
             if cluster is None:
                 return JSONResponse(
-                    {"error": f"unknown cluster {env.cluster!r}"}, status_code=404
+                    {"error": f"unknown cluster {cluster_name!r}"}, status_code=404
                 )
             env_map[env.name] = (cluster.id, env.namespace or body.name)
         try:
