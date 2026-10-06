@@ -80,6 +80,12 @@ def test_environment_clusters_accept_install_value_string():
     assert Config.model_validate({"defaults": {"environment_clusters": ""}}).defaults.environment_clusters == {}
 
 
+def test_grantable_roles_accept_install_value_string():
+    cfg = Config.model_validate({"iam": {"grantable_roles": "roles/aiplatform.user, roles/storage.objectViewer,"}})
+    assert cfg.iam.grantable_roles == ["roles/aiplatform.user", "roles/storage.objectViewer"]
+    assert Config.model_validate({"iam": {"grantable_roles": ""}}).iam.grantable_roles == []
+
+
 def test_observe_clusters_accept_install_value_string():
     """GOJIRA_OBSERVE_CLUSTERS arrives as one comma list; each name gets the
     argus defaults. Empty means no cluster is observed. The mapping form an

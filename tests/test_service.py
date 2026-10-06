@@ -586,3 +586,41 @@ def test_list_apps_and_clusters(session):
     )
     assert [c.name for c in service.list_clusters(session)] == ["dev", "prod", "qa"]
     assert [a.name for a in service.list_apps(session)] == ["a1"]
+
+
+def test_delete_app_reverses_the_run_identity_it_made(session):
+    """What the identity steps recorded is exactly what delete removes: the WI
+    binding, the roles, and the GSA — unless it was adopted, then the GSA stays."""
+    import json
+
+    clusters = _three_clusters(session)
+    app = service.connect_app(
+        session, name="clips-api", repo_full_name="acme/clips-api", workload_class="web",
+        env_map={"dev": (clusters["dev"].id, "clips")},
+    )
+    gsa = "clips-api-run@proj-a.iam.gserviceaccount.com"
+    member = "serviceAccount:proj-a.svc.id.goog[clips/clips-api]"
+    app.run_identity_json = json.dumps({
+        "gsa_by_project": {"proj-a": gsa}, "adopted": False, "roles": ["roles/aiplatform.user"],
+        "bindings": [["proj-a", gsa, member]],
+    })
+    session.commit()
+    gcp = FakeGCPClient(existing={
+        "service_accounts": [gsa],
+        "sa_bindings": [(gsa, member, "roles/iam.workloadIdentityUser")],
+        "project_bindings": [("proj-a", f"serviceAccount:{gsa}", "roles/aiplatform.user")],
+    })
+    service.delete_app(session, app.id, KubectlFactory(), gcp, delete_namespaces=True)
+    assert gsa not in gcp.service_accounts
+    assert gcp.sa_bindings == set() and gcp.project_bindings == set()
+
+    app2 = service.connect_app(
+        session, name="kobo", repo_full_name="acme/kobo", workload_class="gateway",
+        env_map={"dev": (clusters["dev"].id, "kobo")},
+    )
+    adopted = "kobo-room@proj-a.iam.gserviceaccount.com"
+    app2.run_identity_json = json.dumps({"gsa_by_project": {"proj-a": adopted}, "adopted": True, "roles": [], "bindings": []})
+    session.commit()
+    gcp2 = FakeGCPClient(existing={"service_accounts": [adopted]})
+    service.delete_app(session, app2.id, KubectlFactory(), gcp2, delete_namespaces=True)
+    assert adopted in gcp2.service_accounts  # adopted: never deleted

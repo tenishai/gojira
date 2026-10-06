@@ -82,9 +82,9 @@ class EnvSpec(BaseModel):
     def var_prefix(self) -> str:
         return "GOJIRA_" + re.sub(r"[^A-Z0-9]", "_", self.name.upper())
 
-    def platform_variables(self) -> dict[str, str]:
+    def platform_variables(self, run_sa: str = "") -> dict[str, str]:
         p = self.var_prefix
-        return {
+        out = {
             f"{p}_AR_REPO": self.ar_repo,
             f"{p}_WIF_PROVIDER": self.wif_provider,
             f"{p}_DEPLOY_SA": self.gsa_email,
@@ -92,6 +92,11 @@ class EnvSpec(BaseModel):
             f"{p}_LOCATION": self.location,
             f"{p}_GKE_CLUSTER": self.gke_cluster,
         }
+        if run_sa:
+            # The pod's GSA (identity:), applied to the KSA by CI's deploy
+            # step: an email names a project, so it travels as a variable.
+            out[f"{p}_RUN_SA"] = run_sa
+        return out
 
 
 class HpaOverride(BaseModel):
@@ -238,6 +243,8 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
         needs["config_mounts"] = cms
     if secrets := _read_mounts(doc.get("secret_mounts"), SecretMount):
         needs["secret_mounts"] = secrets
+    if isinstance(doc.get("identity"), dict):
+        needs["identity"] = Identity.model_validate(doc["identity"])
     if isinstance(doc.get("build_args"), dict):
         needs["build_args"] = {str(k): str(v) for k, v in doc["build_args"].items() if k}
     if doc.get("arch") in ARCHES:
@@ -377,6 +384,40 @@ def infer_app_needs(deployment_text: str) -> dict:
     return needs
 
 
+class Identity(BaseModel):
+    """The pod's own GCP identity, made and granted by the platform.
+
+    `gcp_roles` are project roles the app needs (Vertex, a bucket, …), each
+    one on the operator's allowlist (iam.grantable_roles). Gojira creates
+    `<app>-run@<project>` per project, grants the roles, binds the KSA
+    through Workload Identity and has CI annotate the ServiceAccount from a
+    repository variable — the GSA email names a project, so it is an
+    install fact and never written into the repo. `gsa` adopts a
+    hand-made account instead (granted and bound, never created or deleted):
+    kobo-room and litellm on the dogfood, 2026-10-02. Design:
+    docs/grants-and-platform-facts-design.md §1.
+    """
+
+    gcp_roles: list[str] = []
+    gsa: str = ""
+
+    @model_validator(mode="after")
+    def _well_formed(self):
+        for r in self.gcp_roles:
+            if not re.fullmatch(r"(roles|projects/[^/]+/roles|organizations/\d+/roles)/[A-Za-z0-9_.]+", r):
+                raise ValueError(f"identity.gcp_roles: {r!r} is not a role name")
+        if self.gsa and not re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]+\.iam\.gserviceaccount\.com", self.gsa):
+            raise ValueError(f"identity.gsa: {self.gsa!r} is not a service account email")
+        if not self.gcp_roles and not self.gsa:
+            raise ValueError("identity: name gcp_roles, a gsa to adopt, or both")
+        return self
+
+    @property
+    def project(self) -> str:
+        """The adopted GSA's project, or '' when Gojira makes the account."""
+        return self.gsa.split("@")[1].split(".")[0] if self.gsa else ""
+
+
 class FileMount(BaseModel):
     """A ConfigMap or Secret the app reads as a file, not as env.
 
@@ -431,6 +472,7 @@ class GeneratorSpec(BaseModel):
     secrets_from: list[str] = []
     config_from: list[str] = []  # envFrom ConfigMaps — non-secret config
     service_account: str = ""
+    identity: Identity | None = None  # the pod's GCP identity, platform-made
     data_mount: DataMount | None = None
     config_mounts: list[ConfigMount] = []  # ConfigMaps read as files
     secret_mounts: list[SecretMount] = []  # Secrets read as files (key files)
@@ -468,6 +510,19 @@ class GeneratorSpec(BaseModel):
     node_selector: dict[str, str] | None = None
     platform_arch: str = "amd64"
     platform_node_selector: dict[str, str] = {}
+
+    @property
+    def ksa_name(self) -> str:
+        """The pod's Kubernetes ServiceAccount: named by the contract, or the
+        app's own name once an identity makes Gojira render it."""
+        return self.service_account or (self.app if self.identity else "")
+
+    def run_gsa(self, env: "EnvSpec") -> str:
+        """The GSA the pod runs as in this environment's project: the adopted
+        one, or the `<app>-run@<project>` account Gojira makes per project."""
+        if not self.identity:
+            return ""
+        return self.identity.gsa or f"{self.app}-run@{env.project}.iam.gserviceaccount.com"
 
     @property
     def effective_arch(self) -> str:
@@ -793,6 +848,8 @@ def render(spec: GeneratorSpec) -> dict[str, str]:
         files[f"{base}/deployment.yaml"] = _t("k8s/deployment.yaml.j2", ctx)
         files[f"{base}/podmonitoring.yaml"] = _t("k8s/podmonitoring.yaml.j2", ctx)
         files[f"{base}/rules.yaml"] = _t("k8s/rules.yaml.j2", ctx)
+    if spec.identity:
+        files[f"{base}/serviceaccount.yaml"] = _t("k8s/serviceaccount.yaml.j2", ctx)
     if ctx["has_service"]:
         files[f"{base}/service.yaml"] = _t("k8s/service.yaml.j2", ctx)
     if spec.admin_port and not ctx["is_cron"]:

@@ -178,9 +178,25 @@ class CIConfig(BaseModel):
     runner: str = ""
 
 
+class IamConfig(BaseModel):
+    # The project roles an app may ask for in gojira.yaml `identity.gcp_roles`
+    # (GOJIRA_GRANTABLE_ROLES, comma list). A role not on the list fails the
+    # provision naming it: this is a security boundary, enforced, not the
+    # overrides-style social `justification`. Empty: identity: is refused.
+    grantable_roles: list[str] = []
+
+    @field_validator("grantable_roles", mode="before")
+    @classmethod
+    def _roles_from_string(cls, v):
+        if isinstance(v, str):
+            return [r.strip() for r in v.split(",") if r.strip()]
+        return v
+
+
 class Config(BaseModel):
     auth: AuthConfig = AuthConfig()
     ci: CIConfig = CIConfig()
+    iam: IamConfig = IamConfig()
     github: GitHubConfig = GitHubConfig()
     database: DatabaseConfig = DatabaseConfig()
     defaults: DefaultsConfig = DefaultsConfig()
