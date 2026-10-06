@@ -77,6 +77,11 @@ class App(Base):
     # Caller-created repos (cortex) opt in to auto-merging the setup PR — the
     # one-click deploy contract. Human-connected repos keep the review gate.
     auto_merge_setup_pr: Mapped[bool] = mapped_column(default=False, server_default="0")
+    # What the identity steps made or adopted for this app, so delete can
+    # reverse exactly that without re-reading the contract:
+    # {"gsa_by_project": {project: email}, "adopted": bool, "roles": [...],
+    #  "bindings": [[project, gsa, member]]}. NULL: no identity declared.
+    run_identity_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(default=utcnow, server_default=func.now())
 
     environments: Mapped[list["Environment"]] = relationship(

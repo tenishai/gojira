@@ -43,4 +43,8 @@ def init_db(engine) -> None:
                 "ALTER TABLE apps ADD COLUMN auto_merge_setup_pr BOOLEAN NOT NULL DEFAULT FALSE"
             ))
         log.info("migrated apps table: added auto_merge_setup_pr")
+    if "run_identity_json" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE apps ADD COLUMN run_identity_json TEXT"))
+        log.info("migrated apps table: added run_identity_json")
     log.info("database initialized")

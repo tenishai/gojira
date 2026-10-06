@@ -38,15 +38,18 @@ jobs:
 {% endif %}
     env:
       IMAGE: {{ d.v(env, 'AR_REPO') }}/{{ spec.app }}
+{% if spec.identity %}
+      RUN_SA: {{ d.v(env, 'RUN_SA') }}
+{% endif %}
 {% if source %}
       SOURCE_IMAGE: {{ d.v(source, 'AR_REPO') }}/{{ spec.app }}
 {% endif %}
     steps:
       - uses: actions/checkout@v4
 
-{{ d.require_vars(env) }}
+{{ d.require_vars(env, env.platform_variables(spec.run_gsa(env))) }}
 {% if source %}
-{{ d.require_vars(source) }}
+{{ d.require_vars(source, source.platform_variables()) }}
 {% endif %}
 
 {{ d.contract_check() }}
@@ -92,5 +95,5 @@ jobs:
           project_id: {{ d.v(env, 'PROJECT') }}
           use_dns_based_endpoint: true  # see gojira-ci.yaml (finding #14)
 
-{{ d.deploy_step(env.name, env.namespace, spec.app, '$GITHUB_REF_NAME', is_cron) }}
+{{ d.deploy_step(env.name, env.namespace, spec.app, '$GITHUB_REF_NAME', is_cron, spec.ksa_name if spec.identity else '') }}
 {% endfor %}

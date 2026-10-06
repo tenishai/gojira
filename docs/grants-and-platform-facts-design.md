@@ -19,7 +19,7 @@ platform knows**. Today three kinds of thing cross that line:
 The first two are needs the contract cannot express. The third is the
 platform writing itself into a repo. Three changes, one principle.
 
-## 1. `identity:` — the pod's GCP identity
+## 1. `identity:` — the pod's GCP identity — built 2026-10-06
 
 ```yaml
 service_account: kobo              # the KSA, as today (default: the app name)
@@ -36,7 +36,7 @@ same steps, different principal:
 | GSA | `<app>-deploy@<project>` | `<app>-run@<project>` |
 | Principal bound | GitHub OIDC via WIF (`attribute.repository/<repo>`) | the KSA via Workload Identity: `<project>.svc.id.goog[<namespace>/<service_account>]` |
 | Roles | fixed (`DEPLOY_ROLES`) | from the contract, each one in the operator's allowlist |
-| In the repo | the workflow's `service_account:` | nothing: Gojira renders `k8s/base/serviceaccount.yaml` with `iam.gke.io/gcp-service-account` set |
+| In the repo | the workflow's `service_account:` | the rendered `k8s/base/serviceaccount.yaml`, name only: the annotation's value is an email naming a project, so CI applies it from `GOJIRA_<ENV>_RUN_SA` (§3's rule, found while building) |
 | Teardown | app delete | app delete (purge drops the GSA) |
 
 Rules:

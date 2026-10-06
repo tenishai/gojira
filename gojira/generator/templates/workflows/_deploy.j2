@@ -4,7 +4,7 @@
 ${{ '{{' }} vars.{{ env.var_prefix }}_{{ fact }} {{ '}}' }}
 {%- endmacro %}
 
-{% macro require_vars(env) %}
+{% macro require_vars(env, names) %}
       - name: Platform variables for {{ env.name }}
         # Gojira set these on the repository when it connected it (and sets
         # them again on every Provision). Registry, deploy identity and
@@ -12,11 +12,11 @@ ${{ '{{' }} vars.{{ env.var_prefix }}_{{ fact }} {{ '}}' }}
         # this file is the same under any Gojira. Unset means this repo is
         # not connected to the Gojira whose workflow is running.
         env:
-{% for name in env.platform_variables() %}
+{% for name in names %}
           {{ name }}: {{ v(env, name[(env.var_prefix | length) + 1:]) }}
 {% endfor %}
         run: |
-          for name in {{ env.platform_variables() | join(' ') }}; do
+          for name in {{ names | join(' ') }}; do
             if [ -z "${!name}" ]; then
               echo "::error::$name is not set on this repository — it is not connected to a Gojira that set it. Connect the repo there, or press Provision again."
               exit 1
@@ -42,7 +42,7 @@ ${{ '{{' }} vars.{{ env.var_prefix }}_{{ fact }} {{ '}}' }}
           fi
 {%- endmacro %}
 
-{% macro deploy_step(name, namespace, app, tag_expr, is_cron) %}
+{% macro deploy_step(name, namespace, app, tag_expr, is_cron, ksa='') %}
       - name: Deploy to {{ name }}
         run: |
           cd k8s/overlays/{{ name }}
@@ -86,6 +86,15 @@ ${{ '{{' }} vars.{{ env.var_prefix }}_{{ fact }} {{ '}}' }}
             sleep 30
           done
           [ "$ok" = true ] || { echo "deploy failed after retries"; exit 1; }
+{% if ksa %}
+          # The pod's Google identity (gojira.yaml identity:). The email names
+          # a project, so it comes from this environment's variable, not from
+          # the manifest; apply never managed this annotation, so it keeps it.
+          # GKE resolves the mapping when a pod asks for a token, so pods
+          # started a moment before this line still get it.
+          kubectl -n {{ namespace }} annotate serviceaccount {{ ksa }} \
+            "iam.gke.io/gcp-service-account=$RUN_SA" --overwrite
+{% endif %}
 {% if not is_cron %}
           kubectl -n {{ namespace }} rollout status deployment/{{ app }} --timeout=600s
 

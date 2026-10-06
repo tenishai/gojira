@@ -852,3 +852,50 @@ def test_unknown_arch_is_refused():
         spec(arch="sparc")
     with pytest.raises(ValueError, match="platform arch"):
         spec(platform_arch="sparc")
+
+
+
+# --- identity: the pod's GCP identity (2026-10-06, design §1) -------------------
+
+
+def test_identity_renders_the_ksa_and_leaves_the_annotation_to_ci():
+    from gojira.generator import Identity
+
+    files = render(spec(identity=Identity(gcp_roles=["roles/aiplatform.user"])))
+    sa = yaml.safe_load(files["k8s/base/serviceaccount.yaml"])
+    assert sa["kind"] == "ServiceAccount" and sa["metadata"]["name"] == "atlas"
+    assert "annotations" not in sa["metadata"]          # the email names a project: CI applies it
+    pod, _ = _first_container(files)
+    assert pod["serviceAccountName"] == "atlas"
+    assert "serviceaccount.yaml" in files["k8s/base/kustomization.yaml"]
+    ci = files[".github/workflows/gojira-ci.yaml"]
+    assert "RUN_SA: ${{ vars.GOJIRA_DEV_RUN_SA }}" in ci
+    assert "GOJIRA_DEV_RUN_SA" in ci.split("Platform variables for dev")[1].split("run:")[0]
+    assert 'annotate serviceaccount atlas \\\n            "iam.gke.io/gcp-service-account=$RUN_SA" --overwrite' in ci
+    # the contract round-trips; a named service_account is honored
+    assert read_app_needs(files["gojira.yaml"])["identity"].gcp_roles == ["roles/aiplatform.user"]
+    named = render(spec(service_account="svc", identity=Identity(gsa="shared-run@proj-x.iam.gserviceaccount.com")))
+    assert yaml.safe_load(named["k8s/base/serviceaccount.yaml"])["metadata"]["name"] == "svc"
+    assert "gsa: shared-run@proj-x.iam.gserviceaccount.com" in named["gojira.yaml"]
+
+
+def test_without_an_identity_nothing_changes():
+    files = render(spec())
+    assert "k8s/base/serviceaccount.yaml" not in files
+    assert "RUN_SA" not in files[".github/workflows/gojira-ci.yaml"]
+    assert "annotate serviceaccount" not in files[".github/workflows/gojira-ci.yaml"]
+    assert "identity:" not in files["gojira.yaml"]
+
+
+def test_identity_contract_is_validated():
+    import pytest
+    from gojira.generator import Identity
+
+    with pytest.raises(ValueError, match="not a role name"):
+        Identity(gcp_roles=["owner"])
+    with pytest.raises(ValueError, match="not a service account email"):
+        Identity(gsa="not-an-email")
+    with pytest.raises(ValueError, match="name gcp_roles"):
+        Identity()
+    assert Identity(gsa="kobo-room@shaz-learning.iam.gserviceaccount.com").project == "shaz-learning"
+    assert read_app_needs("identity: {gcp_roles: [roles/storage.objectViewer]}\n")["identity"].gcp_roles == ["roles/storage.objectViewer"]

@@ -128,6 +128,9 @@ overrides:                       # optional; justification required
   justification: "p99 CPU is 800m measured over 14 days"
 # what the app needs from outside the image — the objects stay app-authored
 service_account: clips-api
+identity:                                   # the pod's GCP identity, made and granted by the platform
+  gcp_roles: [roles/aiplatform.user]        # each on the install's allowlist (GOJIRA_GRANTABLE_ROLES)
+  # gsa: kobo-room@my-project.iam.gserviceaccount.com   # adopt a hand-made account instead
 secrets_from: [clips-api-secrets]           # envFrom Secrets
 config_from: [clips-api-env]                # envFrom ConfigMaps
 env: { LOG_LEVEL: info }                    # plain, non-secret, in git
@@ -172,6 +175,17 @@ image `gojira-app` for CI to resolve. A repo is therefore identical under any
 Gojira; a second install that connects it sets its own values instead of
 rewriting files (issue #87, 2026-10-06). The first workflow step refuses to
 run on a repo whose variables are unset, naming the one that is missing.
+
+`identity` is the first *grant* in the vocabulary (design:
+`grants-and-platform-facts-design.md` §1, built 2026-10-06). The repo says
+which project roles the pod needs; the platform makes `<app>-run@<project>`
+(or adopts the `gsa` named), grants the roles — each one on the operator's
+allowlist, a security boundary enforced at provision, not a social
+`justification` — binds every environment's KSA to it through Workload
+Identity, renders the ServiceAccount, and has CI annotate it from
+`GOJIRA_<ENV>_RUN_SA`, because the email names a project. The setup PR body
+lists the grants so the contract's reviewer sees the consequence; app delete
+reverses them, and drops the GSA only if Gojira made it.
 
 `arch` and `node_selector` are the one place the contract may stay silent and
 still be complete: what the runners can build and what the clusters can run

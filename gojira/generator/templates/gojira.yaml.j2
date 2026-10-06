@@ -15,6 +15,18 @@ schedule: "{{ spec.schedule }}"
 {% if spec.service_account %}
 service_account: {{ spec.service_account }}
 {% endif %}
+{% if spec.identity %}
+identity:                     # the pod's GCP identity, made and granted by the platform
+{% if spec.identity.gsa %}
+  gsa: {{ spec.identity.gsa }}   # adopted: granted and bound, never created or deleted
+{% endif %}
+{% if spec.identity.gcp_roles %}
+  gcp_roles:                  # project roles the pod needs; each must be on the install's allowlist
+{% for r in spec.identity.gcp_roles %}
+    - {{ r }}
+{% endfor %}
+{% endif %}
+{% endif %}
 {% if spec.secrets_from %}
 secrets_from: [{{ spec.secrets_from | join(", ") }}]
 {% endif %}
