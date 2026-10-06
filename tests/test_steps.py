@@ -641,52 +641,73 @@ def test_owner_conditions_round_trip():
     assert owners_in_condition("") is None
 
 
-# --- CI_RUNNER on the repo, from the install's knob (2026-09-30) ------------------
+# --- the install's facts on the repo, as Actions variables (issue #87, 2026-10-06) --
+# Before this, CI_RUNNER was the only variable (2026-09-30); the registry,
+# deploy identity and cluster were literals in the generated workflow.
 
 
 def _app_ctx(single_env, github, runner=""):
     app, cluster, env = single_env
     cfg = Config()
     cfg.ci.runner = runner
-    return ProvisionContext(app=app, config=cfg, clients={"github": github}, environments=[env])
+    gcp = FakeGCPClient(project_num="773958892580")
+    return ProvisionContext(app=app, config=cfg, clients={"github": github, "gcp": gcp}, environments=[env])
 
 
-def test_ci_runner_is_set_on_the_repo_when_the_install_names_one(single_env):
-    from gojira.steps import SetCiRunner
+EXPECTED_DEV_VARS = {
+    "GOJIRA_DEV_AR_REPO": "us-central1-docker.pkg.dev/acme-499303/apps",
+    "GOJIRA_DEV_WIF_PROVIDER": "projects/773958892580/locations/global/workloadIdentityPools/gojira/providers/github",
+    "GOJIRA_DEV_DEPLOY_SA": "clips-api-deploy@acme-499303.iam.gserviceaccount.com",
+    "GOJIRA_DEV_PROJECT": "acme-499303",
+}
+
+
+def test_platform_facts_are_set_on_the_repo_as_variables(single_env):
+    from gojira.steps import SetRepoVariables
+
+    gh = FakeGitHubClient()
+    ctx = _app_ctx(single_env, gh)
+    assert SetRepoVariables().check(ctx) is None
+    out = SetRepoVariables().apply(ctx)
+    assert out.startswith("set GOJIRA_DEV_AR_REPO")
+    got = {k: v for (repo, k), v in gh.variables.items() if repo == "acme/clips-api"}
+    for name, value in EXPECTED_DEV_VARS.items():
+        assert got[name] == value
+    assert {"GOJIRA_DEV_LOCATION", "GOJIRA_DEV_GKE_CLUSTER"} <= set(got)
+    assert "CI_RUNNER" not in got  # hosted runners: nothing to say
+    assert SetRepoVariables().check(ctx) == "6 variables current"  # idempotent
+
+
+def test_ci_runner_rides_along_when_the_install_names_one(single_env):
+    from gojira.steps import SetRepoVariables
 
     gh = FakeGitHubClient()
     ctx = _app_ctx(single_env, gh, runner="self-hosted-0")
-    assert SetCiRunner().check(ctx) is None
-    assert SetCiRunner().apply(ctx) == "CI_RUNNER=self-hosted-0"
+    SetRepoVariables().apply(ctx)
     assert gh.variables[("acme/clips-api", "CI_RUNNER")] == "self-hosted-0"
-    assert SetCiRunner().check(ctx) == "CI_RUNNER=self-hosted-0"  # idempotent: skipped next time
+    assert SetRepoVariables().check(ctx) == "7 variables current"
 
 
-def test_ci_runner_is_left_alone_for_hosted_runners(single_env):
-    from gojira.steps import SetCiRunner
-
-    gh = FakeGitHubClient()
-    assert SetCiRunner().check(_app_ctx(single_env, gh)) == "hosted runners"
-    assert gh.variables == {}
-
-
-def test_ci_runner_change_is_applied(single_env):
-    from gojira.steps import SetCiRunner
+def test_only_drifted_variables_are_rewritten(single_env):
+    from gojira.steps import SetRepoVariables
 
     gh = FakeGitHubClient()
-    gh.variables[("acme/clips-api", "CI_RUNNER")] = "old"
     ctx = _app_ctx(single_env, gh, runner="self-hosted-0")
-    assert SetCiRunner().check(ctx) is None
-    SetCiRunner().apply(ctx)
+    SetRepoVariables().apply(ctx)
+    gh.variables[("acme/clips-api", "CI_RUNNER")] = "old"          # someone changed it
+    gh.variables[("acme/clips-api", "GOJIRA_DEV_PROJECT")] = "x"    # or that
+    assert SetRepoVariables().check(ctx) is None
+    assert SetRepoVariables().apply(ctx) == "set GOJIRA_DEV_PROJECT, CI_RUNNER"
     assert gh.variables[("acme/clips-api", "CI_RUNNER")] == "self-hosted-0"
+    assert gh.variables[("acme/clips-api", "GOJIRA_DEV_PROJECT")] == "acme-499303"
 
 
-def test_ci_runner_names_the_missing_app_permission_on_403(single_env):
-    from gojira.steps import SetCiRunner
+def test_variables_step_names_the_missing_app_permission_on_403(single_env):
+    from gojira.steps import SetRepoVariables
 
     class Forbidden(FakeGitHubClient):
         def repo_variable(self, repo, name):
-            raise RuntimeError('read variable CI_RUNNER in acme/clips-api failed: 403 {"message":"Resource not accessible by integration"}')
+            raise RuntimeError('read variable GOJIRA_DEV_AR_REPO in acme/clips-api failed: 403 {"message":"Resource not accessible by integration"}')
 
     with pytest.raises(RuntimeError, match="Variables: Read & write"):
-        SetCiRunner().check(_app_ctx(single_env, Forbidden(), runner="self-hosted-0"))
+        SetRepoVariables().check(_app_ctx(single_env, Forbidden()))

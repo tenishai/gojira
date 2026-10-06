@@ -42,13 +42,18 @@ class DefaultsConfig(BaseModel):
     # your clusters provide that arch (Autopilot: a compute class; Standard:
     # a pool label). YAML flow map, like namespace_labels.
     node_selector: dict[str, str] = {}
+    # The cluster an environment name means on this install when a connect
+    # request names none ({dev: gojira-sandbox}). With it, a contract or an
+    # API call can say `environments: [dev]` and be deployable under any
+    # Gojira (issue #87). YAML flow map, like namespace_labels.
+    environment_clusters: dict[str, str] = {}
 
-    @field_validator("namespace_labels", "node_selector", mode="before")
+    @field_validator("namespace_labels", "node_selector", "environment_clusters", mode="before")
     @classmethod
     def _labels_from_string(cls, v):
         # The in-cluster configmap interpolates these from one env var each
-        # (GOJIRA_NAMESPACE_LABELS, GOJIRA_DEFAULT_NODE_SELECTOR: YAML flow
-        # maps); empty means none.
+        # (GOJIRA_NAMESPACE_LABELS, GOJIRA_DEFAULT_NODE_SELECTOR,
+        # GOJIRA_ENVIRONMENT_CLUSTERS: YAML flow maps); empty means none.
         if isinstance(v, str):
             return yaml.safe_load(v) or {}
         return v

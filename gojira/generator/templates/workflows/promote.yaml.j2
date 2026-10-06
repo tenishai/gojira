@@ -27,7 +27,6 @@ env:
 jobs:
 {% for env in spec.promote_envs %}
 {% set source = (spec.environments | selectattr('name', 'equalto', env.copy_from) | first) if env.copy_from else none %}
-{% set needs_copy = source and source.ar_repo != env.ar_repo %}
   deploy-{{ env.name }}:
 {% if not loop.first %}
     needs: deploy-{{ spec.promote_envs[loop.index0 - 1].name }}
@@ -38,42 +37,46 @@ jobs:
     environment: production
 {% endif %}
     env:
-      IMAGE: {{ env.ar_repo }}/{{ spec.app }}
+      IMAGE: {{ d.v(env, 'AR_REPO') }}/{{ spec.app }}
+{% if source %}
+      SOURCE_IMAGE: {{ d.v(source, 'AR_REPO') }}/{{ spec.app }}
+{% endif %}
     steps:
       - uses: actions/checkout@v4
+
+{{ d.require_vars(env) }}
+{% if source %}
+{{ d.require_vars(source) }}
+{% endif %}
 
 {{ d.contract_check() }}
 
       - id: auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: {{ env.wif_provider }}
-          service_account: {{ env.gsa_email }}
+          workload_identity_provider: {{ d.v(env, 'WIF_PROVIDER') }}
+          service_account: {{ d.v(env, 'DEPLOY_SA') }}
 
       - uses: google-github-actions/setup-gcloud@v2
-{% if needs_copy %}
-
-      - name: Configure docker for source + target registries
-        run: |
-{% for host in [source.ar_host, env.ar_host] | unique %}
-          gcloud auth configure-docker {{ host }} --quiet
-{% endfor %}
+{% if source %}
 
       - uses: imjasonh/setup-crane@v0.4
 
       - name: Copy tested image from {{ source.name }} (no rebuild)
+        # Whether the two environments share a registry is the install's
+        # business, so it is decided here from the variables, not rendered.
         run: |
-          crane copy \
-            "{{ source.ar_repo }}/{{ spec.app }}:$GITHUB_REF_NAME" \
-            "$IMAGE:$GITHUB_REF_NAME"
-{% elif env.copy_from %}
-
-      # {{ env.name }} shares {{ source.name }}'s registry — the tested image is
-      # already present, so there is nothing to copy. Deploy it as-is.
+          if [ "$SOURCE_IMAGE" = "$IMAGE" ]; then
+            echo "{{ env.name }} shares {{ source.name }}'s registry — the tested image is already present"
+            exit 0
+          fi
+          gcloud auth configure-docker "${SOURCE_IMAGE%%/*}" --quiet
+          gcloud auth configure-docker "${IMAGE%%/*}" --quiet
+          crane copy "$SOURCE_IMAGE:$GITHUB_REF_NAME" "$IMAGE:$GITHUB_REF_NAME"
 {% else %}
 
       - name: Configure docker for Artifact Registry
-        run: gcloud auth configure-docker {{ env.ar_host }} --quiet
+        run: gcloud auth configure-docker "${IMAGE%%/*}" --quiet
 
       - name: Build and push image
         # AR_TOKEN: see ci.yaml — private AR package indexes via WIF.
@@ -84,9 +87,9 @@ jobs:
 
       - uses: google-github-actions/get-gke-credentials@v2
         with:
-          cluster_name: {{ env.gke_cluster }}
-          location: {{ env.location }}
-          project_id: {{ env.project }}
+          cluster_name: {{ d.v(env, 'GKE_CLUSTER') }}
+          location: {{ d.v(env, 'LOCATION') }}
+          project_id: {{ d.v(env, 'PROJECT') }}
           use_dns_based_endpoint: true  # see gojira-ci.yaml (finding #14)
 
 {{ d.deploy_step(env.name, env.namespace, spec.app, '$GITHUB_REF_NAME', is_cron) }}
