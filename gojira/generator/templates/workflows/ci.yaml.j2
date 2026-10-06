@@ -19,6 +19,9 @@ permissions:
 
 env:
   IMAGE: {{ d.v(env, 'AR_REPO') }}/{{ spec.app }}
+{% if spec.identity %}
+  RUN_SA: {{ d.v(env, 'RUN_SA') }}
+{% endif %}
   GOJIRA_CONTRACT: {{ contract_sha }}
 
 jobs:
@@ -28,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-{{ d.require_vars(env) }}
+{{ d.require_vars(env, env.platform_variables(spec.run_gsa(env))) }}
 
 {{ d.contract_check() }}
 
@@ -64,4 +67,4 @@ jobs:
           # cluster (finding #14).
           use_dns_based_endpoint: true
 
-{{ d.deploy_step(env.name, env.namespace, spec.app, '${GITHUB_SHA::12}', is_cron) }}
+{{ d.deploy_step(env.name, env.namespace, spec.app, '${GITHUB_SHA::12}', is_cron, spec.ksa_name if spec.identity else '') }}

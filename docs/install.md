@@ -214,6 +214,11 @@ sets storage limits itself. The capture PR records them too.
   connected to another Gojira gets that install's values. Set
   `GOJIRA_ENVIRONMENT_CLUSTERS` so a connect request can say `dev` without
   naming your cluster.
+- **Apps that need a Google identity** (Vertex, a bucket): set
+  `GOJIRA_GRANTABLE_ROLES` to the roles you are willing to grant, and an app
+  says `identity: {gcp_roles: [roles/aiplatform.user]}` in its `gojira.yaml`.
+  Gojira makes the account, grants, binds and annotates; the setup PR lists
+  what it granted. Empty means no app may declare one.
 - **Upgrading an install from before this** (October 2026): give the App
   the Variables permission first ([github-app-setup.md](github-app-setup.md)
   §1); existing apps keep their old workflows until you press **Provision**
@@ -299,6 +304,8 @@ shortest uninstall there is.
 | App is `active` but its namespace is empty | Connected a repo that already held Gojira's files; nothing was merged, so nothing deployed | **Redeploy** on the app page |
 | Redeploy: `403 Resource not accessible by integration` | The GitHub App has Actions: Read | Set Actions to Read & write on the App, accept the change on the installation ([github-app-setup.md](github-app-setup.md) §1) |
 | Provision: `the GitHub App cannot manage Actions variables` | The App lacks the Variables permission; the generated workflows read the install's registry, identity and cluster from repository variables Gojira sets | Set Variables to Read & write on the App, accept the change on the installation, press **Provision** again |
+| Provision: `this install does not grant roles/...` | The contract's `identity.gcp_roles` names a role outside `GOJIRA_GRANTABLE_ROLES` | Add it to the allowlist and `make install`, or take it out of the contract — a reviewer's decision either way |
+| Provision: `identity.gsa names ... which does not exist` | The contract adopts a service account that is not there | Create it (or fix the email); Gojira adopts accounts, it never makes the one you name |
 | A repo's CI: `GOJIRA_DEV_AR_REPO is not set on this repository` | The workflow is Gojira's but this install never set the repo's variables (a fork, a repo moved between installs, or an install upgraded before its App had the Variables permission) | Connect the repo here, or press **Provision** again on its app |
 | App stays `awaiting_pr` after the merge | Gojira has not been told | Step 7: **check PR merge** or the `sync` call |
 | Pod `exec format error` | An image built on ARM for amd64 nodes | Build through `make install` (Cloud Build), not local Docker |

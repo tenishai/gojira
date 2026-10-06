@@ -495,6 +495,32 @@ def delete_app(
                     )
                     failures.append(str(exc))
 
+        # The pod's identity (EnsureRunIdentity / GrantRunRoles /
+        # BindRunWorkloadIdentity), from the record those steps left: roles
+        # and WI bindings go; the GSA goes only if Gojira made it.
+        ident = json.loads(app.run_identity_json or "{}")
+        for project, gsa, member in ident.get("bindings", []):
+            try:
+                if gcp.remove_sa_binding(project, gsa, member, "roles/iam.workloadIdentityUser"):
+                    bindings_removed += 1
+            except Exception as exc:
+                log.warning("could not remove WI binding %s on %s: %s", member, gsa, exc)
+                failures.append(str(exc))
+        for project, gsa in ident.get("gsa_by_project", {}).items():
+            for role in ident.get("roles", []):
+                try:
+                    if gcp.remove_project_binding(project, f"serviceAccount:{gsa}", role):
+                        bindings_removed += 1
+                except Exception as exc:
+                    log.warning("could not remove %s for %s on %s: %s", role, gsa, project, exc)
+                    failures.append(str(exc))
+            if not ident.get("adopted"):
+                try:
+                    gcp.delete_service_account(project, gsa)
+                except Exception as exc:
+                    log.warning("could not delete run GSA %s on %s: %s", gsa, project, exc)
+                    failures.append(str(exc))
+
         # GrantPromoteSourceReader (steps.py) grants a cross-project reader binding
         # on the SOURCE env's project for the copy-TARGET env's GSA — a pair the
         # per-project loop above can't reach (different member x project than its

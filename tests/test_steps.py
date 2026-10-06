@@ -5,6 +5,8 @@ Steps run against in-memory fakes, so the whole check/apply/skip/resume flow
 is exercised without touching gcloud, kubectl, or git.
 """
 
+import json
+
 import pytest
 from fakes import FakeGCPClient, FakeGitHubClient, FakeKubectlClient, KubectlFactory
 from sqlalchemy import create_engine, select
@@ -711,3 +713,133 @@ def test_variables_step_names_the_missing_app_permission_on_403(single_env):
 
     with pytest.raises(RuntimeError, match="Variables: Read & write"):
         SetRepoVariables().check(_app_ctx(single_env, Forbidden()))
+
+
+# --- identity: the pod's GCP identity, made and granted by the platform (2026-10-06) --
+# docs/grants-and-platform-facts-design.md §1. kobo-room and litellm were made
+# by hand (GSA, role, WI binding, annotation) because the contract had no
+# sentence for "let this pod call Vertex".
+
+
+_identity_apps = 0
+
+
+def _identity_ctx(session, roles=("roles/aiplatform.user",), gsa="", grantable=("roles/aiplatform.user",), multiproject=False):
+    global _identity_apps
+    from gojira.generator import Identity
+
+    _identity_apps += 1  # several contexts per session: distinct repos/clusters
+    app = _app(session, repo=f"acme/clips-api-{_identity_apps}")
+    envs = [_env(session, app, _cluster(session, f"dev{_identity_apps}", "proj-a"), "dev")]
+    if multiproject:
+        envs.append(_env(session, app, _cluster(session, f"prod{_identity_apps}", "proj-b"), "prod"))
+    gcp = FakeGCPClient(project_num="773958892580", existing={"service_accounts": [gsa]} if gsa else None)
+    cfg = Config.model_validate({"iam": {"grantable_roles": list(grantable)}})
+    ctx = ProvisionContext(app=app, config=cfg, clients={"gcp": gcp, "github": FakeGitHubClient()}, environments=envs)
+    ctx.spec = build_spec(ctx, gcp).model_copy(update={
+        "identity": Identity(gcp_roles=list(roles), gsa=gsa), "service_account": "",
+    })
+    return ctx, gcp
+
+
+def test_identity_makes_one_run_gsa_per_project(session):
+    from gojira.steps import EnsureRunIdentity
+
+    ctx, gcp = _identity_ctx(session, multiproject=True)
+    assert EnsureRunIdentity().check(ctx) is None
+    out = EnsureRunIdentity().apply(ctx)
+    assert out == "clips-api-run@proj-a.iam.gserviceaccount.com, clips-api-run@proj-b.iam.gserviceaccount.com"
+    assert "create_sa:clips-api-run@proj-a.iam.gserviceaccount.com" in gcp.calls
+    assert EnsureRunIdentity().check(ctx) is not None  # idempotent
+    rec = json.loads(ctx.app.run_identity_json)
+    assert rec["gsa_by_project"] == {
+        "proj-a": "clips-api-run@proj-a.iam.gserviceaccount.com",
+        "proj-b": "clips-api-run@proj-b.iam.gserviceaccount.com",
+    }
+    assert rec["adopted"] is False
+
+
+def test_identity_adopts_an_existing_gsa_and_refuses_a_missing_one(session):
+    from gojira.steps import EnsureRunIdentity, IdentityRefused
+
+    ctx, gcp = _identity_ctx(session, gsa="kobo-room@proj-a.iam.gserviceaccount.com")
+    assert EnsureRunIdentity().check(ctx) == "kobo-room@proj-a.iam.gserviceaccount.com"
+    assert not [c for c in gcp.calls if c.startswith("create_sa")]
+    assert json.loads(ctx.app.run_identity_json)["adopted"] is True
+
+    ctx2, _ = _identity_ctx(session, gsa="ghost-sa@proj-a.iam.gserviceaccount.com")
+    ctx2.clients["gcp"].service_accounts.clear()
+    with pytest.raises(IdentityRefused, match="does not exist"):
+        EnsureRunIdentity().check(ctx2)
+
+
+def test_roles_off_the_allowlist_are_refused_by_name(session):
+    from gojira.steps import GrantRunRoles, IdentityRefused
+
+    ctx, gcp = _identity_ctx(session, roles=("roles/aiplatform.user", "roles/owner"))
+    with pytest.raises(IdentityRefused, match=r"roles/owner.*GOJIRA_GRANTABLE_ROLES"):
+        GrantRunRoles().check(ctx)
+    assert not [c for c in gcp.calls if c.startswith("proj_bind")]
+
+    empty, _ = _identity_ctx(session, grantable=())
+    with pytest.raises(IdentityRefused, match="allows nothing"):
+        GrantRunRoles().check(empty)
+
+
+def test_allowed_roles_are_granted_to_the_run_gsa_on_each_project(session):
+    from gojira.steps import GrantRunRoles
+
+    ctx, gcp = _identity_ctx(session, multiproject=True)
+    assert GrantRunRoles().check(ctx) is None
+    assert GrantRunRoles().apply(ctx) == "roles/aiplatform.user"
+    for project in ("proj-a", "proj-b"):
+        assert (project, f"serviceAccount:clips-api-run@{project}.iam.gserviceaccount.com", "roles/aiplatform.user") in gcp.project_bindings
+    assert GrantRunRoles().check(ctx) == "roles/aiplatform.user"
+    assert json.loads(ctx.app.run_identity_json)["roles"] == ["roles/aiplatform.user"]
+
+
+def test_workload_identity_binds_each_environments_ksa(session):
+    from gojira.steps import BindRunWorkloadIdentity
+
+    ctx, gcp = _identity_ctx(session, multiproject=True)
+    assert BindRunWorkloadIdentity().check(ctx) is None
+    out = BindRunWorkloadIdentity().apply(ctx)
+    assert "serviceAccount:proj-a.svc.id.goog[clips/clips-api]" in out
+    assert ("clips-api-run@proj-b.iam.gserviceaccount.com",
+            "serviceAccount:proj-b.svc.id.goog[clips/clips-api]",
+            "roles/iam.workloadIdentityUser") in gcp.sa_bindings
+    assert BindRunWorkloadIdentity().check(ctx) is not None
+    rec = json.loads(ctx.app.run_identity_json)
+    assert ["proj-a", "clips-api-run@proj-a.iam.gserviceaccount.com", "serviceAccount:proj-a.svc.id.goog[clips/clips-api]"] in rec["bindings"]
+
+
+def test_adopted_gsa_is_bound_on_its_own_project(session):
+    """A GSA in another project than the cluster's: the binding lives on the
+    GSA, so its project is the GSA's, while the member names the cluster's."""
+    from gojira.steps import BindRunWorkloadIdentity
+
+    ctx, gcp = _identity_ctx(session, gsa="shared-run@proj-x.iam.gserviceaccount.com")
+    BindRunWorkloadIdentity().apply(ctx)
+    assert ("shared-run@proj-x.iam.gserviceaccount.com",
+            "serviceAccount:proj-a.svc.id.goog[clips/clips-api]",
+            "roles/iam.workloadIdentityUser") in gcp.sa_bindings
+
+
+def test_identity_steps_are_quiet_without_an_identity(session):
+    from gojira.steps import BindRunWorkloadIdentity, EnsureRunIdentity, GrantRunRoles
+
+    ctx, gcp = _identity_ctx(session)
+    ctx.spec = ctx.spec.model_copy(update={"identity": None})
+    for step in (EnsureRunIdentity(), GrantRunRoles(), BindRunWorkloadIdentity()):
+        assert step.check(ctx) == "no identity declared"
+    assert gcp.calls == []
+    assert ctx.app.run_identity_json is None
+
+
+def test_run_sa_reaches_the_repo_as_a_variable(session):
+    from gojira.steps import SetRepoVariables
+
+    ctx, _ = _identity_ctx(session)
+    SetRepoVariables().apply(ctx)
+    assert ctx.clients["github"].variables[(ctx.app.repo_full_name, "GOJIRA_DEV_RUN_SA")] == "clips-api-run@proj-a.iam.gserviceaccount.com"
+    assert SetRepoVariables().check(ctx) == "7 variables current"
