@@ -359,6 +359,19 @@ def test_clone_uses_token_authed_remote(keypair, tmp_path):
     assert url == "https://x-access-token:tok-100@github.com/acme/web.git"
 
 
+def test_commits_are_signed_off_in_the_authors_name(keypair, tmp_path):
+    """Repos that enforce the DCO reject a setup PR whose commit carries no
+    Signed-off-by; `-s` adds one from the same user.name/email the commit is
+    authored with, so the trailer matches the author as the check requires."""
+    server = FakeGitHubServer()
+    runner = RecordingRunner(results={"status --porcelain": CommandResult(0, " M gojira.yaml\n", "")})
+    client = make_client(server, keypair, runner=runner)
+    assert client.commit_all(tmp_path, "Add Gojira deploy config") is True
+    commit = next(c for c in runner.calls if "commit" in c)
+    assert "-s" in commit and commit.index("-s") < commit.index("-m")
+    assert "user.name=Gojira" in commit and "user.email=noreply@gojira.dev" in commit
+
+
 def test_clone_failure_raises(keypair, tmp_path):
     server = FakeGitHubServer()
     runner = RecordingRunner(results={"clone": CommandResult(128, "", "fatal: nope")})
