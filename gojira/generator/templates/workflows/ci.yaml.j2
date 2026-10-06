@@ -18,7 +18,7 @@ permissions:
   id-token: write
 
 env:
-  IMAGE: {{ env.ar_repo }}/{{ spec.app }}
+  IMAGE: {{ d.v(env, 'AR_REPO') }}/{{ spec.app }}
   GOJIRA_CONTRACT: {{ contract_sha }}
 
 jobs:
@@ -28,18 +28,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+{{ d.require_vars(env) }}
+
 {{ d.contract_check() }}
 
       - id: auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: {{ env.wif_provider }}
-          service_account: {{ env.gsa_email }}
+          workload_identity_provider: {{ d.v(env, 'WIF_PROVIDER') }}
+          service_account: {{ d.v(env, 'DEPLOY_SA') }}
 
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Configure docker for Artifact Registry
-        run: gcloud auth configure-docker {{ env.ar_host }} --quiet
+        run: gcloud auth configure-docker "${IMAGE%%/*}" --quiet
 
       - name: Build and push image
         # AR_TOKEN lets a Dockerfile resolve private Artifact Registry package
@@ -53,9 +55,9 @@ jobs:
 
       - uses: google-github-actions/get-gke-credentials@v2
         with:
-          cluster_name: {{ env.gke_cluster }}
-          location: {{ env.location }}
-          project_id: {{ env.project }}
+          cluster_name: {{ d.v(env, 'GKE_CLUSTER') }}
+          location: {{ d.v(env, 'LOCATION') }}
+          project_id: {{ d.v(env, 'PROJECT') }}
           # IAM-authenticated DNS endpoint: works for private control planes
           # (GitHub runners can't reach a private IP) and public ones alike.
           # The provisioner ensures DNS access is enabled on every registered

@@ -198,12 +198,16 @@ def test_concurrency_scoped_by_workflow():
         assert "github.workflow" in concurrency["group"]
 
 
-def test_sameproject_promote_deploys_without_crane_copy():
-    """prod shares qa's registry, so the tested image is already present."""
+def test_promote_decides_copy_or_not_at_run_time():
+    """Whether prod shares qa's registry is the install's fact, read from the
+    repository variables at run time (issue #87) — the rendered workflow is
+    the same either way: qa builds once; prod copies only when the two
+    registries differ, and never builds."""
     promote = render(make_spec())[".github/workflows/gojira-promote.yaml"]
-    assert "crane copy" not in promote
-    # qa builds from scratch; prod neither builds nor copies — it deploys as-is
     assert promote.count("docker build") == 1
+    assert 'if [ "$SOURCE_IMAGE" = "$IMAGE" ]' in promote
+    assert "crane copy \"$SOURCE_IMAGE:$GITHUB_REF_NAME\" \"$IMAGE:$GITHUB_REF_NAME\"" in promote
+    assert "SOURCE_IMAGE: ${{ vars.GOJIRA_QA_AR_REPO }}/" in promote
 
 
 def test_multiproject_promote_crane_copies_into_prod():
@@ -297,3 +301,39 @@ def test_stamp_contract_rewrites_only_the_fingerprint():
         files[".github/workflows/gojira-ci.yaml"].replace(contract_fingerprint(files["gojira.yaml"]), "X")
     with pytest.raises(ValueError):
         stamp_contract("name: hand-written\n", edited)
+
+
+def test_the_rendered_repo_carries_none_of_the_installs_facts():
+    """Issue #87: registry, project, WIF provider, deploy GSA and cluster
+    reach CI as repository variables Gojira sets. Nothing generated into the
+    repo names them, so the repo is the same under any install."""
+    spec = make_spec(multiproject=True)
+    files = render(spec)
+    generated = "\n".join(
+        text for path, text in files.items()
+        if path.startswith(".github/") or path.startswith("k8s/")
+    )
+    for env in spec.environments:
+        for fact in (env.ar_repo, env.project, env.wif_provider, env.gsa_email, env.gke_cluster):
+            assert fact not in generated, f"{fact} leaked into the generated files"
+    for env in spec.environments:
+        for name in env.platform_variables():
+            assert f"vars.{name}" in files[".github/workflows/gojira-ci.yaml"] + files[".github/workflows/gojira-promote.yaml"]
+
+
+def test_the_variables_guard_fails_an_unconnected_repo(tmp_path):
+    """The first workflow step refuses to run without the install's variables,
+    naming the missing one — run for real, in bash, like the contract check."""
+    import re
+    import subprocess
+
+    ci = render(make_spec())[".github/workflows/gojira-ci.yaml"]
+    step = yaml.safe_load(ci)["jobs"]["build-and-deploy-dev"]["steps"][1]
+    assert step["name"] == "Platform variables for dev"
+    env = {k: "x" for k in step["env"]}
+    ok = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, capture_output=True, text=True)
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    env["GOJIRA_DEV_WIF_PROVIDER"] = ""
+    bad = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, capture_output=True, text=True)
+    assert bad.returncode == 1
+    assert re.search(r"::error::GOJIRA_DEV_WIF_PROVIDER is not set", bad.stdout)

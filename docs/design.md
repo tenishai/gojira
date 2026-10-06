@@ -117,7 +117,7 @@ class or overrides change.
 ```yaml
 app: clips-api
 class: web
-cluster: my-dev-cluster          # must match a Gojira-registered cluster
+cluster: my-dev-cluster          # a Gojira-registered cluster; omit for the install's default per environment
 namespace: clips
 environments: [dev, qa, prod]
 port: 9000                       # optional; the class default is 8080
@@ -162,6 +162,16 @@ stack's own apps (2026-09-30): a config file, a key file, and an image that
 installs private packages from an index named at build time. `build_args`
 values live in the contract and so in git; the one secret a build gets,
 `AR_TOKEN`, the platform adds itself.
+
+Nothing of the *install* is written into the repo. The generated workflows
+read the registry, the deploy identity and the cluster coordinates of every
+environment from repository Actions variables Gojira sets at provision
+(`GOJIRA_<ENV>_AR_REPO`, `_WIF_PROVIDER`, `_DEPLOY_SA`, `_PROJECT`,
+`_LOCATION`, `_GKE_CLUSTER`, plus `CI_RUNNER`), and the overlay names the
+image `gojira-app` for CI to resolve. A repo is therefore identical under any
+Gojira; a second install that connects it sets its own values instead of
+rewriting files (issue #87, 2026-10-06). The first workflow step refuses to
+run on a repo whose variables are unset, naming the one that is missing.
 
 `arch` and `node_selector` are the one place the contract may stay silent and
 still be complete: what the runners can build and what the clusters can run
