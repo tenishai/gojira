@@ -74,6 +74,10 @@ class ProvisionContext:
     # contract (adopt mode): a human wrote this repo, so MergeSetupPr refuses
     # to auto-merge over their work (finding #22).
     adopted: bool = False
+    # The spec GenerateArtifacts rendered from, contract applied: later
+    # per-app steps (identity, repo variables) read the app's declared needs
+    # from here instead of rebuilding a contract-less spec.
+    spec: object | None = None
 
 
 class Step(Protocol):

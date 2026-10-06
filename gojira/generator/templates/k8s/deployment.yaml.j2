@@ -29,8 +29,8 @@ spec:
         prometheus.io/port: "{{ port }}"
         prometheus.io/path: /metrics
     spec:
-{% if spec.service_account %}
-      serviceAccountName: {{ spec.service_account }}
+{% if spec.ksa_name %}
+      serviceAccountName: {{ spec.ksa_name }}
 {% endif %}
 {% if spec.data_mount %}
       securityContext:

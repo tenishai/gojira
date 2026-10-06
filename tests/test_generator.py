@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from gojira.generator import EnvSpec, GeneratorSpec, render
+from gojira.generator import Identity, EnvSpec, GeneratorSpec, render
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
 
@@ -63,6 +63,7 @@ GOLDEN_CASES = {
     "worker": make_spec(app="clips-worker", workload_class="worker"),
     "cron": make_spec(app="clips-sweeper", workload_class="cron", schedule="0 3 * * *"),
     "multiproject": make_spec(multiproject=True),
+    "identity": make_spec(app="clips-vertex", identity=Identity(gcp_roles=["roles/aiplatform.user"])),
 }
 
 
@@ -307,17 +308,19 @@ def test_the_rendered_repo_carries_none_of_the_installs_facts():
     """Issue #87: registry, project, WIF provider, deploy GSA and cluster
     reach CI as repository variables Gojira sets. Nothing generated into the
     repo names them, so the repo is the same under any install."""
-    spec = make_spec(multiproject=True)
+    from gojira.generator import Identity
+
+    spec = make_spec(multiproject=True, identity=Identity(gcp_roles=["roles/aiplatform.user"]))
     files = render(spec)
     generated = "\n".join(
         text for path, text in files.items()
         if path.startswith(".github/") or path.startswith("k8s/")
     )
     for env in spec.environments:
-        for fact in (env.ar_repo, env.project, env.wif_provider, env.gsa_email, env.gke_cluster):
+        for fact in (env.ar_repo, env.project, env.wif_provider, env.gsa_email, env.gke_cluster, spec.run_gsa(env)):
             assert fact not in generated, f"{fact} leaked into the generated files"
     for env in spec.environments:
-        for name in env.platform_variables():
+        for name in env.platform_variables(spec.run_gsa(env)):
             assert f"vars.{name}" in files[".github/workflows/gojira-ci.yaml"] + files[".github/workflows/gojira-promote.yaml"]
 
 

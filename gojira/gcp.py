@@ -138,6 +138,12 @@ class GCPClient(ABC):
     # --- teardown --------------------------------------------------------
 
     @abstractmethod
+    def remove_sa_binding(self, project: str, sa_email: str, member: str, role: str) -> bool:
+        """Remove a binding on a service account's own policy (a Workload
+        Identity user, say). False if it was already gone."""
+        ...
+
+    @abstractmethod
     def remove_project_binding(self, project: str, member: str, role: str) -> bool:
         """Remove a project-level IAM binding. False if it was already gone."""
         ...
@@ -418,6 +424,12 @@ class GcloudClient(GCPClient):
         )
 
     # --- teardown --------------------------------------------------------
+
+    def remove_sa_binding(self, project: str, sa_email: str, member: str, role: str) -> bool:
+        return self._exists(
+            "iam", "service-accounts", "remove-iam-policy-binding", sa_email,
+            f"--project={project}", f"--member={member}", f"--role={role}", "--quiet",
+        )
 
     def remove_project_binding(self, project: str, member: str, role: str) -> bool:
         # gcloud raises IamPolicyBindingNotFound ("Policy binding with the

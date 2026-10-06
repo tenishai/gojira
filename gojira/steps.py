@@ -12,6 +12,7 @@ and tested — prod runs the bytes qa validated, no rebuild. The last env is the
 gated production target.
 """
 
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -433,6 +434,7 @@ class GenerateArtifacts:
                     log.info("class from contract: %s (db updated)", repo_class)
                 else:
                     log.warning("ignoring unknown class %r in gojira.yaml", repo_class)
+        ctx.spec = spec  # the contract-applied spec, for the steps after this one
         files = render(spec)
         rendered_targets = _rendered_targets(files)
 
@@ -589,12 +591,28 @@ class OpenSetupPr:
                 f"Gojira provisioned deploy config for **{ctx.app.name}** "
                 f"(`{ctx.app.workload_class}`).\n\n"
                 f"Environments: {envs}.\n\n"
-                "Merge to enable push-to-deploy: merge to main → dev, "
+                + _identity_summary(ctx)
+                + "Merge to enable push-to-deploy: merge to main → dev, "
                 "tag → qa, manual approval → prod."
             ),
         )
         ctx.app.setup_pr_url = url
         return url
+
+
+def _identity_summary(ctx: ProvisionContext) -> str:
+    """What the reviewer of this contract is agreeing to grant (design §1,
+    resolved question 3): the pod's GSA per project and its roles."""
+    spec = ctx.spec
+    if spec is None or spec.identity is None:
+        return ""
+    lines = ["Identity (gojira.yaml `identity:`): the pod runs as"]
+    for project, gsa in sorted({(e.project, spec.run_gsa(e)) for e in spec.environments}):
+        kind = "adopted" if spec.identity.gsa else "made by Gojira"
+        lines.append(f"- `{gsa}` on `{project}` ({kind})")
+    if spec.identity.gcp_roles:
+        lines.append("with " + ", ".join(f"`{r}`" for r in spec.identity.gcp_roles) + " on each project.")
+    return "\n".join(lines) + "\n\n"
 
 
 class MergeSetupPr:
@@ -893,6 +911,158 @@ def per_env_steps() -> list[Step]:
     return [EnsureClusterDnsAccess(), EnsureNamespace(), GrantPromoteSourceReader()]
 
 
+def _app_spec(ctx: ProvisionContext) -> GeneratorSpec:
+    """The app's spec with its contract applied — set by GenerateArtifacts,
+    which always runs (ephemeral); built bare for a step run on its own."""
+    return ctx.spec if ctx.spec is not None else build_spec(ctx, _gcp(ctx))
+
+
+class IdentityRefused(RuntimeError):
+    """The contract asked for an identity this install does not grant."""
+
+
+def _run_identity(ctx: ProvisionContext):
+    """(spec, identity) or (spec, None) when the contract declares none."""
+    spec = _app_spec(ctx)
+    return spec, spec.identity
+
+
+def _ksa_member(env, ksa: str) -> str:
+    return f"serviceAccount:{env.project}.svc.id.goog[{env.namespace}/{ksa}]"
+
+
+def _record_identity(ctx: ProvisionContext, **fields) -> None:
+    current = json.loads(ctx.app.run_identity_json or "{}")
+    current.update(fields)
+    ctx.app.run_identity_json = json.dumps(current, sort_keys=True)
+
+
+class EnsureRunIdentity:
+    """The pod's Google service account, per project: `<app>-run@<project>`
+    made by Gojira, or the one `identity.gsa` adopts (verified, never made).
+    Design: docs/grants-and-platform-facts-design.md §1."""
+
+    name = "ensure_run_identity"
+
+    def check(self, ctx: ProvisionContext) -> str | None:
+        spec, ident = _run_identity(ctx)
+        if ident is None:
+            return "no identity declared"
+        gcp = _gcp(ctx)
+        emails = sorted({spec.run_gsa(e) for e in spec.environments})
+        missing = [g for g in emails if not gcp.service_account_exists(g.split("@")[1].split(".")[0], g)]
+        if missing and ident.gsa:
+            raise IdentityRefused(
+                f"identity.gsa names {ident.gsa}, which does not exist; Gojira adopts a "
+                "service account but never makes the one you name"
+            )
+        if missing:
+            return None
+        self._record(ctx, spec, ident)
+        return ", ".join(emails)
+
+    def apply(self, ctx: ProvisionContext) -> str:
+        spec, ident = _run_identity(ctx)
+        gcp = _gcp(ctx)
+        made = []
+        for env in spec.environments:
+            gsa = spec.run_gsa(env)
+            if gsa in made or gcp.service_account_exists(env.project, gsa):
+                continue
+            gcp.create_service_account(env.project, gsa.split("@")[0], f"{ctx.app.name} (Gojira run identity)")
+            made.append(gsa)
+        self._record(ctx, spec, ident)
+        return ", ".join(made)
+
+    @staticmethod
+    def _record(ctx, spec, ident) -> None:
+        _record_identity(
+            ctx,
+            gsa_by_project={e.project: spec.run_gsa(e) for e in spec.environments},
+            adopted=bool(ident.gsa),
+        )
+
+
+class GrantRunRoles:
+    """identity.gcp_roles on each environment's project, for the pod's GSA.
+    Every role must be on the install's allowlist (iam.grantable_roles) —
+    a security boundary, so a role off the list fails the provision."""
+
+    name = "grant_run_roles"
+
+    def _plan(self, ctx: ProvisionContext):
+        spec, ident = _run_identity(ctx)
+        if ident is None or not ident.gcp_roles:
+            return spec, ident, []
+        allowed = set(ctx.config.iam.grantable_roles)
+        refused = [r for r in ident.gcp_roles if r not in allowed]
+        if refused:
+            raise IdentityRefused(
+                f"this install does not grant {', '.join(refused)}: iam.grantable_roles "
+                f"(GOJIRA_GRANTABLE_ROLES) allows {', '.join(sorted(allowed)) or 'nothing'}"
+            )
+        grants = sorted({(e.project, spec.run_gsa(e), r) for e in spec.environments for r in ident.gcp_roles})
+        return spec, ident, grants
+
+    def check(self, ctx: ProvisionContext) -> str | None:
+        spec, ident, grants = self._plan(ctx)
+        if ident is None:
+            return "no identity declared"
+        if not grants:
+            return "no roles asked for"
+        gcp = _gcp(ctx)
+        if all(gcp.project_has_binding(p, f"serviceAccount:{g}", r) for p, g, r in grants):
+            _record_identity(ctx, roles=sorted(ident.gcp_roles))
+            return ", ".join(sorted({r for _, _, r in grants}))
+        return None
+
+    def apply(self, ctx: ProvisionContext) -> str:
+        spec, ident, grants = self._plan(ctx)
+        gcp = _gcp(ctx)
+        for project, gsa, role in grants:
+            if not gcp.project_has_binding(project, f"serviceAccount:{gsa}", role):
+                gcp.add_project_binding(project, f"serviceAccount:{gsa}", role)
+        _record_identity(ctx, roles=sorted(ident.gcp_roles))
+        return ", ".join(sorted({r for _, _, r in grants}))
+
+
+class BindRunWorkloadIdentity:
+    """Each environment's KSA may impersonate the pod's GSA: the
+    workloadIdentityUser binding on the GSA for `<project>.svc.id.goog[ns/ksa]`.
+    CI applies the matching annotation from GOJIRA_<ENV>_RUN_SA."""
+
+    name = "bind_run_workload_identity"
+    role = "roles/iam.workloadIdentityUser"
+
+    def _bindings(self, ctx):
+        spec, ident = _run_identity(ctx)
+        if ident is None:
+            return spec, ident, []
+        return spec, ident, [
+            (ident.project or e.project, spec.run_gsa(e), _ksa_member(e, spec.ksa_name))
+            for e in spec.environments
+        ]
+
+    def check(self, ctx: ProvisionContext) -> str | None:
+        spec, ident, bindings = self._bindings(ctx)
+        if ident is None:
+            return "no identity declared"
+        gcp = _gcp(ctx)
+        if all(gcp.sa_has_binding(p, g, m, self.role) for p, g, m in bindings):
+            _record_identity(ctx, bindings=[list(b) for b in bindings])
+            return ", ".join(m for _, _, m in bindings)
+        return None
+
+    def apply(self, ctx: ProvisionContext) -> str:
+        spec, ident, bindings = self._bindings(ctx)
+        gcp = _gcp(ctx)
+        for project, gsa, member in bindings:
+            if not gcp.sa_has_binding(project, gsa, member, self.role):
+                gcp.add_sa_binding(project, gsa, member, self.role)
+        _record_identity(ctx, bindings=[list(b) for b in bindings])
+        return ", ".join(m for _, _, m in bindings)
+
+
 class SetRepoVariables:
     """The install's facts on the repository, as Actions variables (issue #87).
 
@@ -913,8 +1083,9 @@ class SetRepoVariables:
 
     def _wanted(self, ctx: ProvisionContext) -> dict[str, str]:
         want: dict[str, str] = {}
-        for env in build_spec(ctx, _gcp(ctx)).environments:
-            want.update(env.platform_variables())
+        spec = _app_spec(ctx)
+        for env in spec.environments:
+            want.update(env.platform_variables(spec.run_gsa(env)))
         if ctx.config.ci.runner:
             want["CI_RUNNER"] = ctx.config.ci.runner
         return want
@@ -959,4 +1130,8 @@ class SetRepoVariables:
 
 def per_app_steps() -> list[Step]:
     """The repo flow: clone, render artifacts, the runner variable, open the setup PR, optionally merge it."""
-    return [PrepareWorkdir(), GenerateArtifacts(), SetRepoVariables(), OpenSetupPr(), MergeSetupPr()]
+    return [
+        PrepareWorkdir(), GenerateArtifacts(),
+        EnsureRunIdentity(), GrantRunRoles(), BindRunWorkloadIdentity(),
+        SetRepoVariables(), OpenSetupPr(), MergeSetupPr(),
+    ]

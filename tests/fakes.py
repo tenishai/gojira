@@ -114,6 +114,14 @@ class FakeGCPClient(GCPClient):
         self.calls.append(f"enable_dns:{cluster}")
         self.dns_access.add((project, location, cluster))
 
+    def remove_sa_binding(self, project, sa_email, member, role):
+        key = (sa_email, member, role)
+        if key not in self.sa_bindings:
+            return False
+        self.calls.append(f"remove_sa_bind:{sa_email}:{role}")
+        self.sa_bindings.discard(key)
+        return True
+
     def remove_project_binding(self, project, member, role):
         key = (project, member, role)
         if key not in self.project_bindings:
