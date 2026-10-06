@@ -1,3 +1,29 @@
+{# ${{ vars.GOJIRA_<ENV>_<FACT> }} — the install's facts come from repository
+   variables Gojira sets, never from literals in this file (issue #87). #}
+{% macro v(env, fact) -%}
+${{ '{{' }} vars.{{ env.var_prefix }}_{{ fact }} {{ '}}' }}
+{%- endmacro %}
+
+{% macro require_vars(env) %}
+      - name: Platform variables for {{ env.name }}
+        # Gojira set these on the repository when it connected it (and sets
+        # them again on every Provision). Registry, deploy identity and
+        # cluster are the install's facts, so they live there and not here:
+        # this file is the same under any Gojira. Unset means this repo is
+        # not connected to the Gojira whose workflow is running.
+        env:
+{% for name in env.platform_variables() %}
+          {{ name }}: {{ v(env, name[(env.var_prefix | length) + 1:]) }}
+{% endfor %}
+        run: |
+          for name in {{ env.platform_variables() | join(' ') }}; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is not set on this repository — it is not connected to a Gojira that set it. Connect the repo there, or press Provision again."
+              exit 1
+            fi
+          done
+{%- endmacro %}
+
 {% macro contract_check() %}
       - name: Verify manifests match gojira.yaml
         # gojira.yaml and the manifests it implies can land in two commits

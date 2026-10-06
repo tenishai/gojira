@@ -208,6 +208,16 @@ sets storage limits itself. The capture PR records them too.
   [github-app-setup.md](github-app-setup.md) §4.
 - **Rightsizing**: [sizing-feedback-design.md](sizing-feedback-design.md) and
   the README's "Feeding the rightsizing loop".
+- **One repo, any install**: nothing of your install is written into a
+  connected repo — registry, deploy identity and cluster reach its CI as
+  repository variables Gojira sets (`GOJIRA_<ENV>_*`), and the same repo
+  connected to another Gojira gets that install's values. Set
+  `GOJIRA_ENVIRONMENT_CLUSTERS` so a connect request can say `dev` without
+  naming your cluster.
+- **Upgrading an install from before this** (October 2026): give the App
+  the Variables permission first ([github-app-setup.md](github-app-setup.md)
+  §1); existing apps keep their old workflows until you press **Provision**
+  again on each, which sets the variables and then regenerates.
 - **Your own app**: anything with a `Dockerfile` at its root. Port, health
   path and scaling bounds are yours to declare in `gojira.yaml`; a repo that
   already has `k8s/` manifests is adopted, not overwritten.
@@ -288,6 +298,8 @@ shortest uninstall there is.
 | `/api/v1/...`: `404 Not Found` on a route this page names | The running image is older than your checkout | `make install` |
 | App is `active` but its namespace is empty | Connected a repo that already held Gojira's files; nothing was merged, so nothing deployed | **Redeploy** on the app page |
 | Redeploy: `403 Resource not accessible by integration` | The GitHub App has Actions: Read | Set Actions to Read & write on the App, accept the change on the installation ([github-app-setup.md](github-app-setup.md) §1) |
+| Provision: `the GitHub App cannot manage Actions variables` | The App lacks the Variables permission; the generated workflows read the install's registry, identity and cluster from repository variables Gojira sets | Set Variables to Read & write on the App, accept the change on the installation, press **Provision** again |
+| A repo's CI: `GOJIRA_DEV_AR_REPO is not set on this repository` | The workflow is Gojira's but this install never set the repo's variables (a fork, a repo moved between installs, or an install upgraded before its App had the Variables permission) | Connect the repo here, or press **Provision** again on its app |
 | App stays `awaiting_pr` after the merge | Gojira has not been told | Step 7: **check PR merge** or the `sync` call |
 | Pod `exec format error` | An image built on ARM for amd64 nodes | Build through `make install` (Cloud Build), not local Docker |
 

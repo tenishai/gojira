@@ -8,7 +8,8 @@ resources:
 labels:
   - pairs:
       gojira.dev/env: {{ env.name }}
+# The registry is the install's (a repository variable CI reads), so the
+# image name is set by CI together with the tag; nothing of it lives here.
 images:
   - name: gojira-app
-    newName: {{ env.ar_repo }}/{{ spec.app }}
     newTag: latest

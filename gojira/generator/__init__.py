@@ -71,6 +71,28 @@ class EnvSpec(BaseModel):
     def ar_host(self) -> str:
         return self.ar_repo.split("/")[0]
 
+    # The install's facts about this environment — registry, deploy identity,
+    # cluster coordinates — reach the generated workflows as repository
+    # Actions variables that Gojira sets (SetRepoVariables), never as
+    # literals in the repo (issue #87): a repo then has no diff between
+    # installs, and nobody's project id lives in somebody else's repo.
+    # Repo-level, not org-level: on GitHub Free an org variable is listed for
+    # a private repo and empty at run time (2026-09-30).
+    @property
+    def var_prefix(self) -> str:
+        return "GOJIRA_" + re.sub(r"[^A-Z0-9]", "_", self.name.upper())
+
+    def platform_variables(self) -> dict[str, str]:
+        p = self.var_prefix
+        return {
+            f"{p}_AR_REPO": self.ar_repo,
+            f"{p}_WIF_PROVIDER": self.wif_provider,
+            f"{p}_DEPLOY_SA": self.gsa_email,
+            f"{p}_PROJECT": self.project,
+            f"{p}_LOCATION": self.location,
+            f"{p}_GKE_CLUSTER": self.gke_cluster,
+        }
+
 
 class HpaOverride(BaseModel):
     """overrides.hpa: the app's own scaling bounds and targets, any subset.
