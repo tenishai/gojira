@@ -1,8 +1,9 @@
 # Grants and platform facts — design
 
-*Status: proposal, 2026-10-04. Covers issues #86 (cluster-scoped access),
-#87 (platform facts in tenant repos) and the `gcp_roles` idea from the kobo
-and litellm installs. Nothing here is built.*
+*Status: approved 2026-10-06 (Shaz), open questions resolved as proposed
+below. Covers issues #86 (cluster-scoped access), #87 (platform facts in
+tenant repos) and the `gcp_roles` idea from the kobo and litellm installs.
+Build order §3 → §1 → §2, one PR each.*
 
 ## The rule these three share
 
@@ -124,12 +125,12 @@ app). Secrets, ClusterRoles and GSAs never were and still aren't.
 Each is its own PR with a dogfood pass; none changes a Fubo install until
 its operator sets the new knobs (all default off/empty).
 
-## Open questions
+## Open questions — resolved 2026-10-06
 
 - Should `identity.gcp_roles` be allowed to name roles on a *different*
-  project (cross-project reads, the Clio pattern)? Proposal: not in the
-  first cut; `project:` on a role entry later.
-- `<app>-run@`: GSA ids need 6–30 chars; a 2–3 letter app name needs the
-  suffix anyway, which is why it is there.
+  project (cross-project reads, the Clio pattern)? **No** in the first cut;
+  `project:` on a role entry later.
+- `<app>-run@`: **kept**. GSA ids need 6–30 chars; a 2–3 letter app name
+  needs the suffix anyway.
 - Do we want the setup PR to list the grants it will make in its body, so
   the reviewer of the contract sees the consequence? Proposal: yes, cheap.
