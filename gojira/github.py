@@ -181,11 +181,16 @@ class _LocalGit:
         if not self._git_in(workdir, "status", "--porcelain"):
             log.info("nothing to commit in %s", workdir)
             return False
+        # -s: a Signed-off-by trailer in the author's own name. Repos that
+        # enforce the Developer Certificate of Origin reject a commit without
+        # one, and the setup PR is a commit Gojira makes in someone else's repo
+        # (kobo, cabal and liminal all turned the check on, 2026-10-06). The
+        # same convention dependabot follows for the commits it authors.
         self._git_in(
             workdir,
             "-c", f"user.name={COMMIT_AUTHOR_NAME}",
             "-c", f"user.email={COMMIT_AUTHOR_EMAIL}",
-            "commit", "-m", message,
+            "commit", "-s", "-m", message,
         )
         return True
 
