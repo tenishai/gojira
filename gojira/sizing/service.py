@@ -108,7 +108,7 @@ def usage_history(
     """The read side of /api/v1/usage: the evidence ledger and live
     recommendation per environment, in the same wire shape the agent POSTed.
 
-    Built for the argus parity window (agora#14): a second producer diffs
+    Built for a second evidence producer (argus): during a parity window it diffs
     its own summary against what the sizing agent reported AND against the
     call the recommender made from it. Every environment the app has is
     listed, so "no evidence yet" is an explicit empty list, not an absence.

@@ -174,11 +174,12 @@ curl -X POST http://<gojira>/api/v1/usage \
 ```
 
 See [`tests/fixtures/usage_profile.json`](tests/fixtures/usage_profile.json)
-for the exact contract — it doubles as the cross-repo handshake for
-[gojira-sizing-agent](https://github.com/tenishai/gojira-sizing-agent), the
-in-cluster agent Gojira deploys from the Clusters page ("Deploy agent": mints
-the cluster token, applies RBAC + CronJob, grants metrics access, runs a
-first sweep). Anything else that can compute a p95 can feed the loop too.
+for the exact contract. Anything that can compute a p95 can feed the loop.
+Our own producer, gojira-sizing-agent, is a separate repo that isn't
+published yet; Gojira deploys it from the Clusters page ("Deploy agent":
+mints the cluster token, applies RBAC + CronJob, grants metrics access, runs
+a first sweep) when `sizing.agent_image` names a build of it. Without one,
+that button stays off and everything else works.
 
 The ledger reads back the same way, per environment, with the recommender's
 live call alongside — so a second evidence producer can diff itself against
@@ -214,6 +215,19 @@ in-cluster) · a test suite with golden-file snapshots for everything generated.
 [GitHub App setup](docs/github-app-setup.md) ·
 [Environments](docs/environments.md) ·
 [Sizing loop design](docs/sizing-feedback-design.md)
+
+## How this was built
+
+tenishai is a small team of engineers who build with AI coding agents. Most of
+this code was written in pairing sessions with Claude models in Claude Code: a
+person set the design, directed the work and reviewed what landed, and the
+agent wrote much of the code and docs. Many commits name the agent in a
+`Co-Authored-By:` trailer, either a Claude model or Poe (earlier Raven), the
+name of the agent one of us pairs with. A commit without a trailer may still
+have had AI help.
+
+In this repo, "Ember (SRE AI)" in docs and pull requests is the agent Shaz pairs
+with. Its commits name the Claude model in the trailer, not Ember.
 
 ## License
 
