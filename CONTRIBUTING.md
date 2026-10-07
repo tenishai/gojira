@@ -34,6 +34,15 @@ Do not commit secrets (`gojira.env`, `*.pem`); both are gitignored.
 By contributing you agree your work is licensed under the project's
 AGPL-3.0-or-later license.
 
+## Using AI tools
+
+AI-assisted contributions are welcome; we build this way ourselves. You are
+responsible for every line you submit: understand it, test it, and be able to
+explain it in review. Say in the pull request description which AI tools you
+used. Crediting the agent with a `Co-Authored-By:` trailer is optional. Don't
+submit code a tool reproduced from a source whose license isn't compatible with
+AGPL-3.0.
+
 ## Developer Certificate of Origin
 
 gojira uses the [Developer Certificate of Origin](https://developercertificate.org/)
