@@ -122,7 +122,7 @@ app). Secrets, ClusterRoles and GSAs never were and still aren't.
 3. §2 — the binding step + base refusal; kobo's ClusterRole into platform
    config; ~0.5 day.
 
-Each is its own PR with a dogfood pass; none changes a Fubo install until
+Each is its own PR with a dogfood pass; none changes an existing install until
 its operator sets the new knobs (all default off/empty).
 
 ## Open questions — resolved 2026-10-06
