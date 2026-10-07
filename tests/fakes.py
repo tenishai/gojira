@@ -4,6 +4,8 @@ Imported by the step, service, and web tests so the full check/apply/skip/resume
 flow is exercised without touching gcloud, kubectl, or git.
 """
 
+import yaml
+
 from gojira.gcp import GCPClient
 from gojira.github import SETUP_BRANCH, GitHubClient, GitHubError
 from gojira.installations import InstallationResolver
@@ -154,6 +156,8 @@ class FakeKubectlClient(KubectlClient):
         self.resources = dict(resources or {})
         self.calls: list[str] = []
         self.applied: list[str] = []  # raw manifests handed to apply()
+        self.cluster_roles = set()
+        self.cluster_role_bindings = set()
 
     def namespace_exists(self, namespace):
         return namespace in self.namespaces
@@ -175,6 +179,23 @@ class FakeKubectlClient(KubectlClient):
     def apply(self, manifest):
         self.calls.append("apply")
         self.applied.append(manifest)
+        for doc in yaml.safe_load_all(manifest):
+            if doc and doc.get("kind") == "ClusterRoleBinding":
+                self.cluster_role_bindings.add(doc["metadata"]["name"])
+
+    # cluster-scoped RBAC: the operator's ClusterRoles, Gojira's bindings
+    cluster_roles: set = None
+    cluster_role_bindings: set = None
+
+    def cluster_role_exists(self, name):
+        return name in (self.cluster_roles or set())
+
+    def cluster_role_binding_exists(self, name):
+        return name in (self.cluster_role_bindings or set())
+
+    def delete_cluster_role_binding(self, name):
+        self.calls.append(f"delete_crb:{name}")
+        (self.cluster_role_bindings or set()).discard(name)
 
     def create_job_from_cronjob(self, namespace, name, cronjob):
         self.calls.append(f"job:{namespace}/{name}<-{cronjob}")

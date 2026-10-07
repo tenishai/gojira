@@ -184,8 +184,12 @@ class IamConfig(BaseModel):
     # provision naming it: this is a security boundary, enforced, not the
     # overrides-style social `justification`. Empty: identity: is refused.
     grantable_roles: list[str] = []
+    # ClusterRoles an app may ask to be bound to in `cluster_roles`
+    # (GOJIRA_GRANTABLE_CLUSTER_ROLES, comma list). The operator applies the
+    # ClusterRole itself; Gojira only makes the binding. Empty: refused.
+    grantable_cluster_roles: list[str] = []
 
-    @field_validator("grantable_roles", mode="before")
+    @field_validator("grantable_roles", "grantable_cluster_roles", mode="before")
     @classmethod
     def _roles_from_string(cls, v):
         if isinstance(v, str):

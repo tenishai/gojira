@@ -521,6 +521,21 @@ def delete_app(
                     log.warning("could not delete run GSA %s on %s: %s", gsa, project, exc)
                     failures.append(str(exc))
 
+        # BindClusterRoles: Gojira's ClusterRoleBindings on each environment's
+        # cluster, by name from the record. The ClusterRole stays: it is the
+        # operator's.
+        envs_by_name = {e.name: e for e in app.environments}
+        for env_name, binding in ident.get("cluster_bindings", []):
+            env = envs_by_name.get(env_name)
+            if env is None:
+                continue
+            try:
+                kubectl_for(env.cluster).delete_cluster_role_binding(binding)
+                bindings_removed += 1
+            except Exception as exc:
+                log.warning("could not delete ClusterRoleBinding %s on %s: %s", binding, env.cluster.name, exc)
+                failures.append(str(exc))
+
         # GrantPromoteSourceReader (steps.py) grants a cross-project reader binding
         # on the SOURCE env's project for the copy-TARGET env's GSA — a pair the
         # per-project loop above can't reach (different member x project than its

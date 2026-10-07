@@ -219,6 +219,11 @@ sets storage limits itself. The capture PR records them too.
   says `identity: {gcp_roles: [roles/aiplatform.user]}` in its `gojira.yaml`.
   Gojira makes the account, grants, binds and annotates; the setup PR lists
   what it granted. Empty means no app may declare one.
+- **Apps that need cluster-wide access** (a room that reads other
+  namespaces): apply the ClusterRole yourself, once, put its name in
+  `GOJIRA_GRANTABLE_CLUSTER_ROLES`, and the app says `cluster_roles:
+  [that-name]`. Gojira binds the app's ServiceAccount to it on every
+  environment's cluster. `k8s/base` must hold only namespaced objects.
 - **Upgrading an install from before this** (October 2026): give the App
   the Variables permission first ([github-app-setup.md](github-app-setup.md)
   §1); existing apps keep their old workflows until you press **Provision**
@@ -305,6 +310,8 @@ shortest uninstall there is.
 | Redeploy: `403 Resource not accessible by integration` | The GitHub App has Actions: Read | Set Actions to Read & write on the App, accept the change on the installation ([github-app-setup.md](github-app-setup.md) §1) |
 | Provision: `the GitHub App cannot manage Actions variables` | The App lacks the Variables permission; the generated workflows read the install's registry, identity and cluster from repository variables Gojira sets | Set Variables to Read & write on the App, accept the change on the installation, press **Provision** again |
 | Provision: `this install does not grant roles/...` | The contract's `identity.gcp_roles` names a role outside `GOJIRA_GRANTABLE_ROLES` | Add it to the allowlist and `make install`, or take it out of the contract — a reviewer's decision either way |
+| Provision: `k8s/base/... holds a ClusterRole` | The app's base carries a cluster-scoped object the deploy identity cannot create | Move it out of `k8s/base`; apply the ClusterRole yourself and name it in `cluster_roles:` |
+| Provision: `this install does not bind ...` / `ClusterRole ... is not on cluster ...` | The name is not on `GOJIRA_GRANTABLE_CLUSTER_ROLES`, or you have not applied it there | Add it to the allowlist and `make install`; `kubectl apply` the ClusterRole on that cluster |
 | Provision: `identity.gsa names ... which does not exist` | The contract adopts a service account that is not there | Create it (or fix the email); Gojira adopts accounts, it never makes the one you name |
 | A repo's CI: `GOJIRA_DEV_AR_REPO is not set on this repository` | The workflow is Gojira's but this install never set the repo's variables (a fork, a repo moved between installs, or an install upgraded before its App had the Variables permission) | Connect the repo here, or press **Provision** again on its app |
 | App stays `awaiting_pr` after the merge | Gojira has not been told | Step 7: **check PR merge** or the `sync` call |

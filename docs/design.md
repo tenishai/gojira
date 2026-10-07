@@ -131,6 +131,7 @@ service_account: clips-api
 identity:                                   # the pod's GCP identity, made and granted by the platform
   gcp_roles: [roles/aiplatform.user]        # each on the install's allowlist (GOJIRA_GRANTABLE_ROLES)
   # gsa: kobo-room@my-project.iam.gserviceaccount.com   # adopt a hand-made account instead
+cluster_roles: [kobo-room]                  # ClusterRoles the operator applied and allows; Gojira binds the pod to them
 secrets_from: [clips-api-secrets]           # envFrom Secrets
 config_from: [clips-api-env]                # envFrom ConfigMaps
 env: { LOG_LEVEL: info }                    # plain, non-secret, in git
@@ -186,6 +187,15 @@ Identity, renders the ServiceAccount, and has CI annotate it from
 `GOJIRA_<ENV>_RUN_SA`, because the email names a project. The setup PR body
 lists the grants so the contract's reviewer sees the consequence; app delete
 reverses them, and drops the GSA only if Gojira made it.
+
+`cluster_roles` is the second grant (design §2, built 2026-10-07). The deploy
+identity cannot create cluster-scoped RBAC and must not — any tenant could
+grant itself the cluster — so the ClusterRole is the operator's (applied once,
+allowlisted in `GOJIRA_GRANTABLE_CLUSTER_ROLES`) and the binding is Gojira's:
+`gojira-<app>-<role>` from the pod's ServiceAccount in each environment's
+namespace, made with Gojira's own cluster identity and removed on delete. A
+`k8s/base` that holds a cluster-scoped kind is refused at provision, naming
+the file, instead of failing twenty apply attempts in CI (issue #86).
 
 `arch` and `node_selector` are the one place the contract may stay silent and
 still be complete: what the runners can build and what the clusters can run
