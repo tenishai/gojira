@@ -3,7 +3,7 @@ name = "tenish-gojira"
 version = "0.1.0"
 description = "Opinionated GKE deploy platform. It tramples your hand-rolled YAML."
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "AGPL-3.0-or-later"
 requires-python = ">=3.11"
 authors = [{ name = "tenish" }]
 dependencies = [
@@ -33,7 +33,7 @@ postgres = [
 ]
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
