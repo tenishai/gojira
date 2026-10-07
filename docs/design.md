@@ -5,6 +5,12 @@
 **Authors:** Shaz + Ember (SRE AI)
 **License:** AGPL-3.0-or-later
 
+> **Design record.** Written in June 2026 to decide what to build, and kept as the
+> record of why. Parts may no longer match the code; the [README](../README.md)
+> and [install guide](install.md) describe Gojira as it is now.
+> Ember (SRE AI) is the AI coding agent Shaz pairs with; see "How this was built"
+> in the README.
+
 ---
 
 ## What is Gojira
