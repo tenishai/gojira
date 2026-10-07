@@ -174,11 +174,12 @@ curl -X POST http://<gojira>/api/v1/usage \
 ```
 
 See [`tests/fixtures/usage_profile.json`](tests/fixtures/usage_profile.json)
-for the exact contract — it doubles as the cross-repo handshake for
-[gojira-sizing-agent](https://github.com/tenishai/gojira-sizing-agent), the
-in-cluster agent Gojira deploys from the Clusters page ("Deploy agent": mints
-the cluster token, applies RBAC + CronJob, grants metrics access, runs a
-first sweep). Anything else that can compute a p95 can feed the loop too.
+for the exact contract. Anything that can compute a p95 can feed the loop.
+Our own producer, gojira-sizing-agent, is a separate repo that isn't
+published yet; Gojira deploys it from the Clusters page ("Deploy agent":
+mints the cluster token, applies RBAC + CronJob, grants metrics access, runs
+a first sweep) when `sizing.agent_image` names a build of it. Without one,
+that button stays off and everything else works.
 
 The ledger reads back the same way, per environment, with the recommender's
 live call alongside — so a second evidence producer can diff itself against
