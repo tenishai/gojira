@@ -15,6 +15,12 @@ schedule: "{{ spec.schedule }}"
 {% if spec.service_account %}
 service_account: {{ spec.service_account }}
 {% endif %}
+{% if spec.cluster_roles %}
+cluster_roles:                # ClusterRoles the operator defined and allows; Gojira binds the pod to them
+{% for r in spec.cluster_roles %}
+  - {{ r }}
+{% endfor %}
+{% endif %}
 {% if spec.identity %}
 identity:                     # the pod's GCP identity, made and granted by the platform
 {% if spec.identity.gsa %}

@@ -31,6 +31,9 @@ data:
       # Project roles an app may ask for in gojira.yaml identity.gcp_roles
       # (comma list). Empty: no app may declare an identity.
       grantable_roles: "${GOJIRA_GRANTABLE_ROLES:-}"
+      # ClusterRoles (yours, applied once) an app may ask to be bound to in
+      # gojira.yaml cluster_roles (comma list). Empty: refused.
+      grantable_cluster_roles: "${GOJIRA_GRANTABLE_CLUSTER_ROLES:-}"
     drift:
       enabled: "${GOJIRA_DRIFT_ENABLED:-true}"
       interval_seconds: 900

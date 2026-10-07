@@ -63,6 +63,17 @@ class KubectlClient(ABC):
         """Apply a YAML manifest (may hold multiple documents). Idempotent."""
 
     @abstractmethod
+    def cluster_role_exists(self, name: str) -> bool:
+        """Whether the operator applied this ClusterRole (Gojira binds, never defines)."""
+
+    @abstractmethod
+    def cluster_role_binding_exists(self, name: str) -> bool: ...
+
+    @abstractmethod
+    def delete_cluster_role_binding(self, name: str) -> None:
+        """Remove a binding Gojira made. Idempotent."""
+
+    @abstractmethod
     def wait_job(self, namespace: str, name: str, timeout_seconds: int) -> str | None:
         """Block until the Job reaches Complete (None) or fails: then the
         failure reason (the Job's condition reason, e.g. DeadlineExceeded,
@@ -135,6 +146,25 @@ class KubectlCLI(KubectlClient):
         result = self._run("apply", "-f", "-", stdin=manifest)
         if result.returncode != 0:
             raise K8sError(f"kubectl apply failed: {result.stderr}")
+
+    def cluster_role_exists(self, name: str) -> bool:
+        return self._cluster_scoped_exists("clusterrole", name)
+
+    def cluster_role_binding_exists(self, name: str) -> bool:
+        return self._cluster_scoped_exists("clusterrolebinding", name)
+
+    def delete_cluster_role_binding(self, name: str) -> None:
+        result = self._run("delete", "clusterrolebinding", name, "--ignore-not-found")
+        if result.returncode != 0:
+            raise K8sError(f"kubectl delete clusterrolebinding {name} failed: {result.stderr}")
+
+    def _cluster_scoped_exists(self, kind: str, name: str) -> bool:
+        result = self._run("get", kind, name, "-o", "name")
+        if result.returncode == 0:
+            return True
+        if "NotFound" in result.stderr or "not found" in result.stderr.lower():
+            return False
+        raise K8sError(f"kubectl get {kind} {name} failed: {result.stderr}")
 
     def wait_job(self, namespace: str, name: str, timeout_seconds: int) -> str | None:
         # Poll rather than `kubectl wait --for=condition=complete`: wait can

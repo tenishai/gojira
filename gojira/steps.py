@@ -21,6 +21,7 @@ import yaml
 
 from gojira.gcp import GCPClient, owners_in_condition
 from gojira.generator import (
+    CLUSTER_SCOPED_KINDS,
     EnvSpec,
     GeneratorSpec,
     contract_fingerprint,
@@ -453,6 +454,8 @@ class GenerateArtifacts:
             )
             rendered_targets |= _preserved_targets(base_dir, files[base_key])
 
+        _refuse_cluster_scoped_base(ctx.workdir / "k8s" / "base", files)
+
         for relpath, content in files.items():
             target = ctx.workdir / relpath
             # Re-onboard case: an existing overlay kustomization may carry
@@ -474,6 +477,41 @@ class GenerateArtifacts:
             target.write_text(content)
         log.info("generated %d artifacts into %s", len(files), ctx.workdir)
         return f"{len(files)} files"
+
+
+def _refuse_cluster_scoped_base(base_dir, files: dict[str, str]) -> None:
+    """A base holding a cluster-scoped object cannot deploy: the generated
+    CI applies as the app's identity, which cannot create ClusterRoles and
+    must not (issue #86: twenty failed apply attempts on kobo's first
+    deploy). Say so here, naming the file, before a setup PR is opened —
+    and say what to write instead."""
+    base_key = "k8s/base/kustomization.yaml"
+    if base_key not in files:
+        return
+    try:
+        entries = (yaml.safe_load(files[base_key]) or {}).get("resources") or []
+    except yaml.YAMLError:
+        return
+    for entry in entries:
+        relpath = f"k8s/base/{entry}"
+        text = files.get(relpath)
+        if text is None:
+            path = base_dir / entry
+            if not path.is_file():
+                continue
+            text = path.read_text()
+        try:
+            docs = [d for d in yaml.safe_load_all(text) if d]
+        except yaml.YAMLError:
+            continue
+        for doc in docs:
+            if doc.get("kind") in CLUSTER_SCOPED_KINDS:
+                raise IdentityRefused(
+                    f"{relpath} holds a {doc['kind']}, which the app's deploy identity "
+                    "cannot create (and must not): keep k8s/base to namespaced objects. "
+                    "For cluster access, have the operator apply the ClusterRole and name "
+                    "it in gojira.yaml `cluster_roles:`; Gojira makes the binding."
+                )
 
 
 def _rendered_targets(files: dict[str, str]) -> set[tuple[str, str]]:
@@ -604,14 +642,21 @@ def _identity_summary(ctx: ProvisionContext) -> str:
     """What the reviewer of this contract is agreeing to grant (design §1,
     resolved question 3): the pod's GSA per project and its roles."""
     spec = ctx.spec
-    if spec is None or spec.identity is None:
+    if spec is None or (spec.identity is None and not spec.cluster_roles):
         return ""
-    lines = ["Identity (gojira.yaml `identity:`): the pod runs as"]
-    for project, gsa in sorted({(e.project, spec.run_gsa(e)) for e in spec.environments}):
-        kind = "adopted" if spec.identity.gsa else "made by Gojira"
-        lines.append(f"- `{gsa}` on `{project}` ({kind})")
-    if spec.identity.gcp_roles:
-        lines.append("with " + ", ".join(f"`{r}`" for r in spec.identity.gcp_roles) + " on each project.")
+    lines = []
+    if spec.identity is not None:
+        lines.append("Identity (gojira.yaml `identity:`): the pod runs as")
+        for project, gsa in sorted({(e.project, spec.run_gsa(e)) for e in spec.environments}):
+            kind = "adopted" if spec.identity.gsa else "made by Gojira"
+            lines.append(f"- `{gsa}` on `{project}` ({kind})")
+        if spec.identity.gcp_roles:
+            lines.append("with " + ", ".join(f"`{r}`" for r in spec.identity.gcp_roles) + " on each project.")
+    if spec.cluster_roles:
+        lines.append(
+            "Cluster access (gojira.yaml `cluster_roles:`): the pod's ServiceAccount is bound to "
+            + ", ".join(f"`{r}`" for r in spec.cluster_roles) + " on each environment's cluster."
+        )
     return "\n".join(lines) + "\n\n"
 
 
@@ -1063,6 +1108,83 @@ class BindRunWorkloadIdentity:
         return ", ".join(m for _, _, m in bindings)
 
 
+class BindClusterRoles:
+    """`cluster_roles:` — the operator's ClusterRoles, Gojira's bindings.
+
+    A ClusterRoleBinding `gojira-<app>-<role>` from the pod's KSA in each
+    environment's namespace to a ClusterRole the operator applied and
+    allowlisted (iam.grantable_cluster_roles), made with Gojira's own
+    cluster identity (container.admin since finding #11). Design:
+    docs/grants-and-platform-facts-design.md §2."""
+
+    name = "bind_cluster_roles"
+
+    def _plan(self, ctx: ProvisionContext):
+        spec = _app_spec(ctx)
+        roles = list(spec.cluster_roles)
+        if not roles:
+            return spec, []
+        allowed = set(ctx.config.iam.grantable_cluster_roles)
+        refused = [r for r in roles if r not in allowed]
+        if refused:
+            raise IdentityRefused(
+                f"this install does not bind {', '.join(refused)}: iam.grantable_cluster_roles "
+                f"(GOJIRA_GRANTABLE_CLUSTER_ROLES) allows {', '.join(sorted(allowed)) or 'nothing'}"
+            )
+        return spec, roles
+
+    @staticmethod
+    def _binding_name(app: str, role: str) -> str:
+        return f"gojira-{app}-{role}"
+
+    def check(self, ctx: ProvisionContext) -> str | None:
+        spec, roles = self._plan(ctx)
+        if not roles:
+            return "no cluster roles asked for"
+        for env in ctx.environments:
+            kubectl = ctx.clients["kubectl_for"](env.cluster)
+            for role in roles:
+                if not kubectl.cluster_role_exists(role):
+                    raise IdentityRefused(
+                        f"ClusterRole {role} is not on cluster {env.cluster.name}: apply it "
+                        "first (it is the operator's, Gojira only binds to it)"
+                    )
+                if not kubectl.cluster_role_binding_exists(self._binding_name(spec.app, role)):
+                    return None
+        self._record(ctx, spec, roles)
+        return ", ".join(roles)
+
+    def apply(self, ctx: ProvisionContext) -> str:
+        spec, roles = self._plan(ctx)
+        made = []
+        for env in ctx.environments:
+            kubectl = ctx.clients["kubectl_for"](env.cluster)
+            for role in roles:
+                name = self._binding_name(spec.app, role)
+                kubectl.apply(self._manifest(name, role, env.namespace, spec.ksa_name))
+                made.append(f"{env.name}:{name}")
+        self._record(ctx, spec, roles)
+        return ", ".join(made)
+
+    @staticmethod
+    def _manifest(name: str, role: str, namespace: str, ksa: str) -> str:
+        return yaml.safe_dump({
+            "apiVersion": "rbac.authorization.k8s.io/v1",
+            "kind": "ClusterRoleBinding",
+            "metadata": {"name": name, "labels": {"app.kubernetes.io/managed-by": "gojira"}},
+            "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": role},
+            "subjects": [{"kind": "ServiceAccount", "name": ksa, "namespace": namespace}],
+        }, sort_keys=False)
+
+    def _record(self, ctx, spec, roles) -> None:
+        _record_identity(
+            ctx,
+            cluster_bindings=sorted(
+                {(env.name, self._binding_name(spec.app, r)) for env in ctx.environments for r in roles}
+            ),
+        )
+
+
 class SetRepoVariables:
     """The install's facts on the repository, as Actions variables (issue #87).
 
@@ -1132,6 +1254,6 @@ def per_app_steps() -> list[Step]:
     """The repo flow: clone, render artifacts, the runner variable, open the setup PR, optionally merge it."""
     return [
         PrepareWorkdir(), GenerateArtifacts(),
-        EnsureRunIdentity(), GrantRunRoles(), BindRunWorkloadIdentity(),
+        EnsureRunIdentity(), GrantRunRoles(), BindRunWorkloadIdentity(), BindClusterRoles(),
         SetRepoVariables(), OpenSetupPr(), MergeSetupPr(),
     ]
