@@ -5,6 +5,10 @@ below. Covers issues #86 (cluster-scoped access), #87 (platform facts in
 tenant repos) and the `gcp_roles` idea from the kobo and litellm installs.
 Build order §3 → §1 → §2, one PR each.*
 
+> **Design record.** Written in October 2026 to decide what to build, and kept as the
+> record of why. Parts may no longer match the code; the [README](../README.md)
+> and [install guide](install.md) describe Gojira as it is now.
+
 ## The rule these three share
 
 A tenant repo says **what the app needs**. The platform supplies **what the
@@ -128,7 +132,7 @@ its operator sets the new knobs (all default off/empty).
 ## Open questions — resolved 2026-10-06
 
 - Should `identity.gcp_roles` be allowed to name roles on a *different*
-  project (cross-project reads, the Clio pattern)? **No** in the first cut;
+  project (cross-project reads: a pod reading data in another team's project)? **No** in the first cut;
   `project:` on a role entry later.
 - `<app>-run@`: **kept**. GSA ids need 6–30 chars; a 2–3 letter app name
   needs the suffix anyway.
