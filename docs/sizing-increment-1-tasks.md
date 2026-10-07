@@ -4,6 +4,10 @@
 **Date:** 2026-06-23
 **Parent:** [sizing-feedback-design.md](sizing-feedback-design.md)
 
+> **Design record.** Written in June 2026 as the task plan for increment 1 to decide what to build, and kept as the
+> record of why. Parts may no longer match the code; the [README](../README.md)
+> and [install guide](install.md) describe Gojira as it is now.
+
 Goal (the DoD): *an over-provisioned app on a managed cluster produces a correct
 `gojira.yaml` override PR with a measured justification, within one CronJob
 interval, never for noise below threshold.*

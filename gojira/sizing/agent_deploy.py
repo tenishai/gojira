@@ -7,8 +7,9 @@ metrics access) becomes one idempotent call behind a button.
 
 Redeploy is rotation: every run mints a fresh token and re-applies the
 Secret in the same motion, so the old token dies the moment the new one
-lands. The manifests mirror tenishai/gojira-sizing-agent's deploy/ — the
-agent repo documents the manual path, this module is the platform path.
+lands. The manifests mirror the sizing agent's own deploy/ (gojira-sizing-agent,
+not yet published) — that repo documents the manual path, this module is the
+platform path.
 """
 
 import logging
@@ -175,7 +176,8 @@ def deploy_agent(
     if not sizing.agent_image:
         raise AgentDeployError(
             "sizing.agent_image is not configured — set it to the sizing-agent "
-            "image in your registry (see the gojira-sizing-agent repo)"
+            "image in your registry (the agent is optional; without it the "
+            "rest of the sizing loop still works)"
         )
 
     # RBAC first, token after: the first apply is also the permission probe

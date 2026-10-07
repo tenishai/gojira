@@ -3,6 +3,12 @@
 **Status:** Design for review (2026-06-13)
 **Authors:** Shaz + Ember (SRE AI)
 
+> **Design record.** Written in June 2026 to decide what to build, and kept as the
+> record of why. Parts may no longer match the code; the [README](../README.md)
+> and [install guide](install.md) describe Gojira as it is now.
+> Ember (SRE AI) is the AI coding agent Shaz pairs with; see "How this was built"
+> in the README.
+
 Supersedes the phase-1 assumption that an app maps to a single cluster +
 namespace. This is the design for promoting one app across `dev → qa → prod`
 where each environment is its **own cluster**, optionally in its **own GCP
