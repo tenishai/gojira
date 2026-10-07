@@ -899,3 +899,13 @@ def test_identity_contract_is_validated():
         Identity()
     assert Identity(gsa="kobo-room@shaz-learning.iam.gserviceaccount.com").project == "shaz-learning"
     assert read_app_needs("identity: {gcp_roles: [roles/storage.objectViewer]}\n")["identity"].gcp_roles == ["roles/storage.objectViewer"]
+
+
+
+def test_cluster_roles_round_trip_and_render_the_ksa():
+    files = render(spec(cluster_roles=["kobo-room"]))
+    assert read_app_needs(files["gojira.yaml"])["cluster_roles"] == ["kobo-room"]
+    assert yaml.safe_load(files["k8s/base/serviceaccount.yaml"])["metadata"]["name"] == "atlas"
+    pod, _ = _first_container(files)
+    assert pod["serviceAccountName"] == "atlas"
+    assert "RUN_SA" not in files[".github/workflows/gojira-ci.yaml"]  # no GCP identity asked for

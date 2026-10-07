@@ -60,7 +60,7 @@ Rules:
 - Ledger rows per step, like every other grant; `delete_app` reverses them
   in the identity loop that already exists.
 
-## 2. `cluster_roles:` — cluster-scoped access
+## 2. `cluster_roles:` — cluster-scoped access — built 2026-10-07
 
 ```yaml
 cluster_roles: [kobo-room]          # ClusterRoles the operator defined; Gojira binds the KSA to them

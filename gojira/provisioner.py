@@ -261,7 +261,10 @@ def provision_app(
 
     # per-app repo flow — once, unscoped
     ctx = ProvisionContext(
-        app=app, config=config, clients={"gcp": gcp, "github": github},
+        app=app, config=config,
+        # kubectl_for: the per-app steps that act on every environment's
+        # cluster from the contract (cluster_roles) reach each one through it.
+        clients={"gcp": gcp, "github": github, "kubectl_for": kubectl_for},
         environments=envs, workdir=workdir,
     )
     if not absorb(ProvisionEngine(per_app_steps()).run(session, ctx)):
