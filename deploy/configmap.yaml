@@ -50,8 +50,8 @@ data:
       # that name none: {dev: my-cluster}
       environment_clusters: "${GOJIRA_ENVIRONMENT_CLUSTERS:-}"
     sizing:
-      # Your build of github.com/tenishai/gojira-sizing-agent — set to enable
-      # the Clusters-page "Deploy agent" button.
+      # Optional: an image of the sizing agent (gojira-sizing-agent, not yet
+      # published). Set it to enable the Clusters-page "Deploy agent" button.
       agent_image: "${GOJIRA_SIZING_AGENT_IMAGE:-}"
     observe:
       # Born observed: each provisioned app hands its contract to an in-cluster
