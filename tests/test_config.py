@@ -86,6 +86,11 @@ def test_grantable_roles_accept_install_value_string():
     assert Config.model_validate({"iam": {"grantable_roles": ""}}).iam.grantable_roles == []
 
 
+def test_grantable_cluster_roles_accept_install_value_string():
+    cfg = Config.model_validate({"iam": {"grantable_cluster_roles": "kobo-room, view"}})
+    assert cfg.iam.grantable_cluster_roles == ["kobo-room", "view"]
+
+
 def test_observe_clusters_accept_install_value_string():
     """GOJIRA_OBSERVE_CLUSTERS arrives as one comma list; each name gets the
     argus defaults. Empty means no cluster is observed. The mapping form an

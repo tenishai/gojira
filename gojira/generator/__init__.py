@@ -31,6 +31,16 @@ log = logging.getLogger(__name__)
 APP_PORT = 8080
 ARCHES = ("amd64", "arm64")
 
+# Kinds the app's deploy identity (roles/container.developer) cannot create
+# and must not: a base holding one fails every deploy after twenty retries
+# (kobo, 2026-10-02, issue #86). Cluster access is asked for as
+# `cluster_roles:` and bound by Gojira instead.
+CLUSTER_SCOPED_KINDS = frozenset({
+    "ClusterRole", "ClusterRoleBinding", "Namespace", "CustomResourceDefinition",
+    "PriorityClass", "StorageClass", "MutatingWebhookConfiguration",
+    "ValidatingWebhookConfiguration", "PersistentVolume", "IngressClass",
+})
+
 _env = Environment(
     loader=PackageLoader("gojira.generator", "templates"),
     undefined=StrictUndefined,
@@ -245,6 +255,8 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
         needs["secret_mounts"] = secrets
     if isinstance(doc.get("identity"), dict):
         needs["identity"] = Identity.model_validate(doc["identity"])
+    if isinstance(doc.get("cluster_roles"), list):
+        needs["cluster_roles"] = [str(r) for r in doc["cluster_roles"] if r]
     if isinstance(doc.get("build_args"), dict):
         needs["build_args"] = {str(k): str(v) for k, v in doc["build_args"].items() if k}
     if doc.get("arch") in ARCHES:
@@ -473,6 +485,11 @@ class GeneratorSpec(BaseModel):
     config_from: list[str] = []  # envFrom ConfigMaps — non-secret config
     service_account: str = ""
     identity: Identity | None = None  # the pod's GCP identity, platform-made
+    # Cluster-scoped access the pod needs: names of ClusterRoles the operator
+    # defined (and allowlisted); Gojira binds the KSA to them. The deploy
+    # identity cannot create cluster-scoped RBAC and must not be able to
+    # (issue #86), so the role is the operator's and the binding is Gojira's.
+    cluster_roles: list[str] = []
     data_mount: DataMount | None = None
     config_mounts: list[ConfigMount] = []  # ConfigMaps read as files
     secret_mounts: list[SecretMount] = []  # Secrets read as files (key files)
@@ -514,8 +531,8 @@ class GeneratorSpec(BaseModel):
     @property
     def ksa_name(self) -> str:
         """The pod's Kubernetes ServiceAccount: named by the contract, or the
-        app's own name once an identity makes Gojira render it."""
-        return self.service_account or (self.app if self.identity else "")
+        app's own name once an identity or a cluster role makes Gojira render it."""
+        return self.service_account or (self.app if (self.identity or self.cluster_roles) else "")
 
     def run_gsa(self, env: "EnvSpec") -> str:
         """The GSA the pod runs as in this environment's project: the adopted
@@ -848,7 +865,7 @@ def render(spec: GeneratorSpec) -> dict[str, str]:
         files[f"{base}/deployment.yaml"] = _t("k8s/deployment.yaml.j2", ctx)
         files[f"{base}/podmonitoring.yaml"] = _t("k8s/podmonitoring.yaml.j2", ctx)
         files[f"{base}/rules.yaml"] = _t("k8s/rules.yaml.j2", ctx)
-    if spec.identity:
+    if spec.identity or spec.cluster_roles:
         files[f"{base}/serviceaccount.yaml"] = _t("k8s/serviceaccount.yaml.j2", ctx)
     if ctx["has_service"]:
         files[f"{base}/service.yaml"] = _t("k8s/service.yaml.j2", ctx)

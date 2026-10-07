@@ -624,3 +624,22 @@ def test_delete_app_reverses_the_run_identity_it_made(session):
     gcp2 = FakeGCPClient(existing={"service_accounts": [adopted]})
     service.delete_app(session, app2.id, KubectlFactory(), gcp2, delete_namespaces=True)
     assert adopted in gcp2.service_accounts  # adopted: never deleted
+
+
+def test_delete_app_removes_the_cluster_role_bindings_it_made(session):
+    import json
+
+    clusters = _three_clusters(session)
+    app = service.connect_app(
+        session, name="kobo", repo_full_name="acme/kobo-x", workload_class="gateway",
+        env_map={"dev": (clusters["dev"].id, "kobo")},
+    )
+    app.run_identity_json = json.dumps({"cluster_bindings": [["dev", "gojira-kobo-kobo-room"]]})
+    session.commit()
+    kube = KubectlFactory()
+    kube(clusters["dev"]).cluster_role_bindings.add("gojira-kobo-kobo-room")
+    kube(clusters["dev"]).cluster_roles.add("kobo-room")
+    service.delete_app(session, app.id, kube, FakeGCPClient(), delete_namespaces=True)
+    k = kube.by_cluster["dev"]
+    assert "gojira-kobo-kobo-room" not in k.cluster_role_bindings
+    assert "kobo-room" in k.cluster_roles  # the operator's, untouched

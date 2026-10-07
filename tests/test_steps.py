@@ -8,6 +8,7 @@ is exercised without touching gcloud, kubectl, or git.
 import json
 
 import pytest
+import yaml
 from fakes import FakeGCPClient, FakeGitHubClient, FakeKubectlClient, KubectlFactory
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -843,3 +844,73 @@ def test_run_sa_reaches_the_repo_as_a_variable(session):
     SetRepoVariables().apply(ctx)
     assert ctx.clients["github"].variables[(ctx.app.repo_full_name, "GOJIRA_DEV_RUN_SA")] == "clips-api-run@proj-a.iam.gserviceaccount.com"
     assert SetRepoVariables().check(ctx) == "7 variables current"
+
+
+# --- cluster_roles: the operator's ClusterRoles, Gojira's bindings (2026-10-07, §2) --
+
+
+def _cluster_ctx(session, roles=("kobo-room",), grantable=("kobo-room",), on_cluster=("kobo-room",), multiproject=False):
+    ctx, gcp = _identity_ctx(session, multiproject=multiproject)
+    ctx.spec = ctx.spec.model_copy(update={"identity": None, "cluster_roles": list(roles)})
+    ctx.config = Config.model_validate({"iam": {"grantable_cluster_roles": list(grantable)}})
+    kube = KubectlFactory()
+    for env in ctx.environments:
+        kube(env.cluster).cluster_roles.update(on_cluster)
+    ctx.clients["kubectl_for"] = kube
+    return ctx, kube
+
+
+def test_cluster_roles_off_the_allowlist_are_refused_by_name(session):
+    from gojira.steps import BindClusterRoles, IdentityRefused
+
+    ctx, _ = _cluster_ctx(session, roles=("kobo-room", "cluster-admin"))
+    with pytest.raises(IdentityRefused, match=r"cluster-admin.*GOJIRA_GRANTABLE_CLUSTER_ROLES"):
+        BindClusterRoles().check(ctx)
+
+
+def test_a_cluster_role_the_operator_has_not_applied_is_refused(session):
+    from gojira.steps import BindClusterRoles, IdentityRefused
+
+    ctx, _ = _cluster_ctx(session, on_cluster=())
+    with pytest.raises(IdentityRefused, match="apply it first"):
+        BindClusterRoles().check(ctx)
+
+
+def test_cluster_roles_are_bound_on_every_environments_cluster(session):
+    from gojira.steps import BindClusterRoles
+
+    ctx, kube = _cluster_ctx(session, multiproject=True)
+    assert BindClusterRoles().check(ctx) is None
+    out = BindClusterRoles().apply(ctx)
+    assert out == "dev:gojira-clips-api-kobo-room, prod:gojira-clips-api-kobo-room"
+    for env in ctx.environments:
+        k = kube(env.cluster)
+        assert "gojira-clips-api-kobo-room" in k.cluster_role_bindings
+        crb = yaml.safe_load(k.applied[-1])
+        assert crb["roleRef"]["name"] == "kobo-room"
+        assert crb["subjects"] == [{"kind": "ServiceAccount", "name": "clips-api", "namespace": "clips"}]
+    assert BindClusterRoles().check(ctx) == "kobo-room"  # idempotent
+    rec = json.loads(ctx.app.run_identity_json)
+    assert rec["cluster_bindings"] == [["dev", "gojira-clips-api-kobo-room"], ["prod", "gojira-clips-api-kobo-room"]]
+
+
+def test_cluster_roles_step_is_quiet_without_any(session):
+    from gojira.steps import BindClusterRoles
+
+    ctx, kube = _cluster_ctx(session, roles=(), grantable=())
+    assert BindClusterRoles().check(ctx) == "no cluster roles asked for"
+    assert ctx.app.run_identity_json is None
+
+
+def test_a_base_with_a_cluster_scoped_object_is_refused_before_the_setup_pr(tmp_path, session):
+    from gojira.steps import IdentityRefused, _refuse_cluster_scoped_base
+
+    base = tmp_path / "k8s" / "base"
+    base.mkdir(parents=True)
+    (base / "rbac.yaml").write_text("apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata: {name: kobo-room}\nrules: []\n")
+    files = {"k8s/base/kustomization.yaml": "resources:\n  - deployment.yaml\n  - rbac.yaml\n",
+             "k8s/base/deployment.yaml": "kind: Deployment\nmetadata: {name: x}\n"}
+    with pytest.raises(IdentityRefused, match=r"k8s/base/rbac.yaml holds a ClusterRole.*cluster_roles"):
+        _refuse_cluster_scoped_base(base, files)
+    files["k8s/base/kustomization.yaml"] = "resources:\n  - deployment.yaml\n"
+    _refuse_cluster_scoped_base(base, files)  # an unlisted file is nobody's problem
