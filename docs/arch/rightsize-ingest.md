@@ -1,16 +1,16 @@
 ---
 card: arch-card:gojira-rightsize-ingest
-updated: 2026-09-28
-anchor: gojira/sizing/service.py sha=a2b5cbad501a0f558143afae1fae5243ae1df7b7
+updated: 2026-10-07
+anchor: gojira/sizing/service.py sha=f7c4ead763f6371db967e9b88a58bee4484b7533
 anchor: gojira/sizing/recommender.py sha=451b9a415055c9c9f0d5ddcca0f9da5402bfa8f7
 anchor: gojira/sizing/profile.py sha=d56d01b67d9b5f47810d9561ed17ae3f49b7418e
 ---
 # rightsize-ingest — usage evidence in, sizing PRs out (Rightsize loop)
 
-WHAT / SEAM: `POST /api/v1/usage` accepts a `UsageProfile` (sizing/profile.py:49)
+WHAT / SEAM: `POST /api/v1/usage` accepts a `UsageProfile` (sizing/profile.py)
 from an in-cluster agent bearing a cluster-scoped token. `ingest_usage()`
-(sizing/service.py:166) authenticates, appends to the evidence ledger,
-recomputes. `PercentileRecommender` (sizing/recommender.py:75) turns evidence
+(sizing/service.py) authenticates, appends to the evidence ledger,
+recomputes. `PercentileRecommender` (sizing/recommender.py) turns evidence
 into a `Proposal`. This is Gojira's side of the cross-repo contract owned by
 tenishai/gojira-sizing-agent's `usage-profile-contract` card (wire-format
 invariants live there).
@@ -18,29 +18,29 @@ OPS / FLOW: bearer token -> `_sha256` -> `AgentToken` -> `Cluster` -> scoped
 `App`+`Environment` lookup -> `DbSizingStore.record()` (append-only
 `UsageProfileRow`) -> `recompute_for_app()` -> `PercentileRecommender.
 recommend()` over `store.history()` -> `upsert_recommendation()` writes the
-one live `OVERRIDE` row. Rule (recommender.py:8-15): `request <- p95`
+one live `OVERRIDE` row. Rule (recommender.py module docstring): `request <- p95`
 (rounded to 50m cpu / 64Mi mem steps), `limit <- max(p99 * limit_headroom,
 request)` (default headroom 1.5). UI's "open PR" -> `open_pr_for()` ->
-`sizing.pr.open_override_pr()`. `usage_history()` (service.py:105) is the
+`sizing.pr.open_override_pr()`. `usage_history()` (service.py) is the
 read twin behind `GET /api/v1/apps/{id}/usage`.
 INVARIANTS:
 - a cluster's token can only ingest for apps with an Environment on THAT
-  cluster (service.py:179-196) — Cluster resolves from the token first, then
+  cluster (`ingest_usage`) — Cluster resolves from the token first, then
   Environment is scoped to it; a compromised sandbox token can't feed prod.
 - only the token's SHA-256 is stored; `mint_agent_token` rotates in place,
-  killing the old hash the instant a new one is minted (service.py:58-71).
+  killing the old hash the instant a new one is minted (`mint_agent_token`).
 - one live `SizingRecommendation` per (app, env, OVERRIDE) —
-  `upsert_recommendation` updates in place, never stacks (models.py:230-231).
+  `upsert_recommendation` updates in place, never stacks (`SizingRecommendation`'s `uq_sizing_app_env_kind`).
 - materiality guardrail: no proposal unless the move is >= `materiality_pct`
-  (default 30%, recommender.py:101-104).
+  (default 30%, `PercentileRecommender._propose`).
 - evidence-over-wishes: memory is NEVER proposed down for an app with
   `oom_kills > 0` or `restarts > 0` in the window, even if materiality is met
-  (recommender.py:106-113).
+  (`_propose`).
 - a `PR_OPENED` recommendation keeps that status on new evidence — recompute
   refreshes the payload but never invalidates a PR under human review
-  (recommender.py:163-166).
+  (`upsert_recommendation`).
 - `usage_history()` lists every environment even with zero evidence
-  (service.py:113-115) — "no data yet" is an explicit empty list, not a
+  (`usage_history`) — "no data yet" is an explicit empty list, not a
   missing key.
 CONSUMERS: tenishai/gojira-sizing-agent (sole producer). gojira/sizing/
 agent_deploy.py deploys that repo's manifests and mints its token in one
