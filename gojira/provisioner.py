@@ -6,11 +6,15 @@ outcome in the ProvisionStep ledger. Re-running skips done/skipped steps and
 retries failed ones; resume-from-failure comes for free from the ledger.
 
 The orchestrator (`provision_app`) derives the distinct projects and the
-environments from the app and drives the engine across the three scopes:
+environments from the app and drives the engine in four passes over three scopes:
 
   per-project (identity)  -> once per distinct GCP project   ledger: step@<project>
   per-environment (cluster) -> once per environment          ledger: step@<env>
   per-app (repo)          -> once                            ledger: step
+  per-environment (observe) -> once per env, after the repo  ledger: step@<env>
+
+The first three passes halt the run on a failed step. Observe does not: its
+failure is recorded in the ledger and the run still completes.
 
 Ledger step names are scoped so they stay unique under (app_id, step_name).
 The orchestrator owns app status and run-level events; the engine owns the
@@ -210,10 +214,11 @@ def provision_app(
     config: Config,
     workdir: Path,
 ) -> RunResult:
-    """Drive the full provision across per-project, per-env, and per-app scopes.
+    """Drive the full provision: per-project, per-env, per-app, then per-env observe.
 
     Imports the step sequences lazily to avoid a provisioner<->steps import
-    cycle. Halts on the first failed scope, leaving the app FAILED and the
+    cycle. Halts on the first failed scope in the first three passes (observe
+    never halts), leaving the app FAILED and the
     ledger marking exactly where to resume; a re-run continues from there.
     """
     from gojira.steps import per_app_steps, per_env_steps, per_project_steps

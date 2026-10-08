@@ -1,7 +1,7 @@
 ---
 card: arch-card:gojira-provisioner-steps
 updated: 2026-10-07
-anchor: gojira/provisioner.py sha=2fa5a8e2599ac851b48c232d40e65dcabcb0426e
+anchor: gojira/provisioner.py sha=9a9759a41c6bc7f365344bf1d03003504acad38c
 anchor: gojira/steps.py sha=42b9a83012c73152da55b51ce224a6af0dfda6b1
 ---
 # provisioner-steps — the idempotent scoped step engine (Deploy loop)
