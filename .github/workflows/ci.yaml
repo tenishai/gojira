@@ -35,6 +35,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: for f in scripts/*.sh; do bash -n "$f"; done
+      # Each architecture card pins the file it describes by blob sha; a seam
+      # that changed without its card fails here (see AGENTS.md).
+      - run: python3 scripts/check_arch_cards.py
       - run: kubectl kustomize deploy/ > /dev/null
       - run: kubectl kustomize deploy/ingress/ > /dev/null
 
