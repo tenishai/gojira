@@ -71,6 +71,10 @@ ${{ '{{' }} vars.{{ env.var_prefix }}_{{ fact }} {{ '}}' }}
           # Retry the apply: a cold cluster may have no nodes yet. A genuine
           # error still fails after the retries.
 {% endif %}
+          # A manifest that does not build is a deterministic error, not a cold
+          # cluster: it fails here, once, with kustomize's message. The retries
+          # below are for the cluster.
+          kubectl kustomize . > /dev/null
           ok=false
           for attempt in $(seq 1 20); do
             rc=0; out=$(kubectl apply -k . 2>&1) || rc=$?  # || so bash -e can't kill the retry loop

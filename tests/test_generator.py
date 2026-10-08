@@ -358,3 +358,37 @@ def test_the_variables_guard_fails_an_unconnected_repo(tmp_path):
     bad = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, capture_output=True, text=True)
     assert bad.returncode == 1
     assert re.search(r"::error::GOJIRA_DEV_WIF_PROVIDER is not set", bad.stdout)
+
+
+def test_every_golden_overlay_builds_with_kustomize(tmp_path):
+    """The generated overlays must build as rendered (finding #83): the
+    provisioner now builds them before opening a PR, and the generated CI
+    builds once before its apply retries. kubectl's bundled kustomize is the
+    builder in both places."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("kubectl"):
+        pytest.skip("kubectl not on PATH")
+    for case, spec in GOLDEN_CASES.items():
+        root = tmp_path / case
+        for relpath, content in render(spec).items():
+            target = root / relpath
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
+        for env in spec.environments:
+            overlay = root / "k8s" / "overlays" / env.name
+            proc = subprocess.run(
+                ["kubectl", "kustomize", str(overlay)], capture_output=True, text=True
+            )
+            assert proc.returncode == 0, f"{case}/{env.name}: {proc.stderr}"
+
+
+def test_generated_ci_builds_once_before_the_apply_retries():
+    """A build error is deterministic; it fails on the first attempt with
+    kustomize's message, not after twenty 'waiting for cluster to settle'."""
+    for spec in GOLDEN_CASES.values():
+        ci = render(spec)[".github/workflows/gojira-ci.yaml"]
+        build = ci.index("kubectl kustomize . > /dev/null")
+        loop = ci.index("for attempt in $(seq 1 20)")
+        assert build < loop

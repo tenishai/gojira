@@ -914,3 +914,52 @@ def test_a_base_with_a_cluster_scoped_object_is_refused_before_the_setup_pr(tmp_
         _refuse_cluster_scoped_base(base, files)
     files["k8s/base/kustomization.yaml"] = "resources:\n  - deployment.yaml\n"
     _refuse_cluster_scoped_base(base, files)  # an unlisted file is nobody's problem
+
+
+# --- finding #83: build every overlay before anything is committed ---------
+
+
+def test_generate_refuses_an_overlay_that_does_not_build(session, single_env, tmp_path, monkeypatch):
+    """A preserved patch that kustomize rejects fails generate_artifacts with
+    kustomize's message, so the app row says why instead of a green setup PR
+    carrying an overlay the generated CI can never apply (tenishai/kobo#92)."""
+    from gojira import steps as steps_mod
+    from gojira.k8s import K8sError
+    built = []
+
+    def broken(overlay):
+        built.append(overlay.name)
+        raise K8sError(
+            "kubectl kustomize k8s/overlays/dev failed: no resource matches strategic "
+            "merge patch \"ServiceAccount.v1.[noGrp]/kobo.kobo\""
+        )
+
+    monkeypatch.setattr(steps_mod, "kustomize_build", broken)
+    app = single_env[0]
+    result = provision_app(
+        session, app,
+        gcp=FakeGCPClient(), github=FakeGitHubClient(),
+        kubectl_for=KubectlFactory(), config=Config(), workdir=tmp_path,
+    )
+    assert not result.completed
+    assert result.failed_step == "generate_artifacts"
+    assert "k8s/overlays/dev does not build" in result.error
+    assert "no resource matches" in result.error        # kustomize's own reason survives
+    assert built == ["dev"]
+    assert app.status == AppStatus.FAILED
+    assert app.setup_pr_url is None                     # nothing was opened
+
+
+def test_generate_builds_the_real_overlays(session, single_env, tmp_path):
+    """With a real kubectl the render builds, so the step still completes."""
+    import shutil
+    if not shutil.which("kubectl"):
+        pytest.skip("kubectl not on PATH")
+    app = single_env[0]
+    result = provision_app(
+        session, app,
+        gcp=FakeGCPClient(), github=FakeGitHubClient(),
+        kubectl_for=KubectlFactory(), config=Config(), workdir=tmp_path,
+    )
+    assert result.completed, result.error
+    assert (tmp_path / "k8s" / "overlays" / "dev" / "kustomization.yaml").exists()
