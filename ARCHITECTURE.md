@@ -1,7 +1,7 @@
 ---
 card: repo-card:gojira
-updated: 2026-09-28
-anchor: pyproject.toml sha=0f4daaf1ecd2ecba5e94f985d84d763607ae1624
+updated: 2026-10-07
+anchor: pyproject.toml sha=607f25b8197a5ce310994cb7e2ebd27839ab537f
 anchor: gojira/web/__main__.py sha=0aaa920c9cc2a9f82f65d9477eafc654a0a038d5
 ---
 # gojira — repo card
@@ -11,11 +11,11 @@ GCP identity/CI/manifests, deploys, watches for cluster drift (captures it
 back to git as a PR), and ingests usage evidence to open rightsizing PRs.
 STATE: main, v0.1.0, working and actively dogfooded; under active development
 (a teammate has work in progress in this worktree's sibling checkout).
-STACK: Python >=3.11, FastAPI + Jinja2/htmx web UI, SQLAlchemy (SQLite
+STACK: Python >=3.11 (PyPI name `tenish-gojira`, import name `gojira`), FastAPI + Jinja2/htmx web UI, SQLAlchemy (SQLite
 default, Postgres via `[postgres]` extra + `DATABASE_URL`), PyYAML, GitHub App
 auth (PyJWT RS256), `gcloud`/`kubectl` shelled out to (no GCP/K8s SDKs),
 prometheus-client, OTel tracing (env-gated). `pip install -e .`; Docker
-(`--platform linux/amd64`, GKE nodes are amd64); Terraform for the sandbox
+(`make` builds `--platform linux/amd64`; an app's own arch comes from `defaults.arch` or its contract's `arch:`); Terraform for the sandbox
 cluster+identity (`terraform/`).
 ENTRY:
 - web server: `gojira/web/__main__.py` -> `gojira.web.create_app()` (FastAPI
@@ -47,10 +47,10 @@ rightsize-ingest card); gojira/sizing/agent_deploy.py deploys that repo's manife
 registered cluster. tenishai/argus — cross-repo contract for in-cluster `observe` Jobs and
 the `/metrics` RED-series names argus's web profile scrapes (see observe-argus card). No
 Python import dependency on any sibling repo.
-HEALTH: 379 test functions across 36 files under tests/ (`make test` / `pytest -q`,
+HEALTH: 476 test functions across 38 files under tests/ (`make test` / `pytest -q`,
 `pythonpath=["."]` in pyproject.toml so `tests.fakes` resolves under bare `pytest`).
-CI (.github/workflows/ci.yaml): three jobs — `test` (ruff + pytest, py3.12), `scripts`
-(bash -n on scripts/*.sh, `kubectl kustomize deploy/` and `deploy/ingress/` must render —
+CI (.github/workflows/ci.yaml): three jobs, on `vars.CI_RUNNER` when set (fork PRs always on ubuntu-latest) — `test` (ruff + pytest, py3.12), `scripts`
+(bash -n on scripts/*.sh, `scripts/check_arch_cards.py`, `kubectl kustomize deploy/` and `deploy/ingress/` must render —
 guards against the install path and deploy/ drifting apart, per tests/test_deploy_contract.py),
 `terraform` (init + validate). tenishai repos have no branch protection; CI reports, never
 blocks a merge. ruff select is explicit (E4,E7,E9,F) so the rule set doesn't move under a
@@ -58,13 +58,13 @@ ruff version bump.
 GOTCHAS: "sizing" in this repo means container CPU/memory rightsizing, NOT the
 gojira-sizing-agent repo's own release sizing — the two share a name prefix by design (the
 agent is `gojira/sizing`'s producer), not by coincidence. observe/argus is fire-and-forget
-and non-halting by design (provisioner.py:262-281) — a failed observe never fails a
+and non-halting by design (`provision_app`'s observe pass, provisioner.py) — a failed observe never fails a
 provision. AuthConfig, the cluster-scoped agent bearer tokens, and `auth.api_token` are
 three separate mechanisms guarding three different route families — see auth card, do not
 assume one covers the others. `DNS1123_LABEL` validation in web/__init__.py is the only
 gate on user-supplied names once `auto_merge_setup_pr` is set (finding #3) — auto-merge
 removes the human-review backstop that used to catch this.
 RELATED DOCS (reconcile, don't dupe): docs/design.md (original design, 2026-06-12 —
-promotion model since revised, see steps.py:8-12), docs/dogfood.md (live walkthrough),
+promotion model since revised, see the steps.py module docstring), docs/dogfood.md (live walkthrough),
 docs/sizing-feedback-design.md (Phase 4 rightsizing design), docs/environments.md,
 docs/github-app-setup.md.
