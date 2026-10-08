@@ -9,6 +9,7 @@ then review the golden diff like any other code change.
 """
 
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -87,6 +88,23 @@ def test_golden(case):
     assert files.keys() == expected.keys(), "artifact set changed — review and update goldens"
     for path in files:
         assert files[path] == expected[path], f"{case}/{path} drifted from golden"
+
+
+PINNED_ACTION = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$")
+
+
+def test_generated_workflows_pin_actions_to_a_commit_sha():
+    """A tag can be moved after review; a commit SHA cannot. The generated
+    workflow holds the deploy identity, and the repos it lands in are going public."""
+    for case, spec in GOLDEN_CASES.items():
+        for path, content in render(spec).items():
+            if not path.startswith(".github/workflows/"):
+                continue
+            for job in yaml.safe_load(content)["jobs"].values():
+                for step in job.get("steps", []):
+                    uses = step.get("uses")
+                    if uses and not uses.startswith("./"):
+                        assert PINNED_ACTION.match(uses), f"{case}/{path}: pin {uses} to a full commit SHA"
 
 
 def test_all_output_is_valid_yaml():
