@@ -31,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
-{{ d.require_vars(env, env.platform_variables(spec.run_gsa(env))) }}
+{{ d.require_vars(env, (env.platform_variables(spec.run_gsa(env)) | list) + spec.build_arg_refs()) }}
 
 {{ d.contract_check() }}
 
@@ -58,7 +58,7 @@ jobs:
           AR_TOKEN="$(gcloud auth print-access-token)"
           export AR_TOKEN
           docker build --platform linux/{{ spec.effective_arch }} --secret id=ar_token,env=AR_TOKEN{% for k, v in spec.build_args | dictsort %} \
-            --build-arg {{ (k ~ "=" ~ v) | shell }}{% endfor %} -t "$IMAGE:$TAG" .
+{% if v | variable_ref %}            --build-arg {{ k }}="${{ '{{' }} vars.{{ v | variable_ref }} {{ '}}' }}"{% else %}            --build-arg {{ (k ~ "=" ~ v) | shell }}{% endif %}{% endfor %} -t "$IMAGE:$TAG" .
           docker push "$IMAGE:$TAG"
 
       - uses: google-github-actions/get-gke-credentials@64bc7249bbcf78056bb92f14d3cedc2da193946c  # v2.3.5

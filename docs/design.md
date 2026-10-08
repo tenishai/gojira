@@ -148,7 +148,8 @@ config_mounts:                              # ConfigMaps read as files
 secret_mounts:                              # Secrets read as files
   - { name: clips-github, path: /secrets/github }                      # the whole object, as a dir
 build_args:                                 # to docker build; in git, so never a secret
-  EXTRA_INDEX_URL: https://us-central1-python.pkg.dev/p/tenish/simple/
+  EXTRA_INDEX_URL: ${GOJIRA_PYTHON_INDEX}   #   `${NAME}`: a variable the install sets, not a literal
+  BASE_IMAGE: python:3.12-slim              #   anything else is the literal it looks like
 arch: arm64                                 # image platform + node arch; unset: the platform's default
 node_selector:                              # added to the pod verbatim: how THIS cluster
   cloud.google.com/compute-class: Scale-Out #   provides arm64 (Autopilot), a pool, …
@@ -173,7 +174,14 @@ stack's own apps (2026-09-30): a config file, a key file, and an image that
 installs private packages from an index named at build time. `build_args`
 values live in the contract and so in git; the one secret a build gets,
 `AR_TOKEN`, the platform adds itself, as a BuildKit secret (`--secret
-id=ar_token`), never a build arg, which the build log would print.
+id=ar_token`), never a build arg, which the build log would print. A value of
+exactly `${NAME}` is not a literal but a reference to a repository variable
+the install sets (`GOJIRA_REPO_VARIABLES`, issue #102): a package index that
+lives in the install's own project is an install fact like the registry, so
+the contract says *that* the build needs an index and the install says
+*which*. The generated workflow requires the variable up front like the
+`GOJIRA_<ENV>_*` facts, and a reference this install does not set fails the
+provision by name rather than the build.
 
 Nothing of the *install* is written into the repo. The generated workflows
 read the registry, the deploy identity and the cluster coordinates of every

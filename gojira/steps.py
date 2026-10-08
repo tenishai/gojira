@@ -438,6 +438,7 @@ class GenerateArtifacts:
                 else:
                     log.warning("ignoring unknown class %r in gojira.yaml", repo_class)
         ctx.spec = spec  # the contract-applied spec, for the steps after this one
+        _refuse_unknown_variable_refs(spec, ctx.config)
         files = render(spec)
         if existing_spec.exists():
             files["gojira.yaml"] = _keep_equal_contract(
@@ -592,6 +593,19 @@ def _gojira_wrote(path) -> bool:
             return fh.readline().startswith(GENERATED_MARKER)
     except OSError:
         return False
+
+
+def _refuse_unknown_variable_refs(spec, config) -> None:
+    """A `${NAME}` in build_args must name a variable this install sets
+    (issue #102); otherwise the generated workflow would fail at build time
+    with "NAME is not set", and the app row should say so now instead."""
+    unknown = [r for r in spec.build_arg_refs() if r not in config.ci.repo_variables]
+    if unknown:
+        raise ValueError(
+            "gojira.yaml build_args reference repository variables this install does "
+            f"not set: {', '.join(unknown)}. Name them in GOJIRA_REPO_VARIABLES "
+            "(gojira.env) and `make install`, or write a literal value."
+        )
 
 
 def _refuse_cluster_scoped_base(base_dir, files: dict[str, str]) -> None:
@@ -1340,6 +1354,7 @@ class SetRepoVariables:
             want.update(env.platform_variables(spec.run_gsa(env)))
         if ctx.config.ci.runner:
             want["CI_RUNNER"] = ctx.config.ci.runner
+        want.update(ctx.config.ci.repo_variables)
         return want
 
     def _stale(self, ctx: ProvisionContext, want: dict[str, str]) -> list[str]:

@@ -27,6 +27,9 @@ data:
     ci:
       # A self-hosted runner label; set on every connected repo as CI_RUNNER.
       runner: "${GOJIRA_CI_RUNNER:-}"
+      # Values a gojira.yaml may reference as ${NAME} in build_args; set on
+      # every connected repo as Actions variables (YAML flow map).
+      repo_variables: "${GOJIRA_REPO_VARIABLES:-}"
     iam:
       # Project roles an app may ask for in gojira.yaml identity.gcp_roles
       # (comma list). Empty: no app may declare an identity.

@@ -213,7 +213,10 @@ sets storage limits itself. The capture PR records them too.
   repository variables Gojira sets (`GOJIRA_<ENV>_*`), and the same repo
   connected to another Gojira gets that install's values. Set
   `GOJIRA_ENVIRONMENT_CLUSTERS` so a connect request can say `dev` without
-  naming your cluster.
+  naming your cluster. A build that needs a value from your install (a
+  package index in your project) names it in the contract as
+  `build_args: {EXTRA_INDEX_URL: ${GOJIRA_PYTHON_INDEX}}`, and you say what
+  that is here in `GOJIRA_REPO_VARIABLES={GOJIRA_PYTHON_INDEX: https://…}`.
 - **Apps that need a Google identity** (Vertex, a bucket): set
   `GOJIRA_GRANTABLE_ROLES` to the roles you are willing to grant, and an app
   says `identity: {gcp_roles: [roles/aiplatform.user]}` in its `gojira.yaml`.

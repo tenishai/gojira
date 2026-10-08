@@ -61,6 +61,19 @@ def _quoted(value) -> str:
 _env.filters["quoted"] = _quoted
 _env.filters["shell"] = shlex.quote  # a value inside a `run:` step, as one word
 
+# A contract value of exactly `${NAME}` is a reference to a repository
+# variable the install sets (issue #102), not a literal: the contract says
+# THAT the build needs a value, the install says WHICH.
+VARIABLE_REF = re.compile(r"^\$\{([A-Z][A-Z0-9_]*)\}$")
+
+
+def variable_ref(value: str) -> str | None:
+    m = VARIABLE_REF.match(value or "")
+    return m.group(1) if m else None
+
+
+_env.filters["variable_ref"] = variable_ref
+
 
 class EnvSpec(BaseModel):
     """One environment's deploy target + project-scoped identity."""
@@ -500,6 +513,10 @@ class GeneratorSpec(BaseModel):
     # version is the app's to declare (2026-09-30: the tenish stack's images
     # install private packages from an index named this way).
     build_args: dict[str, str] = {}
+
+    def build_arg_refs(self) -> list[str]:
+        """Repository variables the build args reference (`${NAME}` values)."""
+        return sorted({r for r in map(variable_ref, self.build_args.values()) if r})
     # Plain, non-secret configuration (tenant identity, endpoints). Rendered
     # inline into the deployment: config changes stay reviewed git commits,
     # not secret-store writes (a tenant's finding).

@@ -127,6 +127,7 @@ kubectl -n gojira create configmap gojira-install \
   --from-literal=GOJIRA_OBSERVE_CLUSTERS="${GOJIRA_OBSERVE_CLUSTERS:-}" \
   --from-literal=GOJIRA_DRIFT_ENABLED="${GOJIRA_DRIFT_ENABLED:-true}" \
   --from-literal=GOJIRA_CI_RUNNER="${GOJIRA_CI_RUNNER:-}" \
+  --from-literal=GOJIRA_REPO_VARIABLES="${GOJIRA_REPO_VARIABLES:-}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 step "4/5 render + apply manifests (temp copy — your tree stays clean)"
