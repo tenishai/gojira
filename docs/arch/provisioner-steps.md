@@ -40,7 +40,7 @@ INVARIANTS:
 - environments are validated non-empty BEFORE any state mutation
   (`provision_app`, before `app.status` changes) — an app with none must never appear to have
   started a run.
-- `ProvisionContext.adopted` is set by `GenerateArtifacts` when the repo already had manifests (an existing `k8s/base/deployment.yaml`), and `MergeSetupPr.check` then refuses auto-merge (returns a reason, so the step is skipped and the app waits in `awaiting_pr`): a person wrote the repo, so a person reviews the PR (finding #22).
+- `ProvisionContext.adopted` is set by `GenerateArtifacts` in adopt mode: the repo had an existing `k8s/base/deployment.yaml` and no `gojira.yaml` yet. A repo with hand-written manifests AND a `gojira.yaml` is not adopted, so its setup PR can auto-merge, and `MergeSetupPr.check` then refuses auto-merge (returns a reason, so the step is skipped and the app waits in `awaiting_pr`): a person wrote the repo, so a person reviews the PR (finding #22).
 - `ProvisionContext.spec` is the contract-applied spec `GenerateArtifacts` rendered from; later per-app steps (identity, `cluster_roles`, repo variables) read it via `_app_spec` rather than rebuilding a contract-less spec.
 - a grant outside the install's allowlist (`iam.grantable_roles`, `iam.grantable_cluster_roles`) or a cluster-scoped object in `k8s/base` raises `IdentityRefused` and fails the pass; the allowlists are a security boundary, not a hint.
 - `gojira.steps` is imported lazily inside `provision_app`

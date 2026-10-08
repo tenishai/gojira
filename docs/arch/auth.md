@@ -12,8 +12,7 @@ route family — none substitutes for another:
      `x-goog-authenticated-user-email`, enforces `AuthConfig.allowed_domain`
      / `allowed_emails`. Off by default.
   2. **`auth.api_token`** (`api_token_error()`) — shared bearer
-     token gating onboarding `/api/v1/*` routes (`api_connect`,
-     `api_app_status`), which are EXEMPT from mechanism 1.
+     token gating the `/api/v1/*` routes, which are EXEMPT from mechanism 1.
   3. **Cluster-scoped agent tokens** (`AgentToken`, see rightsize-ingest
      card) — gate only `POST /api/v1/usage`; not part of `AuthConfig`.
 OPS / FLOW: `install()` no-ops unless `auth.enabled`. `EXEMPT_PREFIXES =

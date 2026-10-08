@@ -57,9 +57,9 @@ blocks a merge. ruff select is explicit (E4,E7,E9,F) so the rule set doesn't mov
 ruff version bump.
 GOTCHAS: "sizing" in this repo means container CPU/memory rightsizing, NOT the
 gojira-sizing-agent repo's own release sizing — the two share a name prefix by design (the
-agent is `gojira/sizing`'s producer), not by coincidence. observe/argus is fire-and-forget
-and non-halting by design (`provision_app`'s observe pass, provisioner.py) — a failed observe never fails a
-provision. AuthConfig, the cluster-scoped agent bearer tokens, and `auth.api_token` are
+agent is `gojira/sizing`'s producer), not by coincidence. observe/argus is non-halting by design
+(`provision_app`'s observe pass, provisioner.py): it waits on the job, but a failed observe never
+fails a provision. AuthConfig, the cluster-scoped agent bearer tokens, and `auth.api_token` are
 three separate mechanisms guarding three different route families — see auth card, do not
 assume one covers the others. `DNS1123_LABEL` validation in web/__init__.py is the only
 gate on user-supplied names once `auto_merge_setup_pr` is set (finding #3) — auto-merge
