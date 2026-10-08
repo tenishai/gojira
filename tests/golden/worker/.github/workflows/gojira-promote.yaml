@@ -30,7 +30,7 @@ jobs:
     env:
       IMAGE: ${{ vars.GOJIRA_QA_AR_REPO }}/clips-worker
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Platform variables for qa
         # Gojira set these on the repository when it connected it (and sets
@@ -70,12 +70,12 @@ jobs:
           fi
 
       - id: auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed  # v2.1.13
         with:
           workload_identity_provider: ${{ vars.GOJIRA_QA_WIF_PROVIDER }}
           service_account: ${{ vars.GOJIRA_QA_DEPLOY_SA }}
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f  # v2.2.1
 
       - name: Configure docker for Artifact Registry
         run: gcloud auth configure-docker "${IMAGE%%/*}" --quiet
@@ -86,7 +86,7 @@ jobs:
           docker build --build-arg AR_TOKEN="$(gcloud auth print-access-token)" -t "$IMAGE:$GITHUB_REF_NAME" .
           docker push "$IMAGE:$GITHUB_REF_NAME"
 
-      - uses: google-github-actions/get-gke-credentials@v2
+      - uses: google-github-actions/get-gke-credentials@64bc7249bbcf78056bb92f14d3cedc2da193946c  # v2.3.5
         with:
           cluster_name: ${{ vars.GOJIRA_QA_GKE_CLUSTER }}
           location: ${{ vars.GOJIRA_QA_LOCATION }}
@@ -149,7 +149,7 @@ jobs:
       IMAGE: ${{ vars.GOJIRA_PROD_AR_REPO }}/clips-worker
       SOURCE_IMAGE: ${{ vars.GOJIRA_QA_AR_REPO }}/clips-worker
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Platform variables for prod
         # Gojira set these on the repository when it connected it (and sets
@@ -209,14 +209,14 @@ jobs:
           fi
 
       - id: auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed  # v2.1.13
         with:
           workload_identity_provider: ${{ vars.GOJIRA_PROD_WIF_PROVIDER }}
           service_account: ${{ vars.GOJIRA_PROD_DEPLOY_SA }}
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f  # v2.2.1
 
-      - uses: imjasonh/setup-crane@v0.4
+      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e  # v0.4
 
       - name: Copy tested image from qa (no rebuild)
         # Whether the two environments share a registry is the install's
@@ -230,7 +230,7 @@ jobs:
           gcloud auth configure-docker "${IMAGE%%/*}" --quiet
           crane copy "$SOURCE_IMAGE:$GITHUB_REF_NAME" "$IMAGE:$GITHUB_REF_NAME"
 
-      - uses: google-github-actions/get-gke-credentials@v2
+      - uses: google-github-actions/get-gke-credentials@64bc7249bbcf78056bb92f14d3cedc2da193946c  # v2.3.5
         with:
           cluster_name: ${{ vars.GOJIRA_PROD_GKE_CLUSTER }}
           location: ${{ vars.GOJIRA_PROD_LOCATION }}
