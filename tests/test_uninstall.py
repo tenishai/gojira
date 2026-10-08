@@ -24,8 +24,13 @@ case "$tool $*" in
   "gcloud projects describe"*) echo 123 ;;
   "gcloud auth print-access-token"*) echo tok ;;
   "gcloud iam workload-identity-pools describe"*) echo ACTIVE ;;
-  "gcloud iam service-accounts list"*|"gcloud projects get-iam-policy"*) ;;
-  "gcloud compute disks list"*|"gcloud artifacts docker images list"*) ;;
+  "gcloud iam service-accounts list"*) [ -n "$LEFT_SA" ] && ! grep -q "service-accounts delete $LEFT_SA" "$CALLS" && echo "$LEFT_SA" ;;
+  "gcloud projects get-iam-policy"*"--filter=bindings.members:serviceAccount:"*) echo roles/container.developer ;;
+  "gcloud projects get-iam-policy"*) ;;
+  "gcloud compute disks list"*) ;;
+  "gcloud artifacts docker images describe"*apps/hello*) exit 0 ;;
+  "gcloud artifacts docker images describe"*) exit 1 ;;
+  "gcloud artifacts docker images list"*) for i in ${OTHER_IMAGES:-}; do echo "us-central1-docker.pkg.dev/proj/apps/$i"; done ;;
   "gcloud compute addresses describe"*) exit 1 ;;
   "gcloud artifacts repositories describe gojira"*)
     grep -q -E "terraform .*destroy|repositories delete gojira" "$CALLS" && exit 1; exit 0 ;;
@@ -189,3 +194,44 @@ def test_terraform_state_for_this_project_means_terraform_takes_it_down(run, tmp
     assert not [c for c in lines if "service-accounts delete" in c]  # terraform's job
     # the fake cluster never disappears, and the sweep says so rather than lie
     assert done.returncode == 1 and "left  cluster" in done.stdout
+
+
+# --- the purge finishes a failed app teardown, and the run leaves a record --
+
+
+def test_purge_removes_a_deploy_identity_a_failed_teardown_left(run, tmp_path):
+    """An app whose delete failed partway leaves `<app>-deploy@`; under --purge
+    the script recognises Gojira's own naming and removes it rather than
+    listing it as 'left' for the operator (2026-10-08, liminal)."""
+    broken = json.loads(json.dumps(DELETED))
+    broken["identity"]["failures"] = ["PERMISSION_DENIED: cannot delete hello-deploy@"]
+    done, calls = run("--yes", "--purge", delete=broken,
+                      LEFT_SA="hello-deploy@proj.iam.gserviceaccount.com")
+    assert _first(calls, "gcloud iam service-accounts delete hello-deploy@proj.iam.gserviceaccount.com")
+    assert "deleted hello-deploy@proj.iam.gserviceaccount.com (left by a failed app teardown)" in done.stdout
+    assert done.returncode == 1                     # the app's own failure is still reported
+    assert "transcript:" in done.stdout
+
+
+def test_purge_deletes_the_removed_apps_images_and_names_the_rest(run):
+    done, calls = run("--yes", "--purge", OTHER_IMAGES="someone-elses")
+    assert _first(calls, "gcloud artifacts docker images delete") and "apps/hello" in "\n".join(calls)
+    assert "image repo apps kept: it holds images Gojira did not build (someone-elses)" in done.stdout
+    assert not [c for c in calls if "repositories delete apps" in c]
+
+
+def test_without_purge_nothing_of_the_leftover_identity_is_touched(run):
+    done, calls = run("--yes", LEFT_SA="hello-deploy@proj.iam.gserviceaccount.com")
+    assert not [c for c in calls if "service-accounts delete hello-deploy" in c]
+
+
+def test_the_transcript_is_written_where_the_operator_can_find_it(run, tmp_path):
+    done, _ = run("--yes", GOJIRA_UNINSTALL_LOG=str(tmp_path / "t.log"))
+    text = (tmp_path / "t.log").read_text()
+    assert "1/6 connected apps" in text and "removing hello" in text
+    assert f"transcript: {tmp_path / 't.log'}" in done.stdout
+
+
+def test_check_writes_no_transcript(run, tmp_path):
+    run("--check", GOJIRA_UNINSTALL_LOG=str(tmp_path / "t.log"))
+    assert not (tmp_path / "t.log").exists()
