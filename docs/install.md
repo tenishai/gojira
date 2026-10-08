@@ -232,6 +232,17 @@ sets storage limits itself. The capture PR records them too.
   path and scaling bounds are yours to declare in `gojira.yaml`; a repo that
   already has `k8s/` manifests is adopted, not overwritten.
 
+What you have now is the whole install. Secrets are Kubernetes Secrets you
+create in the app's namespace (`secrets_from` names them), and sizing runs
+on Managed Prometheus with the sizing agent. The sibling projects that go
+further are upgrades with their own prerequisites, not steps you skipped:
+[ladon](https://github.com/tenishai/ladon) puts secrets on a vault you
+unseal and front with an identity proxy, and
+[argus](https://github.com/tenishai/argus) adds dashboards, logs and traces
+on a Standard cluster of its own. Reach for them when you have several
+teams, secrets that must rotate, or an estate to watch; a first install
+needs neither.
+
 ---
 
 ## Existing cluster
