@@ -437,6 +437,10 @@ class GenerateArtifacts:
                     log.warning("ignoring unknown class %r in gojira.yaml", repo_class)
         ctx.spec = spec  # the contract-applied spec, for the steps after this one
         files = render(spec)
+        if existing_spec.exists():
+            files["gojira.yaml"] = _keep_equal_contract(
+                existing_spec.read_text(), files["gojira.yaml"]
+            )
         rendered_targets = _rendered_targets(files)
 
         # Finding #12: app-authored resources (ExternalSecrets, ServiceAccounts,
@@ -502,6 +506,25 @@ def build_overlays(workdir, environments) -> None:
                 f"k8s/overlays/{env.name} does not build, so nothing was committed; "
                 f"fix the overlay (usually an app-authored patch) and provision again: {exc}"
             ) from exc
+
+
+def _keep_equal_contract(existing: str, rendered: str) -> str:
+    """The author's gojira.yaml, byte-for-byte, when it means what the render
+    means (finding #84).
+
+    Regeneration used to rewrite the file from the template even when every
+    need, the class and the overrides came back identical, so the setup PR
+    showed a contract change that was not one and the author's comments were
+    replaced with boilerplate. Equality is the contract fingerprint, the same
+    sorted-JSON meaning the generated workflow is stamped with, so keeping the
+    old text changes nothing CI checks. A file that does not parse is simply
+    replaced, as before.
+    """
+    try:
+        same = contract_fingerprint(existing) == contract_fingerprint(rendered)
+    except yaml.YAMLError:
+        return rendered
+    return existing if same else rendered
 
 
 def _refuse_cluster_scoped_base(base_dir, files: dict[str, str]) -> None:

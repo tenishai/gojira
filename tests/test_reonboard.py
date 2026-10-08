@@ -13,7 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from gojira.config import Config
-from gojira.generator import preserve_patches
+from gojira.generator import contract_fingerprint, preserve_patches
 from gojira.models import App, AppStatus, Base, Cluster, Environment
 from gojira.provisioner import provision_app
 from tests.fakes import FakeGCPClient, FakeGitHubClient, KubectlFactory
@@ -272,3 +272,79 @@ def test_entry_with_neither_path_nor_patch_is_dropped_not_fatal():
 
     out = preserve_patches("patches:\n- target: {kind: Deployment, name: x}\n", RENDERED)
     assert out == RENDERED
+
+
+# --- finding #84: an equal contract is kept byte-for-byte --------------------
+
+
+def _provision_into(session, app, workdir):
+    app.setup_pr_url = None
+    session.commit()
+    result = provision_app(
+        session, app,
+        gcp=FakeGCPClient(), github=FakeGitHubClient(),
+        kubectl_for=KubectlFactory(), config=Config(), workdir=workdir,
+    )
+    assert result.completed, result.error
+    return workdir / "gojira.yaml"
+
+
+def test_equal_contract_keeps_the_authors_text(session, tmp_path):
+    """The author's comments, key order and spacing survive a regeneration that
+    would have written the same meaning (tenishai/kobo#91 showed a diff that
+    was not a change)."""
+    app = _seed(session)
+    rendered = _provision_into(session, app, tmp_path / "first").read_text()
+    doc = yaml.safe_load(rendered)
+    authored = (
+        "# The deploy contract, with the author's reasons.\n"
+        + yaml.safe_dump(dict(reversed(list(doc.items()))), sort_keys=False)
+        + "\n# trailing note the author cares about\n"
+    )
+    assert authored != rendered
+    workdir = tmp_path / "second"
+    workdir.mkdir()
+    (workdir / "gojira.yaml").write_text(authored)
+    assert _provision_into(session, app, workdir).read_text() == authored
+    # the workflow is stamped with the same meaning either way
+    ci = (workdir / ".github" / "workflows" / "gojira-ci.yaml").read_text()
+    assert contract_fingerprint(authored) in ci
+
+
+def test_changed_contract_is_still_rewritten(session, tmp_path):
+    """A contract whose meaning differs from the render (here: an environment
+    the registration does not have — environments come from Gojira, not the
+    file) is regenerated as before, comments and all."""
+    app = _seed(session)
+    rendered = _provision_into(session, app, tmp_path / "first").read_text()
+    doc = yaml.safe_load(rendered)
+    doc["environments"][0]["namespace"] = "somewhere-else"
+    workdir = tmp_path / "second"
+    workdir.mkdir()
+    (workdir / "gojira.yaml").write_text("# comment\n" + yaml.safe_dump(doc, sort_keys=False))
+    out = _provision_into(session, app, workdir).read_text()
+    assert "# comment\n" not in out              # regenerated from the template
+    assert "namespace: demo" in out              # the registration wins
+
+
+def test_author_edits_the_render_reads_back_are_kept(session, tmp_path):
+    """Needs the render takes FROM the contract (env, secrets_from, ...) come
+    back identical, so a file that adds one is an equal contract and is kept
+    as written — the author's edit is the render."""
+    app = _seed(session)
+    rendered = _provision_into(session, app, tmp_path / "first").read_text()
+    doc = yaml.safe_load(rendered)
+    doc["env"] = {"NEW_FLAG": "1"}
+    authored = "# why NEW_FLAG\n" + yaml.safe_dump(doc, sort_keys=False)
+    workdir = tmp_path / "second"
+    workdir.mkdir()
+    (workdir / "gojira.yaml").write_text(authored)
+    assert _provision_into(session, app, workdir).read_text() == authored
+
+
+def test_unparseable_contract_is_replaced(session, tmp_path):
+    workdir = tmp_path / "w"
+    workdir.mkdir()
+    (workdir / "gojira.yaml").write_text(":\n  not yaml: [")
+    out = _provision_into(session, _seed(session), workdir).read_text()
+    assert yaml.safe_load(out)["app"]

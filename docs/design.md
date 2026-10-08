@@ -118,7 +118,8 @@ for such plans is designed, not built.
 
 Lives in the repo root. Created by the setup PR, edited by the team afterward.
 Gojira re-reads it on changes (webhook) and regenerates artifacts when the
-class or overrides change.
+class or overrides change. A regeneration that would write the same meaning
+keeps the author's file byte-for-byte, comments included (finding #84).
 
 ```yaml
 app: clips-api
