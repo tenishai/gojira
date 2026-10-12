@@ -494,7 +494,8 @@ class GeneratorSpec(BaseModel):
     config_mounts: list[ConfigMount] = []  # ConfigMaps read as files
     secret_mounts: list[SecretMount] = []  # Secrets read as files (key files)
     # Arguments to `docker build`, from the contract and so from git: never a
-    # secret. AR_TOKEN is the one the platform adds itself. What a build
+    # secret. AR_TOKEN is the one the platform adds itself, as a BuildKit
+    # secret mount (cabal#250), never a build arg. What a build
     # needs to say to reach a package index, pick a base image, or set a
     # version is the app's to declare (2026-09-30: the tenish stack's images
     # install private packages from an index named this way).
