@@ -699,7 +699,8 @@ def test_build_args_reach_docker_build_as_single_shell_words():
     files = render(spec(build_args={"MODEL": "claude sonnet $LATEST", "EXTRA_INDEX_URL": "https://x/simple/"}))
     ci = files[".github/workflows/gojira-ci.yaml"]
     build = next(line for line in ci.splitlines() if "docker build" in line)
-    assert '--build-arg AR_TOKEN="$(gcloud auth print-access-token)"' in build  # the platform's own
+    assert "--secret id=ar_token,env=AR_TOKEN" in build  # the platform's own, as a BuildKit secret
+    assert "--build-arg AR_TOKEN" not in ci  # a build arg would print in the build log
     assert "--build-arg EXTRA_INDEX_URL=https://x/simple/" in ci
     assert "--build-arg 'MODEL=claude sonnet $LATEST'" in ci  # quoted: no word split, no expansion
 

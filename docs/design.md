@@ -171,7 +171,8 @@ needs. `config_mounts`, `secret_mounts` and `build_args` came from the tenish
 stack's own apps (2026-09-30): a config file, a key file, and an image that
 installs private packages from an index named at build time. `build_args`
 values live in the contract and so in git; the one secret a build gets,
-`AR_TOKEN`, the platform adds itself.
+`AR_TOKEN`, the platform adds itself, as a BuildKit secret (`--secret
+id=ar_token`), never a build arg, which the build log would print.
 
 Nothing of the *install* is written into the repo. The generated workflows
 read the registry, the deploy identity and the cluster coordinates of every
