@@ -294,7 +294,7 @@ Phase 1 step sequence:
 4. `grant_iam_roles`
 5. `ensure_ar_repo`
 6. `ensure_namespace`
-7. `generate_artifacts` (render templates into a working tree, then build every overlay with kustomize: a render that cannot build fails here with the reason, and never reaches a PR)
+7. `generate_artifacts` (render templates into a working tree; overlays and `gojira-*` workflows Gojira wrote for environments the app no longer has are removed, anything else found there is kept and listed in the setup PR — finding #96; then every overlay is built with kustomize: a render that cannot build fails here with the reason, and never reaches a PR)
 8. `open_setup_pr` (branch + commit + PR via GitHub App)
 
 ### Configuration
