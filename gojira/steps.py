@@ -35,7 +35,7 @@ from gojira.generator import (
     render,
 )
 from gojira.github import SETUP_BRANCH, GitHubClient
-from gojira.k8s import KubectlClient
+from gojira.k8s import K8sError, KubectlClient, kustomize_build
 from gojira.models import App, AppStatus, Environment
 from gojira.opinions import WORKLOAD_CLASSES
 from gojira.provisioner import ProvisionContext, Step
@@ -475,8 +475,33 @@ class GenerateArtifacts:
                 )
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content)
+        build_overlays(ctx.workdir, ctx.environments)
         log.info("generated %d artifacts into %s", len(files), ctx.workdir)
         return f"{len(files)} files"
+
+
+def build_overlays(workdir, environments) -> None:
+    """Build every environment overlay in the working tree, before anything is
+    committed (finding #83).
+
+    The render is correct by construction, but the preserved parts are not:
+    an app-authored patch can name a `namespace:` (kustomize matches patches
+    before the overlay's namespace transformer runs, so the target is never
+    found), or target a field the base no longer has. Until now nothing built
+    what the step wrote, so the setup PR carried a broken overlay under a green
+    check and the generated CI failed twenty apply retries later with the
+    reason buried. A render that cannot build now fails this step with
+    kustomize's own message, and the app row says why.
+    """
+    for env in environments:
+        overlay = workdir / "k8s" / "overlays" / env.name
+        try:
+            kustomize_build(overlay)
+        except K8sError as exc:
+            raise ValueError(
+                f"k8s/overlays/{env.name} does not build, so nothing was committed; "
+                f"fix the overlay (usually an app-authored patch) and provision again: {exc}"
+            ) from exc
 
 
 def _refuse_cluster_scoped_base(base_dir, files: dict[str, str]) -> None:
