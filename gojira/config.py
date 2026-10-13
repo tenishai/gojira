@@ -176,6 +176,29 @@ class CIConfig(BaseModel):
     # org-level variables never reach private repositories (2026-09-30).
     # Empty: GitHub's hosted runners.
     runner: str = ""
+    # Values a contract may reference instead of writing: `build_args:
+    # {EXTRA_INDEX_URL: ${GOJIRA_PYTHON_INDEX}}` in gojira.yaml reads
+    # `vars.GOJIRA_PYTHON_INDEX` at build time, and this map names what each
+    # such variable is on THIS install (GOJIRA_REPO_VARIABLES, YAML flow map).
+    # Set on every connected repo next to the GOJIRA_<ENV>_* facts, so a
+    # package index in the install's own project never lands in a repo
+    # (issue #102). Names: upper-case, digits and underscores.
+    repo_variables: dict[str, str] = {}
+
+    @field_validator("repo_variables", mode="before")
+    @classmethod
+    def _map_from_string(cls, v):
+        if isinstance(v, str):
+            return yaml.safe_load(v) or {}
+        return v
+
+    @field_validator("repo_variables")
+    @classmethod
+    def _variable_names(cls, v):
+        bad = [k for k in v if not re.fullmatch(r"[A-Z][A-Z0-9_]*", str(k))]
+        if bad:
+            raise ValueError(f"repo_variables names must be upper-case identifiers: {bad}")
+        return {str(k): str(val) for k, val in v.items()}
 
 
 class IamConfig(BaseModel):

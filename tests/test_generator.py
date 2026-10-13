@@ -392,3 +392,30 @@ def test_generated_ci_builds_once_before_the_apply_retries():
         build = ci.index("kubectl kustomize . > /dev/null")
         loop = ci.index("for attempt in $(seq 1 20)")
         assert build < loop
+
+
+# --- issue #102: a build arg may reference a repository variable -----------
+
+
+def test_build_arg_reference_reads_a_repository_variable():
+    """`${NAME}` renders as the Actions variable and is required up front;
+    a literal next to it is still shell-quoted into the command."""
+    spec = GOLDEN_CASES["web"].model_copy(update={"build_args": {
+        "EXTRA_INDEX_URL": "${GOJIRA_PYTHON_INDEX}",
+        "BASE_IMAGE": "python:3.12-slim",
+    }})
+    assert spec.build_arg_refs() == ["GOJIRA_PYTHON_INDEX"]
+    ci = render(spec)[".github/workflows/gojira-ci.yaml"]
+    assert '--build-arg EXTRA_INDEX_URL="${{ vars.GOJIRA_PYTHON_INDEX }}"' in ci
+    assert "--build-arg BASE_IMAGE=python:3.12-slim" in ci
+    assert "GOJIRA_PYTHON_INDEX: ${{ vars.GOJIRA_PYTHON_INDEX }}" in ci    # the guard step
+    assert "GOJIRA_PYTHON_INDEX" in ci.split("for name in ")[1].split("; do")[0]
+    assert "pkg.dev" not in ci                                             # nothing of an install
+
+
+def test_only_the_exact_reference_form_is_a_reference():
+    from gojira.generator import variable_ref
+
+    assert variable_ref("${GOJIRA_PYTHON_INDEX}") == "GOJIRA_PYTHON_INDEX"
+    for literal in ("https://x/${GOJIRA_PYTHON_INDEX}", "${lower}", "$GOJIRA_X", "${GOJIRA-X}", ""):
+        assert variable_ref(literal) is None

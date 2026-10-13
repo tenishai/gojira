@@ -1,8 +1,8 @@
 ---
 card: arch-card:gojira-auth
-updated: 2026-10-07
+updated: 2026-10-13
 anchor: gojira/web/auth.py sha=a1241f6cfab86d6380710dc2c8a3085cd6b5e5e5
-anchor: gojira/config.py sha=df598bf78f12e5ef6b1b80f72cd1ca26487cb3fe
+anchor: gojira/config.py sha=81d0c1a076b719f8d684775f63c297864b62ad9c
 ---
 # auth — three independent front-door mechanisms
 
@@ -46,3 +46,5 @@ once. Every `/api/v1/*` handler except `/api/v1/usage` is expected to call
 every route does; verify new routes in web/__init__.py directly.
 API: `install`, `identity_from`, `allowed`, `api_token_error` (web/auth.py);
 `AuthConfig` (config.py).
+
+CHANGE 2026-10-13: build_args may reference a repository variable as ${NAME}; CIConfig.repo_variables (GOJIRA_REPO_VARIABLES) names the values and SetRepoVariables sets them; an unknown reference refuses the provision (#102).

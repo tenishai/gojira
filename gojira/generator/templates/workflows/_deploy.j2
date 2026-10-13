@@ -13,8 +13,9 @@ ${{ '{{' }} vars.{{ env.var_prefix }}_{{ fact }} {{ '}}' }}
         # not connected to the Gojira whose workflow is running.
         env:
 {% for name in names %}
-          {{ name }}: {{ v(env, name[(env.var_prefix | length) + 1:]) }}
-{% endfor %}
+{% if name.startswith(env.var_prefix ~ '_') %}          {{ name }}: {{ v(env, name[(env.var_prefix | length) + 1:]) }}
+{% else %}          {{ name }}: ${{ '{{' }} vars.{{ name }} {{ '}}' }}
+{% endif %}{% endfor %}
         run: |
           for name in {{ names | join(' ') }}; do
             if [ -z "${!name}" ]; then

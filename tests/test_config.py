@@ -106,3 +106,15 @@ def test_observe_clusters_accept_install_value_string():
         {"observe": {"clusters": {"dev": {"namespace": "obs", "service_account": "sa"}}}}
     )
     assert hand.observe.clusters["dev"].namespace == "obs"
+
+
+def test_repo_variables_parse_from_a_flow_map_and_reject_bad_names():
+    import pytest
+
+    from gojira.config import CIConfig
+
+    cfg = CIConfig(repo_variables="{GOJIRA_PYTHON_INDEX: https://idx/simple/}")
+    assert cfg.repo_variables == {"GOJIRA_PYTHON_INDEX": "https://idx/simple/"}
+    assert CIConfig(repo_variables="").repo_variables == {}
+    with pytest.raises(ValueError):
+        CIConfig(repo_variables={"python-index": "x"})

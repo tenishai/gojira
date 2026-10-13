@@ -963,3 +963,33 @@ def test_generate_builds_the_real_overlays(session, single_env, tmp_path):
     )
     assert result.completed, result.error
     assert (tmp_path / "k8s" / "overlays" / "dev" / "kustomization.yaml").exists()
+
+
+# --- issue #102: install-named variables ride along; unknown refs refused --
+
+
+def test_install_repo_variables_are_set_next_to_the_platform_facts(single_env):
+    from gojira.steps import SetRepoVariables
+
+    gh = FakeGitHubClient()
+    ctx = _app_ctx(single_env, gh)
+    ctx.config.ci.repo_variables = {"GOJIRA_PYTHON_INDEX": "https://idx/simple/"}
+    SetRepoVariables().apply(ctx)
+    assert gh.variables[("acme/clips-api", "GOJIRA_PYTHON_INDEX")] == "https://idx/simple/"
+    assert SetRepoVariables().check(ctx) == "7 variables current"
+
+
+def test_generate_refuses_a_reference_this_install_does_not_set(session, single_env, tmp_path):
+    from gojira.provisioner import provision_app
+
+    app = single_env[0]
+    (tmp_path / "gojira.yaml").write_text(
+        "app: clips-api\nclass: web\nbuild_args:\n  EXTRA_INDEX_URL: ${GOJIRA_PYTHON_INDEX}\n"
+    )
+    result = provision_app(
+        session, app, gcp=FakeGCPClient(), github=FakeGitHubClient(),
+        kubectl_for=KubectlFactory(), config=Config(), workdir=tmp_path,
+    )
+    assert not result.completed
+    assert result.failed_step == "generate_artifacts"
+    assert "GOJIRA_PYTHON_INDEX" in result.error and "GOJIRA_REPO_VARIABLES" in result.error
