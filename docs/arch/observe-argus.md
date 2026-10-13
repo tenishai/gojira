@@ -1,7 +1,7 @@
 ---
 card: arch-card:gojira-observe-argus
-updated: 2026-10-07
-anchor: gojira/steps.py sha=42b9a83012c73152da55b51ce224a6af0dfda6b1
+updated: 2026-10-13
+anchor: gojira/steps.py sha=980ed15f7b7862e60cb2eae073c3028d7cbe376d
 anchor: gojira/config.py sha=df598bf78f12e5ef6b1b80f72cd1ca26487cb3fe
 anchor: gojira/web/metrics.py sha=77176d6ce0984db7bfb1f165a59f5299cd19b2a1
 ---
@@ -53,3 +53,5 @@ includes `ObserveApp`.
 API: `ObserveApp` (steps.py); `ObserveConfig`, `ObserveClusterConfig`
 (config.py); `install(app)` (web/metrics.py, mounted once in
 `gojira.web.create_app`).
+
+CHANGE 2026-10-13: generate_artifacts builds every environment overlay with kustomize before the setup PR (#83); the generated CI builds once before its apply retries.

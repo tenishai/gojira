@@ -1,8 +1,8 @@
 ---
 card: arch-card:gojira-provisioner-steps
-updated: 2026-10-07
+updated: 2026-10-13
 anchor: gojira/provisioner.py sha=9a9759a41c6bc7f365344bf1d03003504acad38c
-anchor: gojira/steps.py sha=42b9a83012c73152da55b51ce224a6af0dfda6b1
+anchor: gojira/steps.py sha=980ed15f7b7862e60cb2eae073c3028d7cbe376d
 ---
 # provisioner-steps — the idempotent scoped step engine (Deploy loop)
 
@@ -52,3 +52,5 @@ API: `Step`, `ProvisionContext`, `ProvisionEngine`, `RunResult`,
 `provision_app`, `order_environments`, `distinct_projects`
 (provisioner.py); concrete steps and `per_project_steps()` / `per_env_steps()`
 / `per_app_steps()` / `observe_steps()` (steps.py).
+
+CHANGE 2026-10-13: generate_artifacts builds every environment overlay with kustomize before the setup PR (#83); the generated CI builds once before its apply retries.
