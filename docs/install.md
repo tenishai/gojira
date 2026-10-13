@@ -266,6 +266,8 @@ make uninstall ARGS=--check          # changes nothing; lists what Gojira has he
 make uninstall ARGS="--purge --yes"  # everything, no question
 ```
 
+Every run except `--check` writes its full output to `~/.gojira/uninstall-<time>.log` (or `GOJIRA_UNINSTALL_LOG`) and names the file at the end: the cluster's own logs go in step 3, so when an app's teardown fails partway this is the record of why. Under `--purge`, a deploy identity such a failure left behind is removed by the sweep rather than listed.
+
 `terraform destroy` on its own is not an uninstall. Terraform made the
 cluster; the install script and Gojira made the rest, and Gojira's record of
 what it created lives in the cluster. So the order is fixed, and the script
@@ -289,7 +291,7 @@ held exactly what it held before Gojira.
 | Kept unless `--purge` | Why |
 |---|---|
 | Identity pool `gojira` | Every app shares it. It costs nothing and grants nothing once the apps are gone. |
-| Image repo `apps` | Deleted by `--purge` only when empty. |
+| Image repo `apps` | `--purge` deletes the images of the apps it removed and then the repo; it keeps the repo only for images Gojira did not build, and names them. |
 | Bucket `<project>_cloudbuild` | Cloud Build's, and other builds in the project may use it. |
 
 Never touched: enabled APIs (disabling one can break things Gojira never

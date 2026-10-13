@@ -58,6 +58,17 @@ AGENT="gojira-sizing-agent"
 BUCKET="${PROJECT}_cloudbuild"
 PORT="${GOJIRA_UNINSTALL_PORT:-18099}"
 
+# Everything below is also written to a transcript. The cluster's own logs
+# die in step 3, so when an app's teardown fails partway this file is the only
+# record of why (2026-10-08: two apps left an identity and their images behind
+# and the terminal that knew the reason had scrolled away).
+if [ "$CHECK" != 1 ]; then
+  LOG="${GOJIRA_UNINSTALL_LOG:-$HOME/.gojira/uninstall-$(date -u +%Y%m%dT%H%M%SZ).log}"
+  mkdir -p "$(dirname "$LOG")"
+  exec > >(tee -a "$LOG") 2> >(tee -a "$LOG" >&2)
+  echo "transcript: $LOG"
+fi
+
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 quiet() { "$@" >/dev/null 2>&1; }
 
@@ -180,8 +191,10 @@ import json, sys
 for a in json.load(sys.stdin)["apps"]:
     print(a["id"], a["name"])')"
   [ -n "$IDS" ] || echo "none connected"
+  APP_NAMES=""
   while read -r id name; do
     [ -n "$id" ] || continue
+    APP_NAMES="$APP_NAMES $name"
     echo "removing $name"
     api -X DELETE "localhost:$PORT/api/v1/apps/$id" | python3 -c '
 import json, sys
@@ -290,12 +303,34 @@ step "5/6 shared resources"
 if [ "$PURGE" = 1 ]; then
   quiet gcloud iam workload-identity-pools describe "$POOL" --location global --project "$PROJECT" \
     && gcloud iam workload-identity-pools delete "$POOL" --location global --project "$PROJECT" --quiet
+  # An app's teardown that failed partway (step 1) leaves its deploy identity:
+  # Gojira names them, so the purge can finish the job rather than list it.
+  while read -r sa; do
+    [ -n "$sa" ] || continue
+    case "$sa" in *-deploy@"$PROJECT".iam.gserviceaccount.com) ;; *) continue ;; esac
+    while read -r role; do
+      [ -n "$role" ] || continue
+      quiet gcloud projects remove-iam-policy-binding "$PROJECT" --member "serviceAccount:$sa" \
+        --role "$role" --condition=None --quiet && echo "revoked $role from $sa"
+    done < <(gcloud projects get-iam-policy "$PROJECT" --flatten='bindings[].members' \
+      --filter="bindings.members:serviceAccount:$sa" --format='value(bindings.role)' 2>/dev/null)
+    gcloud iam service-accounts delete "$sa" --project "$PROJECT" --quiet && echo "deleted $sa (left by a failed app teardown)"
+  done < <(gcloud iam service-accounts list --project "$PROJECT" \
+    --filter='displayName~^Gojira' --format='value(email)' 2>/dev/null)
   if quiet gcloud artifacts repositories describe apps --location "$REGION" --project "$PROJECT"; then
-    if [ -z "$(gcloud artifacts docker images list "${REGION}-docker.pkg.dev/${PROJECT}/apps" \
-          --format='value(package)' --limit 1 2>/dev/null)" ]; then
+    # Images of the apps this run removed are Gojira's to delete; anything else
+    # in the repo was pushed by another hand and keeps the repo alive.
+    for name in ${APP_NAMES:-}; do
+      quiet gcloud artifacts docker images describe "${REGION}-docker.pkg.dev/${PROJECT}/apps/$name" \
+        && gcloud artifacts docker images delete "${REGION}-docker.pkg.dev/${PROJECT}/apps/$name" \
+             --delete-tags --project "$PROJECT" --quiet && echo "deleted images of $name"
+    done
+    OTHERS="$(gcloud artifacts docker images list "${REGION}-docker.pkg.dev/${PROJECT}/apps" \
+          --format='value(package)' 2>/dev/null | sed 's#.*/apps/##' | sort -u | tr '\n' ' ')"
+    if [ -z "$OTHERS" ]; then
       gcloud artifacts repositories delete apps --location "$REGION" --project "$PROJECT" --quiet
     else
-      echo "image repo apps still holds images that are not Gojira's apps; not deleted."
+      echo "image repo apps kept: it holds images Gojira did not build (${OTHERS% })."
     fi
   fi
   quiet gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" \
@@ -310,6 +345,7 @@ if sweep && [ "$FAILED" = 0 ]; then
   printf '\nGojira is removed. The files its setup PRs added to your repos\n'
   printf '(gojira.yaml, k8s/, .github/workflows/gojira-ci.yaml) are yours to delete.\n'
 else
-  printf '\nGojira is NOT fully removed: see the "left" and FAILED lines above.\n' >&2
+  printf '\nGojira is NOT fully removed: see the "left" and FAILED lines above%s.\n' \
+    "${LOG:+ (transcript: $LOG)}" >&2
   exit 1
 fi
