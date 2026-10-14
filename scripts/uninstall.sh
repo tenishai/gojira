@@ -301,7 +301,11 @@ esac
 # --- 5. what the apps shared ----------------------------------------------------
 step "5/6 shared resources"
 if [ "$PURGE" = 1 ]; then
-  quiet gcloud iam workload-identity-pools describe "$POOL" --location global --project "$PROJECT" \
+  # A deleted pool still answers describe for 30 days (state DELETED), and
+  # deleting it again is NOT_FOUND: only an ACTIVE pool is ours to delete, so
+  # a rerun after a partial purge passes this step instead of dying on it.
+  [ "$(gcloud iam workload-identity-pools describe "$POOL" --location global \
+        --project "$PROJECT" --format='value(state)' 2>/dev/null)" = ACTIVE ] \
     && gcloud iam workload-identity-pools delete "$POOL" --location global --project "$PROJECT" --quiet
   # An app's teardown that failed partway (step 1) leaves its deploy identity:
   # Gojira names them, so the purge can finish the job rather than list it.

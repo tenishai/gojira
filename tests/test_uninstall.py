@@ -23,7 +23,7 @@ case "$tool $*" in
   "gcloud container clusters describe"*) [ -n "$NO_CLUSTER" ] && exit 1; exit 0 ;;
   "gcloud projects describe"*) echo 123 ;;
   "gcloud auth print-access-token"*) echo tok ;;
-  "gcloud iam workload-identity-pools describe"*) echo ACTIVE ;;
+  "gcloud iam workload-identity-pools describe"*) echo "${POOL_STATE:-ACTIVE}" ;;
   "gcloud iam service-accounts list"*) [ -n "$LEFT_SA" ] && ! grep -q "service-accounts delete $LEFT_SA" "$CALLS" && echo "$LEFT_SA" ;;
   "gcloud projects get-iam-policy"*"--filter=bindings.members:serviceAccount:"*) echo roles/container.developer ;;
   "gcloud projects get-iam-policy"*) ;;
@@ -165,6 +165,18 @@ def test_with_the_cluster_already_gone_the_project_is_still_cleaned(run):
     assert done.returncode == 0, done.stdout + done.stderr
     assert not [c for c in calls if c.startswith(("kubectl", "curl"))]
     assert _first(calls, "gcloud iam service-accounts delete gojira@proj")
+
+
+def test_a_rerun_after_a_partial_purge_does_not_die_on_the_pool_it_already_deleted(run):
+    """Google keeps a deleted identity pool answering describe for 30 days
+    (state DELETED); deleting it again is NOT_FOUND. The first purge of
+    2026-10-14 deleted the pool and stopped later; the rerun died here before
+    reaching the sweep. Only an ACTIVE pool is deleted; a deleted one is neither
+    deleted nor listed as left."""
+    done, calls = run("--purge", "--yes", POOL_STATE="DELETED", NO_CLUSTER="1")
+    assert "6/6 what is left" in done.stdout            # reached the sweep (the fake's repo and bucket always exist)
+    assert not [c for c in calls if "workload-identity-pools delete" in c]
+    assert "left  identity pool" not in done.stdout
 
 
 def test_terraform_state_for_this_project_means_terraform_takes_it_down(run, tmp_path):

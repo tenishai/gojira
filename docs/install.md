@@ -63,7 +63,9 @@ named `gojira-sandbox`, an image repo for Gojira's own image, and Gojira's
 service account bound to its in-cluster identity (about 9 minutes). Terraform
 reads its values from `gojira.env` and signs in as your `gcloud` account;
 there is no second file and no second login. State stays on your machine in
-`terraform/`, ignored by git. Keep it: `make uninstall` needs it.
+`terraform/`, ignored by git. Keep it, and run `make uninstall` from this same
+clone: the uninstall reads the state next to it, and a clone without it
+cannot take the cluster down (it says so, and leaves the platform standing).
 
 Then it checks your tools and the cluster, builds the image in Cloud Build,
 creates the secret (your App key, plus a webhook secret and an API token it
@@ -265,6 +267,12 @@ make uninstall                       # shows the plan, asks for the project id
 make uninstall ARGS=--check          # changes nothing; lists what Gojira has here
 make uninstall ARGS="--purge --yes"  # everything, no question
 ```
+
+Run it from the clone that ran `make install`: the terraform state in its
+`terraform/` is what takes the cluster down. From any other clone step 4
+is skipped with a sentence saying where to go, and the sweep lists the
+cluster as left. A rerun after a partial purge is safe: what the first run
+already removed is passed over, not failed on.
 
 Every run except `--check` writes its full output to `~/.gojira/uninstall-<time>.log` (or `GOJIRA_UNINSTALL_LOG`) and names the file at the end: the cluster's own logs go in step 3, so when an app's teardown fails partway this is the record of why. Under `--purge`, a deploy identity such a failure left behind is removed by the sweep rather than listed.
 

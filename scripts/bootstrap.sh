@@ -233,3 +233,12 @@ Secrets minted for you (stable across reruns):
   API token — Authorization: Bearer <token> for the /api/v1 onboarding API:
     kubectl -n gojira get secret gojira-github-app -o jsonpath='{.data.api_token}' | base64 -d; echo
 EOF
+if [ "${GOJIRA_TERRAFORM:-}" = "1" ]; then
+  # The state is local to this clone; an uninstall run elsewhere cannot take
+  # the cluster down and says so. Name the place while the operator is here.
+  cat <<EOF
+
+Terraform state for this install: $REPO_ROOT/terraform/terraform.tfstate
+  Run 'make uninstall' from this clone: that state is what takes the cluster down.
+EOF
+fi
