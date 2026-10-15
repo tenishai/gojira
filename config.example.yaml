@@ -15,13 +15,14 @@ database:
   # url: postgresql://gojira:${DB_PASSWORD}@localhost:5432/gojira
 
 defaults:
-  ar_location: us-central1
   environments: [dev, qa, prod]
 
 # Central drift detector (Phase 2). When enabled, Gojira periodically diffs each
 # active app's live cluster spec against its git desired state (managed fields
 # only) and opens a capture PR when an operator's change has drifted from git.
-# Off by default — opt in once you're ready for Gojira to open drift PRs.
+# Off by default in config.yaml — opt in once you're ready for Gojira to open
+# drift PRs. The in-cluster install (make install) turns it on: bootstrap.sh
+# writes GOJIRA_DRIFT_ENABLED, which defaults to true when unset.
 drift:
   enabled: false
   interval_seconds: 900   # 15 min

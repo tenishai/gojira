@@ -54,6 +54,9 @@ $EDITOR gojira.env
 
 ## 2. Install (about 16 minutes the first time)
 
+`make install` reads `gojira.env` from the repo root; set `GOJIRA_ENV` to the
+path of another values file to use that one instead.
+
 ```bash
 make install
 ```
