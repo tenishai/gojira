@@ -81,7 +81,7 @@ the next CI run deploys the new size.
 |---|---|---|---|---|
 | `web` | 250m / 256Mi | 500m / 512Mi | 70% CPU, 2–10 | readiness + liveness HTTP `/health` |
 | `worker` | 500m / 512Mi | 1 / 1Gi | — | liveness TCP |
-| `agent` | 250m / 512Mi | 1 / 1Gi | — (Recreate, single consumer) | liveness TCP |
+| `agent` | 250m / 512Mi | 1 / 1Gi | — (Recreate, single consumer) | readiness + liveness HTTP `/healthz` |
 | `gateway` | 250m / 256Mi | 500m / 512Mi | — (Recreate, single replica) | readiness + liveness HTTP `/healthz` |
 | `cron` | 250m / 256Mi | 1 / 1Gi | — | — |
 | `heavy` | 1 / 1Gi | 2 / 2Gi | 70% CPU, 2–6 | readiness + liveness |
@@ -115,15 +115,17 @@ App required:
 ```bash
 git clone https://github.com/tenishai/gojira && cd gojira
 python3 -m venv venv && venv/bin/pip install -e .
-venv/bin/python -m gojira.web          # UI on http://localhost:8080
+venv/bin/python -m gojira.web          # UI on http://localhost:8080 (same as `make run`)
 ```
+
+It binds `127.0.0.1:8080`; set `GOJIRA_HOST` and `GOJIRA_PORT` to change that.
 
 Then in the UI: **Clusters** → register your GKE cluster (registration probes
 connectivity before accepting) → **Connect repo** → pick a repo with a
 `Dockerfile` at its root, choose a class and environments → merge the setup PR
 it opens → push to main. Your app deploys.
 
-### Production-shaped sandbox (~20 minutes)
+### Production-shaped sandbox (~16 minutes)
 
 Runs Gojira *in-cluster* under Workload Identity with a GitHub App — the way
 you'd run it for a team. One values file, one command each way:

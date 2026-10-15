@@ -47,7 +47,7 @@ rightsize-ingest card); gojira/sizing/agent_deploy.py deploys that repo's manife
 registered cluster. tenishai/argus — cross-repo contract for in-cluster `observe` Jobs and
 the `/metrics` RED-series names argus's web profile scrapes (see observe-argus card). No
 Python import dependency on any sibling repo.
-HEALTH: 476 test functions across 38 files under tests/ (`make test` / `pytest -q`,
+HEALTH: 498 test functions across 38 files under tests/ (`make test` / `pytest -q`,
 `pythonpath=["."]` in pyproject.toml so `tests.fakes` resolves under bare `pytest`).
 CI (.github/workflows/ci.yaml): three jobs, on `vars.CI_RUNNER` when set (fork PRs always on ubuntu-latest) — `test` (ruff + pytest, py3.12), `scripts`
 (bash -n on scripts/*.sh, `scripts/check_arch_cards.py`, `kubectl kustomize deploy/` and `deploy/ingress/` must render —
@@ -65,6 +65,6 @@ assume one covers the others. `DNS1123_LABEL` validation in web/__init__.py is t
 gate on user-supplied names once `auto_merge_setup_pr` is set (finding #3) — auto-merge
 removes the human-review backstop that used to catch this.
 RELATED DOCS (reconcile, don't dupe): docs/design.md (original design, 2026-06-12 —
-promotion model since revised, see the steps.py module docstring), docs/dogfood.md (live walkthrough),
+promotion model since revised, see the steps.py module docstring),
 docs/sizing-feedback-design.md (Phase 4 rightsizing design), docs/environments.md,
 docs/github-app-setup.md.
