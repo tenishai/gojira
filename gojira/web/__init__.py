@@ -167,8 +167,8 @@ def create_app(
         existing = service.app_by_repo(session, repo)
         if existing:  # already connected — take them to it rather than 500 on the unique constraint
             return RedirectResponse(f"/apps/{existing.id}", status_code=303)
-        if not service.repo_has_dockerfile(request.app.state.clients.github, repo):
-            msg = f"{repo} has no Dockerfile — Gojira needs a containerizable app at the repo root"
+        if not service.repo_can_be_deployed(request.app.state.clients.github, repo):
+            msg = f"{repo} {service.NOT_DEPLOYABLE}"
             return RedirectResponse(f"/connect?error={msg}", status_code=303)
         name = (form.get("name") or "").strip()
         if not name:
@@ -424,8 +424,8 @@ def create_app(
             )
         if service.app_by_repo(session, body.repo_full_name):
             return JSONResponse({"error": "repo already connected"}, status_code=409)
-        if not service.repo_has_dockerfile(request.app.state.clients.github, body.repo_full_name):
-            return JSONResponse({"error": "repo has no Dockerfile at its root"}, status_code=422)
+        if not service.repo_can_be_deployed(request.app.state.clients.github, body.repo_full_name):
+            return JSONResponse({"error": f"repo {service.NOT_DEPLOYABLE}"}, status_code=422)
         env_map: dict[str, tuple[int, str]] = {}
         defaults = request.app.state.config.defaults.environment_clusters
         for env in body.environments:

@@ -45,6 +45,24 @@ jobs:
 
       - name: Configure docker for Artifact Registry
         run: gcloud auth configure-docker "${IMAGE%%/*}" --quiet
+{% if spec.published_image %}
+
+      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e  # v0.4
+
+      - name: Copy the published image (no build)
+        # The contract names an image someone else built and published. It is
+        # copied, every platform of it, into this install's registry under this
+        # commit's tag, so the deploy below pins a digest this registry holds
+        # and rollback, promote and the drift sweep see exactly what a build
+        # would have left. The deploy identity must be able to read the
+        # source: a public registry needs nothing; a private Artifact Registry
+        # needs it granted roles/artifactregistry.reader there.
+        run: |
+          TAG="${GITHUB_SHA::12}"
+          SOURCE={{ spec.published_image | shell }}
+          case "$SOURCE" in *.pkg.dev/*|*gcr.io/*) gcloud auth configure-docker "${SOURCE%%/*}" --quiet ;; esac
+          crane copy "$SOURCE" "$IMAGE:$TAG"
+{% else %}
 
       - name: Build and push image
         # AR_TOKEN lets a Dockerfile resolve private Artifact Registry package
@@ -60,6 +78,7 @@ jobs:
           docker build --platform linux/{{ spec.effective_arch }} --secret id=ar_token,env=AR_TOKEN{% for k, v in spec.build_args | dictsort %} \
 {% if v | variable_ref %}            --build-arg {{ k }}="${{ '{{' }} vars.{{ v | variable_ref }} {{ '}}' }}"{% else %}            --build-arg {{ (k ~ "=" ~ v) | shell }}{% endif %}{% endfor %} -t "$IMAGE:$TAG" .
           docker push "$IMAGE:$TAG"
+{% endif %}
 
       - uses: google-github-actions/get-gke-credentials@64bc7249bbcf78056bb92f14d3cedc2da193946c  # v2.3.5
         with:

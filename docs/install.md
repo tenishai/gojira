@@ -236,6 +236,12 @@ sets storage limits itself. The capture PR records them too.
 - **Your own app**: anything with a `Dockerfile` at its root. Port, health
   path and scaling bounds are yours to declare in `gojira.yaml`; a repo that
   already has `k8s/` manifests is adopted, not overwritten.
+- **Software you did not write**: a repo holding only `gojira.yaml` with
+  `image: <registry>/<path>:<tag>` and the `k8s/base` the upstream keeps.
+  Nothing is built; the generated CI copies the published image into your
+  registry and deploys it like any other app, and an upgrade is a tag bump
+  in that one file. Your deploy identity must be able to read the source
+  registry (a private Artifact Registry: `roles/artifactregistry.reader`).
 
 What you have now is the whole install. Secrets are Kubernetes Secrets you
 create in the app's namespace (`secrets_from` names them), and sizing runs
@@ -328,7 +334,7 @@ shortest uninstall there is.
 | `make install`: `PERMISSION_DENIED` from `gcloud.builds.submit`, three times | Not the first-use delay: your account cannot use Cloud Build | Grant yourself Cloud Build Editor, or use an Owner account |
 | `kubectl`: `User "<other account>" cannot ...` | The per-cluster token cache, see the note at the top | `rm ~/.kube/gke_gcloud_auth_plugin_cache`, or use a separate `KUBECONFIG` |
 | Registration: cluster unreachable | DNS-based access is off on the cluster | `./scripts/preflight.sh --fix` |
-| Connect: `repo has no Dockerfile at its root`, or the repo is not listed | No `Dockerfile` on the default branch, or the App is not installed on that repo | Add one, or [github-app-setup.md](github-app-setup.md) §3 |
+| Connect: `has no Dockerfile and its gojira.yaml names no image:`, or the repo is not listed | Neither a `Dockerfile` nor an `image:` contract on the default branch, or the App is not installed on that repo | Add one, or [github-app-setup.md](github-app-setup.md) §3 |
 | `/api/v1/...`: `404 Not Found` on a route this page names | The running image is older than your checkout | `make install` |
 | App is `active` but its namespace is empty | Connected a repo that already held Gojira's files; nothing was merged, so nothing deployed | **Redeploy** on the app page |
 | Redeploy: `403 Resource not accessible by integration` | The GitHub App has Actions: Read | Set Actions to Read & write on the App, accept the change on the installation ([github-app-setup.md](github-app-setup.md) §1) |

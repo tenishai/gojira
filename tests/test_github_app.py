@@ -104,7 +104,11 @@ class FakeGitHubServer:
         m = re.fullmatch(r"/repos/([^/]+/[^/]+)/contents/(.+)", path)
         if method == "GET" and m:
             present = self.contents.get((m.group(1), m.group(2)), False)
-            return httpx.Response(200 if present else 404, json={})
+            if not present:
+                return httpx.Response(404, json={})
+            if "raw" in request.headers.get("Accept", "") and isinstance(present, str):
+                return httpx.Response(200, text=present)
+            return httpx.Response(200, json={})
 
         m = re.fullmatch(r"/repos/([^/]+/[^/]+)/pulls", path)
         if method == "GET" and m:
@@ -231,6 +235,14 @@ def test_file_exists_true_and_false(keypair):
     client = make_client(server, keypair)
     assert client.file_exists("acme/web", "Dockerfile") is True
     assert client.file_exists("acme/web", "missing.txt") is False
+
+
+def test_read_file_returns_the_text_or_none(keypair):
+    server = FakeGitHubServer()
+    client = make_client(server, keypair)
+    server.contents[("acme/web", "gojira.yaml")] = "app: web\nimage: ghcr.io/acme/web:1.2.0\n"
+    assert client.read_file("acme/web", "gojira.yaml") == "app: web\nimage: ghcr.io/acme/web:1.2.0\n"
+    assert client.read_file("acme/web", "missing.yaml") is None
 
 
 def test_setup_pr_merged(keypair):

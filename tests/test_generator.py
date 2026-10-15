@@ -65,6 +65,8 @@ GOLDEN_CASES = {
     "cron": make_spec(app="clips-sweeper", workload_class="cron", schedule="0 3 * * *"),
     "multiproject": make_spec(multiproject=True),
     "identity": make_spec(app="clips-vertex", identity=Identity(gcp_roles=["roles/aiplatform.user"])),
+    # issue #108: a published image is copied into the install's registry, not built
+    "image": make_spec(app="clips-published", multiproject=True, published_image="ghcr.io/example/clips:1.4.0"),
 }
 
 
@@ -419,3 +421,66 @@ def test_only_the_exact_reference_form_is_a_reference():
     assert variable_ref("${GOJIRA_PYTHON_INDEX}") == "GOJIRA_PYTHON_INDEX"
     for literal in ("https://x/${GOJIRA_PYTHON_INDEX}", "${lower}", "$GOJIRA_X", "${GOJIRA-X}", ""):
         assert variable_ref(literal) is None
+
+
+# --- issue #108: image: deploys a published image ---------------------------
+
+
+def test_image_contract_round_trips_and_renders_in_place():
+    from gojira.generator import read_app_needs
+
+    spec = GOLDEN_CASES["image"]
+    files = render(spec)
+    assert read_app_needs(files["gojira.yaml"])["published_image"] == "ghcr.io/example/clips:1.4.0"
+    assert "published_image" not in read_app_needs("app: x\nimage: ''\n")     # empty is absent
+    assert "published_image" not in read_app_needs("app: x\nimage: [a]\n")    # not a string: ignored
+
+
+def test_image_ci_copies_instead_of_building(tmp_path):
+    """The copy step runs for real with a fake crane and gcloud on PATH: the
+    published image lands in the install's registry under the commit's tag,
+    the source registry is only logged into when it is a Google one, and no
+    docker build happens anywhere in the workflow."""
+    import subprocess
+
+    ci = render(GOLDEN_CASES["image"])[".github/workflows/gojira-ci.yaml"]
+    assert "docker build" not in ci and "--platform" not in ci and "setup-crane" in ci
+    step = next(s for s in yaml.safe_load(ci)["jobs"]["build-and-deploy-dev"]["steps"]
+                if s.get("name", "").startswith("Copy the published image"))
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    calls = tmp_path / "calls"
+    for tool in ("crane", "gcloud"):
+        (bindir / tool).write_text(f"#!/usr/bin/env bash\necho \"{tool} $*\" >> {calls}\n")
+        (bindir / tool).chmod(0o755)
+    env = {"PATH": f"{bindir}:{os.environ['PATH']}", "IMAGE": "us-central1-docker.pkg.dev/proj/apps/clips-published",
+           "GITHUB_SHA": "0123456789abcdef0123"}
+    done = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, capture_output=True, text=True)
+    assert done.returncode == 0, done.stdout + done.stderr
+    recorded = calls.read_text().splitlines()
+    assert recorded == ["crane copy ghcr.io/example/clips:1.4.0 us-central1-docker.pkg.dev/proj/apps/clips-published:0123456789ab"]
+    # a Google source registry gets a docker login first
+    env["IMAGE"] = "europe-docker.pkg.dev/proj/apps/x"
+    src = render(make_spec(app="x", published_image="us-central1-docker.pkg.dev/other/tenish-images/x:9"))
+    step = next(s for s in yaml.safe_load(src[".github/workflows/gojira-ci.yaml"])["jobs"]["build-and-deploy-dev"]["steps"]
+                if s.get("name", "").startswith("Copy the published image"))
+    calls.write_text("")
+    subprocess.run(["bash", "-e", "-c", step["run"]], env=env, capture_output=True, text=True, check=True)
+    assert calls.read_text().splitlines()[0] == "gcloud auth configure-docker us-central1-docker.pkg.dev --quiet"
+
+
+def test_image_promote_copies_the_contracts_image_where_it_would_have_built():
+    """A build-from-scratch environment in the promote flow copies the
+    contract's image; the final environment still crane-copies from its
+    predecessor, as before."""
+    promote = render(GOLDEN_CASES["image"])[".github/workflows/gojira-promote.yaml"]
+    assert "docker build" not in promote
+    assert promote.count("crane copy") == 2
+    assert 'crane copy "$SOURCE" "$IMAGE:$GITHUB_REF_NAME"' in promote
+    assert 'crane copy "$SOURCE_IMAGE:$GITHUB_REF_NAME"' in promote
+
+
+def test_a_build_contract_renders_exactly_as_before():
+    """No image: means the build path, byte for byte (the goldens pin it)."""
+    ci = render(GOLDEN_CASES["web"])[".github/workflows/gojira-ci.yaml"]
+    assert "docker build" in ci and "crane" not in ci

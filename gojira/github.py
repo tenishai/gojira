@@ -60,6 +60,11 @@ class GitHubClient(ABC):
         ...
 
     @abstractmethod
+    def read_file(self, repo: str, path: str) -> str | None:
+        """The text of path at the repo's default branch, None when absent."""
+        ...
+
+    @abstractmethod
     def setup_pr_merged(self, repo: str) -> bool:
         """Whether the gojira/setup PR has been merged."""
         ...
@@ -227,6 +232,14 @@ class GhCLI(_LocalGit, GitHubClient):
         result = self._runner.run([self._gh, "api", f"repos/{repo}/contents/{path}", "--silent"])
         return result.returncode == 0
 
+    def read_file(self, repo: str, path: str) -> str | None:
+        # The raw media type returns the file body itself, not the JSON+base64 envelope.
+        result = self._runner.run(
+            [self._gh, "api", "-H", "Accept: application/vnd.github.raw+json",
+             f"repos/{repo}/contents/{path}"]
+        )
+        return result.stdout if result.returncode == 0 else None
+
     def setup_pr_merged(self, repo: str) -> bool:
         out = self._exec(
             [self._gh, "pr", "list", "--repo", repo, "--head", SETUP_BRANCH,
@@ -383,7 +396,7 @@ class GitHubAppClient(_LocalGit, GitHubClient):
     def _request(self, method: str, path: str, repo: str, **kwargs) -> httpx.Response:
         """An installation-scoped REST call for repo."""
         token = self._token(self.installation_id_for(repo))
-        headers = {**kwargs.pop("headers", {}), "Authorization": f"Bearer {token}", "Accept": _ACCEPT}
+        headers = {"Accept": _ACCEPT, **kwargs.pop("headers", {}), "Authorization": f"Bearer {token}"}
         return self._http.request(method, path, headers=headers, **kwargs)
 
     # --- GitHubClient surface ------------------------------------------------
@@ -422,6 +435,16 @@ class GitHubAppClient(_LocalGit, GitHubClient):
             return False
         self._check(r, f"check {path} in {repo}")
         return True
+
+    def read_file(self, repo: str, path: str) -> str | None:
+        r = self._request(
+            "GET", f"/repos/{repo}/contents/{path}", repo,
+            headers={"Accept": "application/vnd.github.raw+json"},
+        )
+        if r.status_code == 404:
+            return None
+        self._check(r, f"read {path} in {repo}")
+        return r.text
 
     def setup_pr_merged(self, repo: str) -> bool:
         owner = repo.split("/")[0]

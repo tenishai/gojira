@@ -76,6 +76,17 @@ jobs:
           gcloud auth configure-docker "${SOURCE_IMAGE%%/*}" --quiet
           gcloud auth configure-docker "${IMAGE%%/*}" --quiet
           crane copy "$SOURCE_IMAGE:$GITHUB_REF_NAME" "$IMAGE:$GITHUB_REF_NAME"
+{% elif spec.published_image %}
+
+      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e  # v0.4
+
+      - name: Copy the published image (no build)
+        # See gojira-ci.yaml: the contract names an image; it is copied, not built.
+        run: |
+          gcloud auth configure-docker "${IMAGE%%/*}" --quiet
+          SOURCE={{ spec.published_image | shell }}
+          case "$SOURCE" in *.pkg.dev/*|*gcr.io/*) gcloud auth configure-docker "${SOURCE%%/*}" --quiet ;; esac
+          crane copy "$SOURCE" "$IMAGE:$GITHUB_REF_NAME"
 {% else %}
 
       - name: Configure docker for Artifact Registry

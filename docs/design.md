@@ -124,6 +124,7 @@ keeps the author's file byte-for-byte, comments included (finding #84).
 ```yaml
 app: clips-api
 class: web
+# image: ghcr.io/example/clips-api:1.4.0   # deploy this published image; nothing is built (see below)
 cluster: my-dev-cluster          # a Gojira-registered cluster; omit for the install's default per environment
 namespace: clips
 environments: [dev, qa, prod]
@@ -182,6 +183,22 @@ the contract says *that* the build needs an index and the install says
 *which*. The generated workflow requires the variable up front like the
 `GOJIRA_<ENV>_*` facts, and a reference this install does not set fails the
 provision by name rather than the build.
+
+`image:` (issue #108, 2026-10-15) is the one key that removes a step rather
+than adding one: the contract names a published image (a full reference, by
+tag or digest), and the generated CI copies it into the install's registry
+under the commit's tag with `crane copy` instead of building. Everything
+after that is unchanged: the digest pin, the apply, rollback, promote (a
+build-from-scratch environment copies the contract's image; the final one
+still copies from its predecessor). A repo with `image:` needs no Dockerfile,
+and connect accepts it on that basis; `image:` next to `build_args:` is
+refused, since there is no build for the arguments. It exists for the person
+deploying software they did not write, in an org whose GitHub App cannot see
+the upstream repo: a deploy repo of `gojira.yaml` plus the `k8s/base` the
+upstream keeps, and an upgrade is a tag bump in one file. The deploy
+identity must be able to read the source registry; a private Artifact
+Registry needs it granted `roles/artifactregistry.reader` there, which the
+platform does not do across projects.
 
 Nothing of the *install* is written into the repo. The generated workflows
 read the registry, the deploy identity and the cluster coordinates of every

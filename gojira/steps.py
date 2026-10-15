@@ -439,6 +439,7 @@ class GenerateArtifacts:
                     log.warning("ignoring unknown class %r in gojira.yaml", repo_class)
         ctx.spec = spec  # the contract-applied spec, for the steps after this one
         _refuse_unknown_variable_refs(spec, ctx.config)
+        _refuse_image_with_build_args(spec)
         files = render(spec)
         if existing_spec.exists():
             files["gojira.yaml"] = _keep_equal_contract(
@@ -605,6 +606,19 @@ def _refuse_unknown_variable_refs(spec, config) -> None:
             "gojira.yaml build_args reference repository variables this install does "
             f"not set: {', '.join(unknown)}. Name them in GOJIRA_REPO_VARIABLES "
             "(gojira.env) and `make install`, or write a literal value."
+        )
+
+
+def _refuse_image_with_build_args(spec) -> None:
+    """`image:` deploys a published image, so there is no build to pass
+    arguments to (issue #108). Both keys at once means the author expects a
+    build that will not happen; say so now rather than ship the image with
+    the arguments silently ignored."""
+    if spec.published_image and spec.build_args:
+        raise ValueError(
+            "gojira.yaml names both image: and build_args:, but an image is copied, "
+            "not built, so the build args would be ignored. Drop build_args (and the "
+            "Dockerfile, if any), or drop image: to build this repo."
         )
 
 

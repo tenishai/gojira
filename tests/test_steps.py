@@ -993,3 +993,36 @@ def test_generate_refuses_a_reference_this_install_does_not_set(session, single_
     assert not result.completed
     assert result.failed_step == "generate_artifacts"
     assert "GOJIRA_PYTHON_INDEX" in result.error and "GOJIRA_REPO_VARIABLES" in result.error
+
+
+def test_generate_refuses_an_image_with_build_args(session, single_env, tmp_path):
+    """image: is copied, not built (issue #108); build_args next to it would be
+    silently ignored, so the provision says so instead."""
+    from gojira.provisioner import provision_app
+
+    app = single_env[0]
+    (tmp_path / "gojira.yaml").write_text(
+        "app: clips-api\nclass: web\nimage: ghcr.io/acme/clips:1\nbuild_args:\n  X: y\n"
+    )
+    result = provision_app(
+        session, app, gcp=FakeGCPClient(), github=FakeGitHubClient(),
+        kubectl_for=KubectlFactory(), config=Config(), workdir=tmp_path,
+    )
+    assert not result.completed
+    assert result.failed_step == "generate_artifacts"
+    assert "image:" in result.error and "build_args" in result.error
+
+
+def test_generate_renders_an_image_contract_without_a_dockerfile(session, single_env, tmp_path):
+    from gojira.provisioner import provision_app
+
+    app = single_env[0]
+    (tmp_path / "gojira.yaml").write_text("app: clips-api\nclass: web\nimage: ghcr.io/acme/clips:1\n")
+    result = provision_app(
+        session, app, gcp=FakeGCPClient(), github=FakeGitHubClient(dockerfile=False),
+        kubectl_for=KubectlFactory(), config=Config(), workdir=tmp_path,
+    )
+    assert result.completed, result.error
+    ci = (tmp_path / ".github" / "workflows" / "gojira-ci.yaml").read_text()
+    assert "crane copy" in ci and "docker build" not in ci
+    assert "image: ghcr.io/acme/clips:1" in (tmp_path / "gojira.yaml").read_text()
