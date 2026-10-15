@@ -19,7 +19,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$REPO_ROOT/scripts/env.sh"
 
 if [ ! -f "${GOJIRA_ENV:-$REPO_ROOT/gojira.env}" ] && [ -z "${PROJECT:-}" ]; then
-  echo "error: no gojira.env — cp gojira.env.example gojira.env and fill it in" >&2
+  echo "error: no values file: set GOJIRA_ENV=<path to your filled-in gojira.env>, or cp gojira.env.example gojira.env in this clone and fill it in" >&2
   exit 1
 fi
 
