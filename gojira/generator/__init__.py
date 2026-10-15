@@ -272,6 +272,8 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
         needs["cluster_roles"] = [str(r) for r in doc["cluster_roles"] if r]
     if isinstance(doc.get("build_args"), dict):
         needs["build_args"] = {str(k): str(v) for k, v in doc["build_args"].items() if k}
+    if isinstance(doc.get("image"), str) and doc["image"].strip():
+        needs["published_image"] = doc["image"].strip()
     if doc.get("arch") in ARCHES:
         needs["arch"] = doc["arch"]  # said, so kept — even amd64 on an arm64 platform
     if isinstance(doc.get("node_selector"), dict):
@@ -513,6 +515,11 @@ class GeneratorSpec(BaseModel):
     # version is the app's to declare (2026-09-30: the tenish stack's images
     # install private packages from an index named this way).
     build_args: dict[str, str] = {}
+    # A published image to deploy instead of building the repo (issue #108):
+    # a full reference, registry/path:tag or @digest. The generated CI copies
+    # it into the install's registry under the commit's tag; everything after
+    # that (digest pin, apply, rollback, promote) is the same as for a build.
+    published_image: str = ""
 
     def build_arg_refs(self) -> list[str]:
         """Repository variables the build args reference (`${NAME}` values)."""

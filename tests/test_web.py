@@ -1065,3 +1065,49 @@ def test_api_list_routes_are_token_gated(session_factory, clients):
     for path in ("/api/v1/apps", "/api/v1/clusters"):
         assert client.get(path).status_code == 401
         assert client.get(path, headers={"Authorization": "Bearer s3cr3t"}).status_code == 200
+
+
+# --- issue #108: a repo with no Dockerfile connects when its contract names an image
+
+
+IMAGE_CONTRACT = "app: web\nclass: web\nimage: ghcr.io/acme/web:1.2.0\n"
+
+
+def test_connect_accepts_a_repo_whose_contract_names_an_image(session_factory):
+    clients = service.ProvisionClients(
+        gcp=FakeGCPClient(),
+        github=FakeGitHubClient(dockerfile=False, contract=IMAGE_CONTRACT),
+        kubectl_for=KubectlFactory(),
+    )
+    client = TestClient(create_app(session_factory, clients=clients))
+    _register_three(session_factory)
+    with session_factory() as s:
+        dev_id = next(c.id for c in service.list_clusters(s) if c.name == "dev")
+    r = client.post(
+        "/connect",
+        data={"name": "published", "repo_select": "acme/web", "workload_class": "web",
+              "cluster_dev": dev_id, "namespace_dev": "x"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert not r.headers["location"].startswith("/connect?error="), r.headers["location"]
+    with session_factory() as s:
+        assert service.app_by_repo(s, "acme/web") is not None
+
+
+def test_api_connect_accepts_an_image_contract_and_refuses_neither(session_factory):
+    _register_three(session_factory)
+    accepted = service.ProvisionClients(
+        gcp=FakeGCPClient(), github=FakeGitHubClient(dockerfile=False, contract=IMAGE_CONTRACT),
+        kubectl_for=KubectlFactory(),
+    )
+    resp = TestClient(create_app(session_factory, clients=accepted)).post("/api/v1/apps", json=_api_body())
+    assert resp.status_code == 201, resp.text
+    neither = service.ProvisionClients(
+        gcp=FakeGCPClient(), github=FakeGitHubClient(dockerfile=False, contract="app: web\nclass: web\n"),
+        kubectl_for=KubectlFactory(),
+    )
+    body = {**_api_body(), "name": "other", "repo_full_name": "acme/other"}
+    resp = TestClient(create_app(session_factory, clients=neither)).post("/api/v1/apps", json=body)
+    assert resp.status_code == 422
+    assert "Dockerfile" in resp.json()["error"] and "image:" in resp.json()["error"]

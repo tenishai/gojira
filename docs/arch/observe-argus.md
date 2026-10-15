@@ -1,7 +1,7 @@
 ---
 card: arch-card:gojira-observe-argus
-updated: 2026-10-13
-anchor: gojira/steps.py sha=d8bc2c238b08a6ec32408d5a44295e3264e7f082
+updated: 2026-10-15
+anchor: gojira/steps.py sha=4d73f35d01832066565e977882b6cc548a7749e3
 anchor: gojira/web/metrics.py sha=77176d6ce0984db7bfb1f165a59f5299cd19b2a1
 ---
 # observe-argus — the cross-repo contract with sibling repo argus
@@ -57,3 +57,4 @@ CHANGE 2026-10-13: generate_artifacts builds every environment overlay with kust
 CHANGE 2026-10-13: generate_artifacts keeps a semantically equal gojira.yaml byte-for-byte, compared by contract fingerprint (#84).
 CHANGE 2026-10-13: generate_artifacts prunes overlays and gojira-* workflows it wrote for environments the app no longer has; hand-written files are listed in the setup PR (#96).
 CHANGE 2026-10-13: build_args may reference a repository variable as ${NAME}; CIConfig.repo_variables (GOJIRA_REPO_VARIABLES) names the values and SetRepoVariables sets them; an unknown reference refuses the provision (#102).
+CHANGE 2026-10-15: generate_artifacts refuses a contract that names both `image:` and `build_args:` (#108); an `image:` contract renders a crane-copy CI step instead of a build.

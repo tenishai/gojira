@@ -3,6 +3,9 @@
 # when this file changes.
 app: {{ spec.app }}
 class: {{ spec.workload_class }}
+{% if spec.published_image %}
+image: {{ spec.published_image }}   # a published image, copied into the install's registry; nothing is built here
+{% endif %}
 environments:
 {% for env in spec.environments %}
   - name: {{ env.name }}

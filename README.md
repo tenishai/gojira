@@ -120,8 +120,9 @@ venv/bin/python -m gojira.web          # UI on http://localhost:8080
 
 Then in the UI: **Clusters** → register your GKE cluster (registration probes
 connectivity before accepting) → **Connect repo** → pick a repo with a
-`Dockerfile` at its root, choose a class and environments → merge the setup PR
-it opens → push to main. Your app deploys.
+`Dockerfile` at its root (or a `gojira.yaml` whose `image:` names a published
+image), choose a class and environments → merge the setup PR it opens → push
+to main. Your app deploys.
 
 ### Production-shaped sandbox (~20 minutes)
 

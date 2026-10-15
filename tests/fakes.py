@@ -228,9 +228,10 @@ class FakeGitHubClient(GitHubClient):
 
     def __init__(self, *, default_branch="main", existing_pr=None, repos=None,
                  dockerfile=True, pr_merged=False, merged_urls=None, installation_id=0,
-                 deploy_history=None):
+                 deploy_history=None, contract=None):
         self._default_branch = default_branch
         self.dockerfile = dockerfile
+        self.contract = contract  # gojira.yaml text at the default branch, if any
         # Repo-history default for setup_pr_merged() (see that method's
         # docstring for why this can't just live on self.pr_merged).
         self._repo_ever_merged = pr_merged
@@ -261,6 +262,9 @@ class FakeGitHubClient(GitHubClient):
 
     def file_exists(self, repo, path):
         return self.dockerfile if path == "Dockerfile" else True
+
+    def read_file(self, repo, path):
+        return self.contract if path == "gojira.yaml" else None
 
     def setup_pr_merged(self, repo):
         """Repo-history check ("was ANY closed setup PR ever merged").

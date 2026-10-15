@@ -803,13 +803,26 @@ def cut_release(github: GitHubClient, repo: str, version: str) -> str:
     return tag
 
 
-def repo_has_dockerfile(github: GitHubClient, repo: str) -> bool:
-    """Pre-flight: Gojira can only build a repo that ships a Dockerfile. On a
-    transient gh error, don't block — let provisioning proceed."""
+NOT_DEPLOYABLE = (
+    "has no Dockerfile and its gojira.yaml names no image: — Gojira needs a "
+    "containerizable app at the repo root, or a contract with `image:` naming a "
+    "published image to deploy"
+)
+
+
+def repo_can_be_deployed(github: GitHubClient, repo: str) -> bool:
+    """Pre-flight: Gojira builds a repo that ships a Dockerfile, or deploys the
+    published image its gojira.yaml names (`image:`, issue #108). On a transient
+    gh error, don't block — let provisioning proceed."""
+    from gojira.generator import read_app_needs
+
     try:
-        return github.file_exists(repo, "Dockerfile")
+        if github.file_exists(repo, "Dockerfile"):
+            return True
+        contract = github.read_file(repo, "gojira.yaml")
+        return bool(contract and read_app_needs(contract).get("published_image"))
     except Exception as exc:
-        log.warning("Dockerfile pre-flight failed for %s: %s", repo, exc)
+        log.warning("deployability pre-flight failed for %s: %s", repo, exc)
         return True
 
 
