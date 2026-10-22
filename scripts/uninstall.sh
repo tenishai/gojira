@@ -324,10 +324,23 @@ if [ "$PURGE" = 1 ]; then
   if quiet gcloud artifacts repositories describe apps --location "$REGION" --project "$PROJECT"; then
     # Images of the apps this run removed are Gojira's to delete; anything else
     # in the repo was pushed by another hand and keeps the repo alive.
+    # A multi-arch image is an index plus one manifest per platform, and the
+    # registry refuses to delete a manifest an index still lists: tagged
+    # digests (the indexes) first, then the rest; a second pass takes any
+    # manifest whose parent was an untagged index.
     for name in ${APP_NAMES:-}; do
-      quiet gcloud artifacts docker images describe "${REGION}-docker.pkg.dev/${PROJECT}/apps/$name" \
-        && gcloud artifacts docker images delete "${REGION}-docker.pkg.dev/${PROJECT}/apps/$name" \
-             --delete-tags --project "$PROJECT" --quiet && echo "deleted images of $name"
+      img="${REGION}-docker.pkg.dev/${PROJECT}/apps/$name"
+      n=0
+      for _pass in 1 2; do
+        while IFS=$'\t' read -r digest _tags; do
+          [ -n "$digest" ] || continue
+          gcloud artifacts docker images delete "$img@$digest" --delete-tags \
+            --project "$PROJECT" --quiet >/dev/null 2>&1 && n=$((n + 1))
+        done < <(gcloud artifacts docker images list "$img" --include-tags \
+                   --format='value(DIGEST,TAGS)' --project "$PROJECT" 2>/dev/null \
+                 | awk -F'\t' '{ print ($2 != "" ? 0 : 1) "\t" $0 }' | sort -s -k1,1 | cut -f2-)
+      done
+      [ "$n" -gt 0 ] && echo "deleted $n images of $name"
     done
     OTHERS="$(gcloud artifacts docker images list "${REGION}-docker.pkg.dev/${PROJECT}/apps" \
           --format='value(package)' 2>/dev/null | sed 's#.*/apps/##' | sort -u | tr '\n' ' ')"

@@ -138,7 +138,7 @@ def test_delete_app_images_happy_path_deletes_each_digest():
     runner = RecordingRunner(
         results={
             "images list": CommandResult(
-                0, "sha256:aaa\nsha256:bbb\nsha256:ccc", ""
+                0, "sha256:aaa\t\nsha256:bbb\t1a2b3c\nsha256:ccc\t", ""
             )
         }
     )
@@ -149,22 +149,37 @@ def test_delete_app_images_happy_path_deletes_each_digest():
     assert count == 3
     assert runner.calls[0] == [
         "gcloud", "artifacts", "docker", "images", "list",
-        "us-east4-docker.pkg.dev/p/repo/app", "--format=value(DIGEST)",
+        "us-east4-docker.pkg.dev/p/repo/app", "--include-tags", "--format=value(DIGEST,TAGS)",
     ]
-    assert runner.calls[1:] == [
-        [
-            "gcloud", "artifacts", "docker", "images", "delete",
-            "us-east4-docker.pkg.dev/p/repo/app@sha256:aaa", "--delete-tags", "--quiet",
-        ],
-        [
-            "gcloud", "artifacts", "docker", "images", "delete",
-            "us-east4-docker.pkg.dev/p/repo/app@sha256:bbb", "--delete-tags", "--quiet",
-        ],
-        [
-            "gcloud", "artifacts", "docker", "images", "delete",
-            "us-east4-docker.pkg.dev/p/repo/app@sha256:ccc", "--delete-tags", "--quiet",
-        ],
-    ]
+    # the tagged digest (the index a deploy pinned) goes before the manifests it lists
+    assert [c[5].rsplit("@", 1)[1] for c in runner.calls[1:]] == ["sha256:bbb", "sha256:aaa", "sha256:ccc"]
+    assert all(c[:5] == ["gcloud", "artifacts", "docker", "images", "delete"]
+               and c[6:] == ["--delete-tags", "--quiet"] for c in runner.calls[1:])
+
+
+def test_delete_app_images_retries_a_manifest_whose_parent_went_later():
+    """An index whose tag moved is untagged too; its children are refused
+    until it is gone, so they get one more pass (2026-10-22, multi-arch)."""
+    class ParentFirst(RecordingRunner):
+        def __init__(self):
+            super().__init__()
+            self.gone = set()
+
+        def run(self, args, stdin=None):
+            self.calls.append(args)
+            joined = " ".join(args)
+            if "images list" in joined:
+                return CommandResult(0, "sha256:child\t\nsha256:oldindex\t", "")
+            digest = args[5].rsplit("@", 1)[1]
+            if digest == "sha256:child" and "sha256:oldindex" not in self.gone:
+                return CommandResult(1, "", "ERROR: manifest is referenced by parent manifests: x")
+            self.gone.add(digest)
+            return CommandResult(0, "", "")
+
+    runner = ParentFirst()
+    count = GcloudClient(runner=runner).delete_app_images("us-east4-docker.pkg.dev/p/repo", "app")
+    assert count == 2
+    assert [c[5].rsplit("@", 1)[1] for c in runner.calls[1:]] == ["sha256:child", "sha256:oldindex", "sha256:child"]
 
 
 def test_delete_app_images_empty_list_issues_no_delete_calls():

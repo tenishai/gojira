@@ -29,6 +29,7 @@ case "$tool $*" in
   "gcloud projects get-iam-policy"*) ;;
   "gcloud compute disks list"*) ;;
   "gcloud artifacts docker images describe"*apps/hello*) exit 0 ;;
+  "gcloud artifacts docker images list"*apps/hello" "*) grep -q "images delete .*@sha256:index" "$CALLS" || printf 'sha256:child\t\nsha256:index\tv1\n' ;;
   "gcloud artifacts docker images describe"*) exit 1 ;;
   "gcloud artifacts docker images list"*) for i in ${OTHER_IMAGES:-}; do echo "us-central1-docker.pkg.dev/proj/apps/$i"; done ;;
   "gcloud compute addresses describe"*) exit 1 ;;
@@ -227,7 +228,10 @@ def test_purge_removes_a_deploy_identity_a_failed_teardown_left(run, tmp_path):
 
 def test_purge_deletes_the_removed_apps_images_and_names_the_rest(run):
     done, calls = run("--yes", "--purge", OTHER_IMAGES="someone-elses")
-    assert _first(calls, "gcloud artifacts docker images delete") and "apps/hello" in "\n".join(calls)
+    deletes = [c for c in calls if "images delete" in c and "apps/hello@" in c]
+    # the index (tagged) before the manifest it lists: the registry refuses the other order
+    assert [d.split("@")[1].split()[0] for d in deletes] == ["sha256:index", "sha256:child"]
+    assert "deleted 2 images of hello" in done.stdout
     assert "image repo apps kept: it holds images Gojira did not build (someone-elses)" in done.stdout
     assert not [c for c in calls if "repositories delete apps" in c]
 

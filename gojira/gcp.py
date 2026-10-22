@@ -450,17 +450,38 @@ class GcloudClient(GCPClient):
         return True
 
     def delete_app_images(self, ar_repo: str, name: str) -> int:
+        """A multi-arch image is an index plus one manifest per platform, and
+        the registry refuses to delete a manifest an index still lists
+        ("manifest is referenced by parent manifests"). `image:` copies whole
+        indexes, so list order decided whether an app's teardown succeeded
+        (2026-10-22: litellm went, cabal/liminal/kobo failed). Tagged digests,
+        the indexes deploys pinned, go first; a manifest whose parent was an
+        untagged index (a tag that later moved) is retried once after."""
         image = f"{ar_repo}/{name}"
         out = self._list_or_empty(
-            "artifacts", "docker", "images", "list", image, "--format=value(DIGEST)",
+            "artifacts", "docker", "images", "list", image,
+            "--include-tags", "--format=value(DIGEST,TAGS)",
         )
-        digests = [line.strip() for line in out.splitlines() if line.strip()]
-        for digest in digests:
-            self._exec(
-                "artifacts", "docker", "images", "delete", f"{image}@{digest}",
-                "--delete-tags", "--quiet",
-            )
-        return len(digests)
+        rows = [line.split("\t") for line in out.splitlines() if line.strip()]
+        pending = [r[0].strip() for r in sorted(rows, key=lambda r: not (len(r) > 1 and r[1].strip()))]
+        deleted = 0
+        for last_pass in (False, True):
+            refused = []
+            for digest in pending:
+                try:
+                    self._exec(
+                        "artifacts", "docker", "images", "delete", f"{image}@{digest}",
+                        "--delete-tags", "--quiet",
+                    )
+                    deleted += 1
+                except GCPError as exc:
+                    if last_pass or "referenced by parent" not in str(exc):
+                        raise
+                    refused.append(digest)
+            pending = refused
+            if not pending:
+                break
+        return deleted
 
 
 def _policy_has(policy_json: str, member: str, role: str) -> bool:
