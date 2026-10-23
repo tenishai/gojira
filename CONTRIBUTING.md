@@ -7,7 +7,7 @@ Issues and pull requests are welcome.
 Needs Python 3.11+.
 
 ```bash
-make dev        # creates venv/ and installs the package with dev extras
+make dev        # creates venv/ from uv.lock (pinned versions; needs uv)
 ```
 
 ## Run tests and lint

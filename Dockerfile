@@ -3,7 +3,8 @@
 # kubectl (with the GKE auth plugin), so the image carries all three. REST to
 # GitHub is httpx; no `gh` needed when running the GitHub App backend.
 
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
+COPY --from=ghcr.io/astral-sh/uv:0.12.0@sha256:606e70c71c852d03f611b1e56a195d08648507018a7057fab82c4974c4eae105 /uv /bin/uv
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -27,9 +28,11 @@ RUN apt-get update && apt-get upgrade -y \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY gojira ./gojira
-RUN pip install .
+# Exactly the locked set, into /app/.venv, on the image's own interpreter.
+ENV UV_PYTHON_PREFERENCE=only-system UV_NO_CACHE=1 PATH="/app/.venv/bin:$PATH"
+RUN uv sync --locked --no-dev --no-editable
 
 # Non-root. /home/gojira holds the kubeconfig gcloud writes at runtime.
 RUN useradd --create-home --uid 10001 gojira && chown -R gojira:gojira /app

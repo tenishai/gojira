@@ -114,8 +114,8 @@ App required:
 
 ```bash
 git clone https://github.com/tenishai/gojira && cd gojira
-python3 -m venv venv && venv/bin/pip install -e .
-venv/bin/python -m gojira.web          # UI on http://localhost:8080
+uv sync --locked                        # the pinned dependency set, into .venv
+uv run python -m gojira.web            # UI on http://localhost:8080
 ```
 
 Then in the UI: **Clusters** → register your GKE cluster (registration probes

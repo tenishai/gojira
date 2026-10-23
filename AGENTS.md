@@ -23,7 +23,8 @@ current code.
 ## Commands
 
 ```bash
-make dev      # venv/ with the package and dev extras
+make dev      # venv/ with the package and dev extras, exactly as uv.lock pins them (needs uv)
+make lock     # re-resolve uv.lock after editing pyproject.toml; review the diff
 make check    # ruff + pytest
 ```
 

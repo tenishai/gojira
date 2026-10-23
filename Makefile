@@ -5,11 +5,14 @@ VENV := venv
 # venvs and makes pip skip installing "already satisfied" deps. Strip it.
 PY := env -u PYTHONPATH $(VENV)/bin/python
 
-venv:
-	python3 -m venv $(VENV)
+# uv.lock pins every dependency; `make dev` installs exactly that set (needs
+# uv: https://docs.astral.sh/uv/). `make lock` re-resolves after a pyproject
+# change — review the lock diff like code.
+dev:
+	UV_PROJECT_ENVIRONMENT=$(VENV) uv sync --locked --extra dev
 
-dev: venv
-	$(PY) -m pip install -q -e ".[dev]"
+lock:
+	uv lock
 
 # Install Gojira into your cluster from gojira.env (cp gojira.env.example).
 install:

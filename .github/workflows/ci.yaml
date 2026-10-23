@@ -18,14 +18,22 @@ on:
 jobs:
   test:
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.CI_RUNNER || 'ubuntu-latest' }}
+    env:
+      # uv's own interpreter, never one the runner happens to carry: on
+      # 2026-10-23 a stale copy in a self-hosted tool cache segfaulted under
+      # anyio while the system python ran the same suite fine.
+      UV_PYTHON_PREFERENCE: only-managed
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
         with:
           python-version: "3.12"
-      - run: rm -rf .venv && python -m venv .venv && .venv/bin/pip install -q -e ".[dev]"  # fresh per job: self-hosted workspaces persist
-      - run: .venv/bin/ruff check gojira tests
-      - run: .venv/bin/pytest -q
+      # --locked: the versions in uv.lock, nothing newer; a lock that no longer
+      # matches pyproject fails here instead of resolving silently. Fresh venv
+      # per job: self-hosted workspaces persist.
+      - run: rm -rf .venv && uv sync --locked --extra dev
+      - run: uv run --no-sync ruff check gojira tests
+      - run: uv run --no-sync pytest -q
 
   scripts:
     # Every script must at least parse; the deploy manifests must render.
