@@ -1,7 +1,7 @@
 ---
 card: arch-card:gojira-provisioner-steps
-updated: 2026-10-15
-anchor: gojira/steps.py sha=4d73f35d01832066565e977882b6cc548a7749e3
+updated: 2026-10-23
+anchor: gojira/steps.py sha=6e5d2caefd8d85a1eeb5c8ea521603028be236f8
 ---
 # provisioner-steps — the idempotent scoped step engine (Deploy loop)
 
@@ -19,7 +19,7 @@ pool/provider, repo binding, IAM roles, Artifact Registry); (2) per-env
 cluster setup (`per_env_steps()`); (3) per-app repo flow — once, unscoped
 (`per_app_steps()`: generator render, the run-identity and cluster-role grants the contract asks for, repo variables, setup PR, optional merge); (4) per-env observe
 — AFTER (3), since it needs the contract in the working tree
-(`observe_steps()`, see observe-argus card). Ledger rows key as
+(`observe_steps()`, see observe-noto card). Ledger rows key as
 `{step.name}@{scope_key}`, so one step name run for several
 projects/envs stays distinct. Passes (1)-(3) halt on the first FAILED step
 (app -> FAILED); pass (4) never halts the run.
@@ -57,3 +57,5 @@ CHANGE 2026-10-13: generate_artifacts keeps a semantically equal gojira.yaml byt
 CHANGE 2026-10-13: generate_artifacts prunes overlays and gojira-* workflows it wrote for environments the app no longer has; hand-written files are listed in the setup PR (#96).
 CHANGE 2026-10-13: build_args may reference a repository variable as ${NAME}; CIConfig.repo_variables (GOJIRA_REPO_VARIABLES) names the values and SetRepoVariables sets them; an unknown reference refuses the provision (#102).
 CHANGE 2026-10-15: generate_artifacts refuses a contract that names both `image:` and `build_args:` (#108); an `image:` contract renders a crane-copy CI step instead of a build.
+
+CHANGE 2026-10-23: observe defaults and Job name follow the noto rename; GOJIRA_OBSERVE_CLUSTERS entries may name the namespace/service account per cluster.

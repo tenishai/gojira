@@ -1,4 +1,4 @@
-# The cross-repo canonicalization vector (gojira <-> argus).
+# The cross-repo canonicalization vector (gojira <-> noto).
 # Both repos hash this file's MEANING — yaml.safe_load, then
 # json.dumps(doc, sort_keys=True, separators=(",", ":"), default=str),
 # then sha256 — and must produce the value in expected_sha256.

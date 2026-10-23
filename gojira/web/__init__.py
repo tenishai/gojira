@@ -550,7 +550,7 @@ def create_app(
         env: str | None = None,
         since_days: int | None = None,
     ):
-        # The read twin of POST /api/v1/usage, for the argus parity window:
+        # The read twin of POST /api/v1/usage, for the noto parity window:
         # a second evidence producer diffs its summaries against the ledger
         # and against the recommender's call. Platform bearer gate (same as
         # the other onboarding routes) — the cluster tokens are write

@@ -127,14 +127,15 @@ def test_committed_configmap_loads_like_the_pod(monkeypatch, tmp_path):
     monkeypatch.setenv("GOJIRA_ALLOWED_DOMAIN", "example.com")
     monkeypatch.setenv("GOJIRA_NAMESPACE_LABELS", "{example.com/team: sre}")
     monkeypatch.setenv("GOJIRA_SIZING_AGENT_IMAGE", "img:dev")
-    monkeypatch.setenv("GOJIRA_OBSERVE_JOB_IMAGE", "argus@sha256:" + "a" * 64)
-    monkeypatch.setenv("GOJIRA_OBSERVE_CLUSTERS", "dev,qa")
+    monkeypatch.setenv("GOJIRA_OBSERVE_JOB_IMAGE", "noto@sha256:" + "a" * 64)
+    monkeypatch.setenv("GOJIRA_OBSERVE_CLUSTERS", "dev=argus/argus-observe,qa")
     cfg = load_config(path)
     assert cfg.auth.enabled is True and cfg.auth.allowed_domain == "example.com"
     assert cfg.defaults.namespace_labels == {"example.com/team": "sre"}
     assert cfg.sizing.agent_image == "img:dev"
-    assert cfg.observe.job_image.startswith("argus@sha256:")
+    assert cfg.observe.job_image.startswith("noto@sha256:")
     assert set(cfg.observe.clusters) == {"dev", "qa"}
+    assert (cfg.observe.clusters["dev"].namespace, cfg.observe.clusters["qa"].namespace) == ("argus", "noto")
 
 
 # --- first install into a project that has never seen Gojira -------------------

@@ -983,11 +983,11 @@ OBSERVE_SUMMARY_PREFIX = "ARGUS_SUMMARY "
 
 
 class ObserveApp:
-    """Born observed: hand the app's contract to an in-cluster `argus observe`
+    """Born observed: hand the app's contract to an in-cluster `noto observe`
     Job and record its one-line summary in the ledger (design agreed with
-    argus, 2026-09-17/18 collab thread).
+    noto — then named argus — 2026-09-17/18 collab thread).
 
-    Ephemeral, so Provision-again re-observes after contract edits — argus's
+    Ephemeral, so Provision-again re-observes after contract edits — noto's
     observe is idempotent and its Job deliberately runs without a persistent
     ledger, re-checking the live world every run. Failure is loud but
     isolated: this step runs in its own non-halting pass (an unobserved app
@@ -1002,7 +1002,7 @@ class ObserveApp:
         cfg = ctx.config.observe
         cluster_name = ctx.environment.cluster.name
         if not cfg.job_image or cluster_name not in cfg.clusters:
-            return f"argus not configured for cluster {cluster_name}"
+            return f"noto not configured for cluster {cluster_name}"
         if ctx.workdir is None or not (ctx.workdir / "gojira.yaml").is_file():
             return "no contract in the working tree"
         return None
@@ -1011,7 +1011,7 @@ class ObserveApp:
         cfg = ctx.config.observe
         ocfg = cfg.clusters[ctx.environment.cluster.name]
         contract = (ctx.workdir / "gojira.yaml").read_text()
-        # Same canonicalization the generated CI stamps (#42); argus refuses
+        # Same canonicalization the generated CI stamps (#42); noto refuses
         # to apply anything when its own recomputation disagrees.
         sha = contract_fingerprint(contract)
         job_name = _observe_job_name(ctx.app.name, ctx.environment.name, int(time.time()))
@@ -1028,14 +1028,14 @@ class ObserveApp:
                 summary = line[len(OBSERVE_SUMMARY_PREFIX):].strip()
                 break
         if failure:
-            # argus's own line when it got that far; else the Job's failure
+            # noto's own line when it got that far; else the Job's failure
             # reason, so a row for a pull failure or deadline still explains itself.
             raise RuntimeError(summary or f"observe job {job_name} did not complete: {failure}")
         return summary or f"{job_name} complete (no summary line)"
 
 
-# argus's Dockerfile: `useradd --uid 10001 argus` + `USER 10001`.
-ARGUS_IMAGE_UID = 10001
+# noto's Dockerfile: `useradd --uid 10001 noto` + `USER 10001`.
+NOTO_IMAGE_UID = 10001
 
 
 def _observe_job_name(app: str, env: str, epoch: int) -> str:
@@ -1043,13 +1043,15 @@ def _observe_job_name(app: str, env: str, epoch: int) -> str:
     reject an apply that changes immutable fields. The epoch leads and the
     variable-length app name trails, so the 63-char DNS-label cut trims the
     app name, never the uniqueness (review of #49)."""
-    return f"argus-observe-{epoch}-{env}-{app}"[:63].rstrip("-")
+    return f"noto-observe-{epoch}-{env}-{app}"[:63].rstrip("-")
 
 
 def _observe_job(name, ocfg, cfg, contract_yaml, sha, env_name) -> dict:
-    """The Job spec, mirroring argus's README manifest ("Running observe as a
-    Job") — SA and security context are argus's own prescription; env vars are
-    the agreed I/O contract."""
+    """The Job spec, mirroring noto's README manifest ("Running observe as a
+    Job") — SA and security context are noto's own prescription; env vars are
+    the agreed I/O contract. The wire names (`ARGUS_ENV`, the `ARGUS_SUMMARY `
+    line) kept their birth name through the rename: noto's job mode still
+    reads and prints them."""
     return {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -1073,9 +1075,9 @@ def _observe_job(name, ocfg, cfg, contract_yaml, sha, env_name) -> dict:
                     # unreadable, causing the first live run's "platform record
                     # unreadable" — was falsified; see this pin's commit message. The pin
                     # stayed as hardening.)
-                    "runAsUser": ARGUS_IMAGE_UID,
-                    "runAsGroup": ARGUS_IMAGE_UID,
-                    "fsGroup": ARGUS_IMAGE_UID,
+                    "runAsUser": NOTO_IMAGE_UID,
+                    "runAsGroup": NOTO_IMAGE_UID,
+                    "fsGroup": NOTO_IMAGE_UID,
                     "seccompProfile": {"type": "RuntimeDefault"},
                 },
                 "volumes": [{"name": "tmp", "emptyDir": {}}],

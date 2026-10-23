@@ -136,7 +136,7 @@ make uninstall                         # all of it gone again, and checked
 ```
 
 Every optional knob — front door hostname and IAP members, Gojira's own
-allowlist, namespace labels, the sizing agent image, the argus observe image and clusters — lives in `gojira.env`
+allowlist, namespace labels, the sizing agent image, the noto observe image and clusters — lives in `gojira.env`
 too; nothing under `deploy/` is edited by hand, and rerunning `make install`
 applies changes.
 

@@ -92,15 +92,23 @@ def test_grantable_cluster_roles_accept_install_value_string():
 
 
 def test_observe_clusters_accept_install_value_string():
-    """GOJIRA_OBSERVE_CLUSTERS arrives as one comma list; each name gets the
-    argus defaults. Empty means no cluster is observed. The mapping form an
-    operator writes by hand still round-trips."""
+    """GOJIRA_OBSERVE_CLUSTERS arrives as one comma list; a bare name gets the
+    noto defaults, `name=namespace/service_account` says where noto lives on a
+    cluster whose platform predates the rename. Empty means no cluster is
+    observed. The mapping form an operator writes by hand still round-trips."""
     from gojira.config import ObserveClusterConfig
 
     cfg = Config.model_validate({"observe": {"clusters": "prod-east, sandbox,"}})
     assert cfg.observe.clusters == {
         "prod-east": ObserveClusterConfig(), "sandbox": ObserveClusterConfig(),
     }
+    assert ObserveClusterConfig() == ObserveClusterConfig(namespace="noto", service_account="noto-observe")
+    old = Config.model_validate(
+        {"observe": {"clusters": "legacy=argus/argus-observe, ns-only=obs, prod-east"}}
+    ).observe.clusters
+    assert old["legacy"] == ObserveClusterConfig(namespace="argus", service_account="argus-observe")
+    assert old["ns-only"] == ObserveClusterConfig(namespace="obs", service_account="noto-observe")
+    assert old["prod-east"] == ObserveClusterConfig()
     assert Config.model_validate({"observe": {"clusters": ""}}).observe.clusters == {}
     hand = Config.model_validate(
         {"observe": {"clusters": {"dev": {"namespace": "obs", "service_account": "sa"}}}}

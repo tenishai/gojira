@@ -281,7 +281,7 @@ def provision_app(
 
     # per-environment observe — after the repo flow (the contract must exist
     # in the working tree), NON-HALTING by design: an unobserved app beats an
-    # undeployed one. A failure lands loudly in the ledger row (the argus
+    # undeployed one. A failure lands loudly in the ledger row (the noto
     # summary line explains itself) but never fails the provision or the app.
     from gojira.steps import observe_steps
 
