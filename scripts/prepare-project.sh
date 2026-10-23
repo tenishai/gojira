@@ -71,10 +71,26 @@ else
 fi
 
 step "3/5 platform roles"
+# A service account made a moment ago is not yet visible to IAM: the first
+# binding answers INVALID_ARGUMENT "does not exist" for up to a minute
+# (fubo-ai-agents-prod, 2026-10-23). Wait for that one error, nothing else.
+grant() {
+  local role=$1 attempt out
+  for attempt in 1 2 3 4 5 6 7 8; do
+    if out=$(gcloud projects add-iam-policy-binding "$PROJECT" \
+          --member "serviceAccount:$GSA" --role "$role" \
+          --condition=None --quiet 2>&1 >/dev/null); then
+      return 0
+    fi
+    case "$out" in *"does not exist"*) ;; *) echo "$out" >&2; return 1 ;; esac
+    echo "  $GSA not visible to IAM yet; waiting (attempt $attempt)"
+    sleep 15
+  done
+  echo "$out" >&2
+  return 1
+}
 for role in "${ROLES[@]}"; do
-  gcloud projects add-iam-policy-binding "$PROJECT" \
-    --member "serviceAccount:$GSA" --role "$role" \
-    --condition=None --quiet >/dev/null
+  grant "$role"
   echo "granted $role"
 done
 
