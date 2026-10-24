@@ -28,7 +28,7 @@ SEAMS → card:
 - drift-capture  gojira/drift.py, gojira/drift_scan.py  (allowlist-projection semantic diff — the Capture loop) → docs/arch/drift-capture.md
 - rightsize-ingest  gojira/sizing/service.py, recommender.py, profile.py  (evidence ingest + recommendation — the Rightsize loop; cross-repo contract with gojira-sizing-agent) → docs/arch/rightsize-ingest.md
 - auth  gojira/web/auth.py, gojira/config.py  (three independent auth mechanisms, do not conflate them) → docs/arch/auth.md
-- observe-argus  gojira/steps.py (ObserveApp), gojira/config.py (ObserveConfig), gojira/web/metrics.py  (cross-repo contract with sibling repo argus) → docs/arch/observe-argus.md
+- observe-noto  gojira/steps.py (ObserveApp), gojira/config.py (ObserveConfig), gojira/web/metrics.py  (cross-repo contract with sibling repo noto, formerly argus) → docs/arch/observe-noto.md
 - (uncarded) gojira/generator/__init__.py — Jinja2 render of CI workflows + Kustomize
   manifests from opinions+config. `preserve_patches`/`preserve_resources`/`preserve_generators`
   carry operator- and drift-authored kustomization entries through a re-render (findings
@@ -44,8 +44,8 @@ SEAMS → card:
   (web/worker/cron/heavy/gpu/agent/gateway) the generator renders from.
 DEPS: tenishai/gojira-sizing-agent — HTTP contract only, no import either direction (see
 rightsize-ingest card); gojira/sizing/agent_deploy.py deploys that repo's manifests into a
-registered cluster. tenishai/argus — cross-repo contract for in-cluster `observe` Jobs and
-the `/metrics` RED-series names argus's web profile scrapes (see observe-argus card). No
+registered cluster. tenishai/noto (formerly argus) — cross-repo contract for in-cluster `observe` Jobs and
+the `/metrics` RED-series names noto's web profile scrapes (see observe-noto card). No
 Python import dependency on any sibling repo.
 HEALTH: 476 test functions across 38 files under tests/ (`make test` / `pytest -q`,
 `pythonpath=["."]` in pyproject.toml so `tests.fakes` resolves under bare `pytest`).
@@ -57,7 +57,7 @@ blocks a merge. ruff select is explicit (E4,E7,E9,F) so the rule set doesn't mov
 ruff version bump.
 GOTCHAS: "sizing" in this repo means container CPU/memory rightsizing, NOT the
 gojira-sizing-agent repo's own release sizing — the two share a name prefix by design (the
-agent is `gojira/sizing`'s producer), not by coincidence. observe/argus is non-halting by design
+agent is `gojira/sizing`'s producer), not by coincidence. observe/noto is non-halting by design
 (`provision_app`'s observe pass, provisioner.py): it waits on the job, but a failed observe never
 fails a provision. AuthConfig, the cluster-scoped agent bearer tokens, and `auth.api_token` are
 three separate mechanisms guarding three different route families — see auth card, do not

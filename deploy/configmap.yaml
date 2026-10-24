@@ -58,7 +58,8 @@ data:
       agent_image: "${GOJIRA_SIZING_AGENT_IMAGE:-}"
     observe:
       # Born observed: each provisioned app hands its contract to an in-cluster
-      # `argus observe` Job. Off until both knobs are set — the argus image
-      # (digest-pinned) and the registered cluster names it may observe on.
+      # `noto observe` Job. Off until both knobs are set — the noto image
+      # (digest-pinned) and the registered cluster names it may observe on
+      # (`name`, or `name=namespace/service_account` when noto lives elsewhere).
       job_image: "${GOJIRA_OBSERVE_JOB_IMAGE:-}"
       clusters: "${GOJIRA_OBSERVE_CLUSTERS:-}"

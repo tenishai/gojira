@@ -134,16 +134,16 @@ class AuthConfig(BaseModel):
 
 
 class ObserveClusterConfig(BaseModel):
-    """Where argus lives on one cluster. The minimal real-world entry is the
+    """Where noto lives on one cluster. The minimal real-world entry is the
     defaults — an empty mapping value enables observe for that cluster."""
 
-    namespace: str = "argus"
-    service_account: str = "argus-observe"
+    namespace: str = "noto"
+    service_account: str = "noto-observe"
 
 
 class ObserveConfig(BaseModel):
     """Born observed: hand each provisioned app's contract to an in-cluster
-    `argus observe` Job (co-designed with argus, 2026-09-17). Feature-off-
+    `noto observe` Job (co-designed with noto, then named argus, 2026-09-17). Feature-off-
     when-absent: no job_image or no entry for an env's cluster = the step
     skips. job_image should be digest-pinned (tag for humans, digest for
     receipts — #37).
@@ -151,20 +151,36 @@ class ObserveConfig(BaseModel):
 
     job_image: str = ""
     ttl_seconds: int = 600            # completed Jobs clean themselves up
-    active_deadline_seconds: int = 900  # argus's own outer bound on the summary line
+    active_deadline_seconds: int = 900  # noto's own outer bound on the summary line
     clusters: dict[str, ObserveClusterConfig] = {}
 
     @field_validator("clusters", mode="before")
     @classmethod
     def _clusters_from_string(cls, v):
         # The in-cluster configmap hands this over as one env var
-        # (GOJIRA_OBSERVE_CLUSTERS, a comma list of registered cluster names):
-        # ${VAR} interpolation reaches values, never mapping keys, so a
-        # string is the only shape the install path can deliver. Each name
-        # gets the defaults (argus namespace, argus-observe SA); an operator
-        # who needs anything else writes the mapping form. Empty means none.
+        # (GOJIRA_OBSERVE_CLUSTERS): ${VAR} interpolation reaches values,
+        # never mapping keys, so a string is the only shape the install path
+        # can deliver. Each comma-separated entry is a registered cluster
+        # name, optionally followed by where noto lives on that cluster:
+        # `name`, `name=namespace` or `name=namespace/service_account`. A bare
+        # name gets the defaults (noto namespace, noto-observe SA); an install
+        # whose platform predates the rename writes `name=argus/argus-observe`.
+        # Empty means none.
         if isinstance(v, str):
-            return {name.strip(): {} for name in v.split(",") if name.strip()}
+            clusters = {}
+            for entry in v.split(","):
+                entry = entry.strip()
+                if not entry:
+                    continue
+                name, _, where = entry.partition("=")
+                namespace, _, sa = where.partition("/")
+                cfg = {}
+                if namespace.strip():
+                    cfg["namespace"] = namespace.strip()
+                if sa.strip():
+                    cfg["service_account"] = sa.strip()
+                clusters[name.strip()] = cfg
+            return clusters
         return v
 
 

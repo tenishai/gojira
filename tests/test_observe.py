@@ -1,8 +1,8 @@
-"""ObserveApp: the born-observed step (argus co-design, 2026-09-17/18).
+"""ObserveApp: the born-observed step (noto co-design, 2026-09-17/18, when noto was named argus).
 
 Covers the config-absent skip, the Job spec handed to the cluster, the
 summary-line ledger contract, failure isolation (observe never fails the
-provision), and the cross-repo canonicalization vector argus asserts against.
+provision), and the cross-repo canonicalization vector noto asserts against.
 """
 
 import json
@@ -23,7 +23,7 @@ from gojira.models import AppStatus, Base
 from gojira.steps import _observe_job_name
 
 VECTOR_DIR = Path(__file__).parent / "fixtures" / "contract_vector"
-JOB_IMAGE = "us-east4-docker.pkg.dev/p/apps/argus@sha256:" + "a" * 64
+JOB_IMAGE = "us-east4-docker.pkg.dev/p/apps/noto@sha256:" + "a" * 64
 
 
 @pytest.fixture
@@ -89,15 +89,15 @@ def test_observe_job_spec_and_summary(session):
     jobs = [m for m in kubectl.applied if "kind: Job" in m]
     assert len(jobs) == 1
     job = yaml.safe_load(jobs[0])
-    assert job["metadata"]["namespace"] == "argus"
+    assert job["metadata"]["namespace"] == "noto"
     pod = job["spec"]["template"]["spec"]
-    assert pod["serviceAccountName"] == "argus-observe"
+    assert pod["serviceAccountName"] == "noto-observe"
     assert pod["restartPolicy"] == "Never"
     container = pod["containers"][0]
     assert container["image"] == JOB_IMAGE
     assert container["args"] == ["observe"]
     env = {e["name"]: e["value"] for e in container["env"]}
-    assert env["ARGUS_ENV"] == "dev"
+    assert env["ARGUS_ENV"] == "dev"  # the wire name kept its birth name through the rename
     assert env["GOJIRA_CONTRACT_SHA256"] == contract_fingerprint(env["GOJIRA_CONTRACT_YAML"])
     assert job["spec"]["activeDeadlineSeconds"] == 900
     assert job["spec"]["ttlSecondsAfterFinished"] == 600
@@ -118,7 +118,7 @@ def test_observe_job_spec_and_summary(session):
 
 
 def test_observe_failure_is_loud_but_isolated(session):
-    """A failed observe records a FAILED ledger row carrying argus's own
+    """A failed observe records a FAILED ledger row carrying noto's own
     failure line — and the provision still completes, the app still lands
     in a healthy terminal status."""
     app = _app(session)
@@ -145,7 +145,7 @@ def test_observe_failure_is_loud_but_isolated(session):
 
 
 def test_observe_failure_without_summary_names_the_job_reason(session):
-    """argus never got to print (image pull failure, deadline): the row
+    """noto never got to print (image pull failure, deadline): the row
     carries the Job's failure reason instead of a bare 'did not complete'."""
     app = _app(session)
     inner = KubectlFactory()
@@ -177,7 +177,7 @@ def test_observe_job_name_keeps_uniqueness_under_the_dns_cut():
     for n in (n1, n2):
         assert len(n) <= 63
         assert re.fullmatch(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?", n), n
-    assert _observe_job_name("short", "dev", 5) == "argus-observe-5-dev-short"
+    assert _observe_job_name("short", "dev", 5) == "noto-observe-5-dev-short"
 
 
 def test_observe_reruns_on_reprovision(session):
@@ -194,7 +194,7 @@ def test_observe_reruns_on_reprovision(session):
 
 
 def test_contract_vector_cross_repo():
-    """The shared canonicalization vector: argus recomputes this fingerprint
+    """The shared canonicalization vector: noto recomputes this fingerprint
     with its own copy of the algorithm and must agree byte-for-byte. Break
     the canonicalization and one repo goes red before the fleet does."""
     text = (VECTOR_DIR / "gojira.yaml").read_text()
