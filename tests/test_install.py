@@ -116,3 +116,19 @@ def test_a_tfvars_file_for_another_project_is_refused(run):
     assert not [c for c in calls if c.startswith("terraform")]
     done, _ = run(tfvars='project_id = "proj"\nregion = "us-central1"\n', GOJIRA_TERRAFORM="1")
     assert done.returncode == 0
+
+
+def test_a_value_with_a_trailing_comment_is_refused_naming_the_key(tmp_path):
+    """`GOJIRA_PREPARE_PROJECT=1   # why` loaded as "1   # why" and switched the
+    flag off without a word (2026-10-23). The loader now names the key and stops."""
+    import subprocess
+    env_file = tmp_path / "gojira.env"
+    env_file.write_text("PROJECT=p\nGOJIRA_PREPARE_PROJECT=1   # brownfield\n# a whole-line comment is fine\n")
+    script = f'set -euo pipefail; GOJIRA_ENV={env_file}; source {ROOT}/scripts/env.sh; echo "PREPARE=$GOJIRA_PREPARE_PROJECT"'
+    done = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+    assert done.returncode != 0
+    assert "GOJIRA_PREPARE_PROJECT" in done.stderr and "own line" in done.stderr
+    env_file.write_text("PROJECT=p\n# brownfield\nGOJIRA_PREPARE_PROJECT=1\nGOJIRA_NAMESPACE_LABELS={example.com/team: sre}\n")
+    done = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+    assert done.returncode == 0, done.stderr
+    assert "PREPARE=1" in done.stdout
