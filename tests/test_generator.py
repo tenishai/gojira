@@ -187,6 +187,19 @@ def test_deployment_encodes_sizing_opinion():
     assert "replicas" not in deployment["spec"]
 
 
+def test_ci_builds_only_when_the_dockerfile_changed():
+    """The image is a function of the Dockerfile, not the commit (tenishai/kobo#434): the
+    build step keys the registry by the Dockerfile's blob sha, reuses a build it finds,
+    and tags every new build with that key as well. The Redeploy button still builds."""
+    ci = render(make_spec())[".github/workflows/gojira-ci.yaml"]
+    build = next(s for s in yaml.safe_load(ci)["jobs"].popitem()[1]["steps"] if s.get("name") == "Build and push image")["run"]
+    assert 'BUILD_KEY="build-$(git rev-parse "HEAD:Dockerfile" | cut -c1-12)"' in build
+    assert '--filter="tag:$BUILD_KEY"' in build
+    assert 'gcloud artifacts docker tags add "$IMAGE@$EXISTING" "$IMAGE:$TAG"' in build
+    assert '-t "$IMAGE:$BUILD_KEY"' in build and 'docker push "$IMAGE:$BUILD_KEY"' in build
+    assert "workflow_dispatch" in build
+
+
 def test_workflows_use_wif_not_keys():
     files = render(make_spec())
     for wf in (".github/workflows/gojira-ci.yaml", ".github/workflows/gojira-promote.yaml"):

@@ -66,11 +66,16 @@ spec:
               value: {{ v | quoted }}
 {% endfor %}
 {% endif %}
-{% if spec.secrets_from or spec.config_from %}
+{% if spec.secrets_from or spec.secrets_from_optional or spec.config_from %}
           envFrom:
 {% for secret in spec.secrets_from %}
             - secretRef:
                 name: {{ secret }}
+{% endfor %}
+{% for secret in spec.secrets_from_optional %}
+            - secretRef:
+                name: {{ secret }}
+                optional: true
 {% endfor %}
 {% for cm in spec.config_from %}
             - configMapRef:

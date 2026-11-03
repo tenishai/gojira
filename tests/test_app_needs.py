@@ -55,6 +55,33 @@ def test_needs_render_into_the_deployment():
     assert pod["securityContext"] == {"fsGroup": 999}
 
 
+def test_optional_secret_references_render_optional_and_round_trip():
+    """A Secret the pod reads when it exists and boots without when it does not
+    (tenishai/kobo#434): rendered with `optional: true`, read back by name, and read
+    the same way from an adopted deployment."""
+    from gojira.generator import infer_app_needs
+
+    files = render(spec(**NEEDS, secrets_from_optional=["atlas-slack", "atlas-env"]))
+    dep = yaml.safe_load(files["k8s/base/deployment.yaml"])
+    app = dep["spec"]["template"]["spec"]["containers"][0]
+    assert app["envFrom"] == [
+        {"secretRef": {"name": "atlas-secrets"}},
+        {"secretRef": {"name": "atlas-slack", "optional": True}},
+        {"secretRef": {"name": "atlas-env", "optional": True}},
+    ]
+    got = read_app_needs(files["gojira.yaml"])
+    assert got["secrets_from"] == ["atlas-secrets"]
+    assert got["secrets_from_optional"] == ["atlas-slack", "atlas-env"]
+    # Optional references alone still render an envFrom block.
+    only = render(spec(secrets_from_optional=["atlas-slack"]))
+    assert yaml.safe_load(only["k8s/base/deployment.yaml"])["spec"]["template"]["spec"]["containers"][0]["envFrom"] == [
+        {"secretRef": {"name": "atlas-slack", "optional": True}}
+    ]
+    inferred = infer_app_needs(files["k8s/base/deployment.yaml"])
+    assert inferred["secrets_from"] == ["atlas-secrets"]
+    assert inferred["secrets_from_optional"] == ["atlas-slack", "atlas-env"]
+
+
 def test_needs_absent_renders_no_stubs():
     dep = yaml.safe_load(render(spec())["k8s/base/deployment.yaml"])
     pod = dep["spec"]["template"]["spec"]
@@ -708,7 +735,8 @@ def test_build_args_reach_docker_build_as_single_shell_words():
 def test_no_build_args_leaves_the_build_line_as_it_was():
     ci = render(spec())[".github/workflows/gojira-ci.yaml"]
     build = next(line for line in ci.splitlines() if "docker build" in line)
-    assert build.strip().endswith('-t "$IMAGE:$TAG" .')
+    # Two tags since tenishai/kobo#434: the commit's, and the Dockerfile's build key.
+    assert build.strip().endswith('-t "$IMAGE:$TAG" -t "$IMAGE:$BUILD_KEY" .')
 
 
 PRUDENCE_SHAPED = """

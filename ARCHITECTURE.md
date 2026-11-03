@@ -33,7 +33,11 @@ SEAMS → card:
   manifests from opinions+config. `preserve_patches`/`preserve_resources`/`preserve_generators`
   carry operator- and drift-authored kustomization entries through a re-render (findings
   #12, #18); `contract_fingerprint`/`stamp_contract` stop a gojira.yaml push and its setup
-  PR landing as two separate deploys. Golden-file tested (tests/test_generator.py).
+  PR landing as two separate deploys. `secrets_from_optional` renders Secret references the
+  pod reads when present (`optional: true`), and the generated CI builds only when the
+  Dockerfile changed (the registry keeps each build under `build-<Dockerfile blob sha>`; a
+  push whose Dockerfile matches re-tags that digest and deploys in seconds; tenishai/kobo#434).
+  Golden-file tested (tests/test_generator.py).
 - (uncarded) gojira/github.py — `GitHubClient` ABC: `GhCLI` (shells to `gh`/`git`, laptop
   mode) and `GitHubAppClient` (RS256 JWT -> installation token, hosted mode).
 - (uncarded) gojira/gcp.py, gojira/k8s.py — `GCPClient`/`KubectlClient` ABCs, same

@@ -232,6 +232,8 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
     needs: dict = {}
     if isinstance(doc.get("secrets_from"), list):
         needs["secrets_from"] = [str(s) for s in doc["secrets_from"] if s]
+    if isinstance(doc.get("secrets_from_optional"), list):
+        needs["secrets_from_optional"] = [str(s) for s in doc["secrets_from_optional"] if s]
     if isinstance(doc.get("config_from"), list):
         needs["config_from"] = [str(s) for s in doc["config_from"] if s]
     if doc.get("service_account"):
@@ -348,13 +350,17 @@ def infer_app_needs(deployment_text: str) -> dict:
         if isinstance(path, str) and path.startswith("/"):
             needs["health"] = path
             break
-    secrets = [
-        e["secretRef"]["name"]
+    refs = [
+        e["secretRef"]
         for e in c0.get("envFrom") or []
         if isinstance(e, dict) and e.get("secretRef", {}).get("name")
     ]
+    secrets = [r["name"] for r in refs if not r.get("optional")]
     if secrets:
         needs["secrets_from"] = secrets
+    optional = [r["name"] for r in refs if r.get("optional")]
+    if optional:
+        needs["secrets_from_optional"] = optional
     configs = [
         e["configMapRef"]["name"]
         for e in c0.get("envFrom") or []
@@ -497,6 +503,10 @@ class GeneratorSpec(BaseModel):
     # overrides. Rendered into the deployment; referenced objects stay
     # app-authored.
     secrets_from: list[str] = []
+    # Secrets the pod reads when they exist and boots without when they do not: a room
+    # wires an agent's Slack and env Secrets this way at birth, so adding them later is
+    # a Secret write and a restart, never a manifest change (tenishai/kobo#434).
+    secrets_from_optional: list[str] = []
     config_from: list[str] = []  # envFrom ConfigMaps — non-secret config
     service_account: str = ""
     identity: Identity | None = None  # the pod's GCP identity, platform-made
