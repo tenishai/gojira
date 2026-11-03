@@ -34,7 +34,9 @@ SEAMS → card:
   carry operator- and drift-authored kustomization entries through a re-render (findings
   #12, #18); `contract_fingerprint`/`stamp_contract` stop a gojira.yaml push and its setup
   PR landing as two separate deploys. `secrets_from_optional` renders Secret references the
-  pod reads when present (`optional: true`), and the generated CI skips a
+  pod reads when present (`optional: true`); `bundle_image` mounts an OCI image read-only at
+  /bundle as a Kubernetes image volume (pullPolicy Always: the node pulls it on every start with
+  its own credentials, so the pod holds none); and the generated CI skips a
   build only for a Dockerfile that reads nothing from the build context (no COPY, ADD or bind
   mount): the registry keeps each such build under `build-<Dockerfile blob sha>` and a push whose
   Dockerfile matches re-tags that digest; a context-reading Dockerfile always builds, and a mutable

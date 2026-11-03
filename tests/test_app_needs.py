@@ -82,6 +82,22 @@ def test_optional_secret_references_render_optional_and_round_trip():
     assert inferred["secrets_from_optional"] == ["atlas-slack", "atlas-env"]
 
 
+def test_a_bundle_image_mounts_read_only_at_bundle_pulled_by_the_node_and_round_trips():
+    """tenishai/kobo#434: the agent's bundle travels as an OCI image the node pulls on every
+    start (pullPolicy Always) and mounts read-only at /bundle, so the pod holds no registry
+    credential and a bundle change is a restart. Rendered, read back, and inferred on adoption."""
+    from gojira.generator import infer_app_needs
+
+    ref = "us-east4-docker.pkg.dev/p/agents/atlas-bundle:current"
+    files = render(spec(bundle_image=ref))
+    pod = yaml.safe_load(files["k8s/base/deployment.yaml"])["spec"]["template"]["spec"]
+    assert pod["volumes"] == [{"name": "bundle", "image": {"reference": ref, "pullPolicy": "Always"}}]
+    assert pod["containers"][0]["volumeMounts"] == [{"name": "bundle", "mountPath": "/bundle", "readOnly": True}]
+    assert read_app_needs(files["gojira.yaml"])["bundle_image"] == ref
+    assert infer_app_needs(files["k8s/base/deployment.yaml"])["bundle_image"] == ref
+    assert "bundle_image" not in read_app_needs(render(spec())["gojira.yaml"])
+
+
 def test_needs_absent_renders_no_stubs():
     dep = yaml.safe_load(render(spec())["k8s/base/deployment.yaml"])
     pod = dep["spec"]["template"]["spec"]

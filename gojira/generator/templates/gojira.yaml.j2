@@ -42,6 +42,9 @@ secrets_from: [{{ spec.secrets_from | join(", ") }}]
 {% if spec.secrets_from_optional %}
 secrets_from_optional: [{{ spec.secrets_from_optional | join(", ") }}]   # read when present; the pod boots without them
 {% endif %}
+{% if spec.bundle_image %}
+bundle_image: {{ spec.bundle_image }}   # mounted read-only at /bundle, pulled by the node on every start
+{% endif %}
 {% if spec.config_from %}
 config_from: [{{ spec.config_from | join(", ") }}]
 {% endif %}
