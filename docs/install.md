@@ -242,6 +242,16 @@ sets storage limits itself. The capture PR records them too.
   registry and deploys it like any other app, and an upgrade is a tag bump
   in that one file. Your deploy identity must be able to read the source
   registry (a private Artifact Registry: `roles/artifactregistry.reader`).
+- **Files beside the image** (`bundle_image: <registry>/<path>:<tag>`): an
+  OCI image mounted read-only at `/bundle` as an image volume, so a change
+  to those files is a publish and a restart, not a build. Needs Kubernetes
+  1.35 or newer (image volumes are on by default from 1.35; an older cluster
+  rejects the Deployment when it is applied, loudly). Proven on GKE Standard;
+  on Autopilot, dry-run the rendered Deployment server-side before an app
+  relies on it, since Autopilot restricts volume types and does not list this
+  one either way. The node pulls the image with its own credentials on every
+  pod start, so the registry is a start-time dependency: while it is
+  unreachable, a pod that restarts cannot come back.
 
 What you have now is the whole install. Secrets are Kubernetes Secrets you
 create in the app's namespace (`secrets_from` names them), and sizing runs
