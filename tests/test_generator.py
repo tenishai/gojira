@@ -187,17 +187,48 @@ def test_deployment_encodes_sizing_opinion():
     assert "replicas" not in deployment["spec"]
 
 
-def test_ci_builds_only_when_the_dockerfile_changed():
-    """The image is a function of the Dockerfile, not the commit (tenishai/kobo#434): the
-    build step keys the registry by the Dockerfile's blob sha, reuses a build it finds,
-    and tags every new build with that key as well. The Redeploy button still builds."""
-    ci = render(make_spec())[".github/workflows/gojira-ci.yaml"]
-    build = next(s for s in yaml.safe_load(ci)["jobs"].popitem()[1]["steps"] if s.get("name") == "Build and push image")["run"]
+def _build_script(spec=None) -> str:
+    ci = render(spec or make_spec())[".github/workflows/gojira-ci.yaml"]
+    job = yaml.safe_load(ci)["jobs"].popitem()[1]
+    return next(s for s in job["steps"] if s.get("name") == "Build and push image")["run"]
+
+
+def test_ci_reuses_a_build_only_for_a_dockerfile_that_reads_no_build_context():
+    """tenishai/kobo#434, and Shaz's review on gojira#132: the image is a function of the
+    Dockerfile alone only when it reads nothing from the context. A COPY, ADD or bind mount
+    makes it a function of the commit, so it always builds; otherwise the registry is keyed
+    by the Dockerfile's blob sha, an existing build is re-tagged (one exact row, since the
+    tag filter is a prefix match), and a new build is tagged with the key after its push.
+    The Redeploy button always builds."""
+    build = _build_script()
+    assert "grep -qiE '^[[:space:]]*(COPY|ADD)[[:space:]]|--mount=type=bind' Dockerfile" in build
     assert 'BUILD_KEY="build-$(git rev-parse "HEAD:Dockerfile" | cut -c1-12)"' in build
-    assert '--filter="tag:$BUILD_KEY"' in build
+    assert 'if [ -n "$BUILD_KEY" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]' in build
+    assert "--format='value(tag,version)'" in build and 'if (t[n] == k) { print $2; exit }' in build
     assert 'gcloud artifacts docker tags add "$IMAGE@$EXISTING" "$IMAGE:$TAG"' in build
-    assert '-t "$IMAGE:$BUILD_KEY"' in build and 'docker push "$IMAGE:$BUILD_KEY"' in build
-    assert "workflow_dispatch" in build
+    assert 'gcloud artifacts docker tags add "$IMAGE:$TAG" "$IMAGE:$BUILD_KEY"' in build
+
+
+@pytest.mark.parametrize(
+    "dockerfile, reuses",
+    [
+        ("FROM reg/runtime@sha256:abc\n", True),
+        ("# image: the runtime\nFROM reg/runtime@sha256:abc\nENV X=1\n", True),
+        ("FROM python:3.12\nCOPY app.py .\n", False),
+        ("FROM reg/runtime@sha256:abc\nCOPY bundle/ /bundle\n", False),
+        ("FROM x\n  add https://example/a.tgz /a\n", False),
+        ("FROM x\nRUN --mount=type=bind,source=.,target=/src make\n", False),
+    ],
+)
+def test_the_context_check_tells_a_runtime_only_dockerfile_from_one_that_reads_the_commit(tmp_path, dockerfile, reuses):
+    """The exact grep the workflow runs, against real Dockerfiles."""
+    import subprocess
+
+    (tmp_path / "Dockerfile").write_text(dockerfile)
+    reads = subprocess.run(
+        ["grep", "-qiE", "^[[:space:]]*(COPY|ADD)[[:space:]]|--mount=type=bind", "Dockerfile"], cwd=tmp_path
+    ).returncode == 0
+    assert reads is (not reuses)
 
 
 def test_workflows_use_wif_not_keys():

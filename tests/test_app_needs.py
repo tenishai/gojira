@@ -735,8 +735,7 @@ def test_build_args_reach_docker_build_as_single_shell_words():
 def test_no_build_args_leaves_the_build_line_as_it_was():
     ci = render(spec())[".github/workflows/gojira-ci.yaml"]
     build = next(line for line in ci.splitlines() if "docker build" in line)
-    # Two tags since tenishai/kobo#434: the commit's, and the Dockerfile's build key.
-    assert build.strip().endswith('-t "$IMAGE:$TAG" -t "$IMAGE:$BUILD_KEY" .')
+    assert build.strip().endswith('-t "$IMAGE:$TAG" .')
 
 
 PRUDENCE_SHAPED = """

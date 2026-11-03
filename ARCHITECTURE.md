@@ -34,9 +34,11 @@ SEAMS → card:
   carry operator- and drift-authored kustomization entries through a re-render (findings
   #12, #18); `contract_fingerprint`/`stamp_contract` stop a gojira.yaml push and its setup
   PR landing as two separate deploys. `secrets_from_optional` renders Secret references the
-  pod reads when present (`optional: true`), and the generated CI builds only when the
-  Dockerfile changed (the registry keeps each build under `build-<Dockerfile blob sha>`; a
-  push whose Dockerfile matches re-tags that digest and deploys in seconds; tenishai/kobo#434).
+  pod reads when present (`optional: true`), and the generated CI skips a
+  build only for a Dockerfile that reads nothing from the build context (no COPY, ADD or bind
+  mount): the registry keeps each such build under `build-<Dockerfile blob sha>` and a push whose
+  Dockerfile matches re-tags that digest; a context-reading Dockerfile always builds, and a mutable
+  base tag in FROM is refreshed only by a Dockerfile change or Redeploy (tenishai/kobo#434).
   Golden-file tested (tests/test_generator.py).
 - (uncarded) gojira/github.py — `GitHubClient` ABC: `GhCLI` (shells to `gh`/`git`, laptop
   mode) and `GitHubAppClient` (RS256 JWT -> installation token, hosted mode).
