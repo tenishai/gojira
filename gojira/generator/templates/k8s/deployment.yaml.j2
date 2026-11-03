@@ -66,19 +66,29 @@ spec:
               value: {{ v | quoted }}
 {% endfor %}
 {% endif %}
-{% if spec.secrets_from or spec.config_from %}
+{% if spec.secrets_from or spec.secrets_from_optional or spec.config_from %}
           envFrom:
 {% for secret in spec.secrets_from %}
             - secretRef:
                 name: {{ secret }}
+{% endfor %}
+{% for secret in spec.secrets_from_optional %}
+            - secretRef:
+                name: {{ secret }}
+                optional: true
 {% endfor %}
 {% for cm in spec.config_from %}
             - configMapRef:
                 name: {{ cm }}
 {% endfor %}
 {% endif %}
-{% if spec.data_mount or spec.config_mounts or spec.secret_mounts %}
+{% if spec.data_mount or spec.config_mounts or spec.secret_mounts or spec.bundle_image %}
           volumeMounts:
+{% if spec.bundle_image %}
+            - name: bundle
+              mountPath: /bundle
+              readOnly: true
+{% endif %}
 {% if spec.data_mount %}
             - name: data
               mountPath: {{ spec.data_mount.path }}
@@ -133,8 +143,14 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 20
 {% endif %}
-{% if spec.data_mount or spec.config_mounts or spec.secret_mounts %}
+{% if spec.data_mount or spec.config_mounts or spec.secret_mounts or spec.bundle_image %}
       volumes:
+{% if spec.bundle_image %}
+        - name: bundle
+          image:
+            reference: {{ spec.bundle_image }}
+            pullPolicy: Always
+{% endif %}
 {% if spec.data_mount %}
         - name: data
           persistentVolumeClaim:

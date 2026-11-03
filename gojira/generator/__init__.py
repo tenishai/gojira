@@ -232,6 +232,10 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
     needs: dict = {}
     if isinstance(doc.get("secrets_from"), list):
         needs["secrets_from"] = [str(s) for s in doc["secrets_from"] if s]
+    if isinstance(doc.get("secrets_from_optional"), list):
+        needs["secrets_from_optional"] = [str(s) for s in doc["secrets_from_optional"] if s]
+    if isinstance(doc.get("bundle_image"), str) and doc["bundle_image"].strip():
+        needs["bundle_image"] = doc["bundle_image"].strip()
     if isinstance(doc.get("config_from"), list):
         needs["config_from"] = [str(s) for s in doc["config_from"] if s]
     if doc.get("service_account"):
@@ -348,13 +352,26 @@ def infer_app_needs(deployment_text: str) -> dict:
         if isinstance(path, str) and path.startswith("/"):
             needs["health"] = path
             break
-    secrets = [
-        e["secretRef"]["name"]
+    refs = [
+        e["secretRef"]
         for e in c0.get("envFrom") or []
         if isinstance(e, dict) and e.get("secretRef", {}).get("name")
     ]
+    secrets = [r["name"] for r in refs if not r.get("optional")]
     if secrets:
         needs["secrets_from"] = secrets
+    optional = [r["name"] for r in refs if r.get("optional")]
+    if optional:
+        needs["secrets_from_optional"] = optional
+    image_by_volume = {
+        v["name"]: v["image"]["reference"]
+        for v in pod.get("volumes") or []
+        if isinstance(v, dict) and (v.get("image") or {}).get("reference")
+    }
+    for m in c0.get("volumeMounts") or []:
+        if isinstance(m, dict) and m.get("name") in image_by_volume and m.get("mountPath") == "/bundle":
+            needs["bundle_image"] = image_by_volume[m["name"]]
+            break
     configs = [
         e["configMapRef"]["name"]
         for e in c0.get("envFrom") or []
@@ -497,6 +514,15 @@ class GeneratorSpec(BaseModel):
     # overrides. Rendered into the deployment; referenced objects stay
     # app-authored.
     secrets_from: list[str] = []
+    # Secrets the pod reads when they exist and boots without when they do not: a room
+    # wires an agent's Slack and env Secrets this way at birth, so adding them later is
+    # a Secret write and a restart, never a manifest change (tenishai/kobo#434).
+    secrets_from_optional: list[str] = []
+    # An OCI image whose filesystem is mounted read-only at /bundle, pulled by the node with
+    # its image-pull credentials and refreshed on every pod start (Kubernetes image volume,
+    # pullPolicy Always). A room's agent bundle travels this way so a change to it is a
+    # restart, not a build, and the pod holds no registry credential (tenishai/kobo#434).
+    bundle_image: str = ""
     config_from: list[str] = []  # envFrom ConfigMaps — non-secret config
     service_account: str = ""
     identity: Identity | None = None  # the pod's GCP identity, platform-made

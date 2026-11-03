@@ -83,10 +83,38 @@ jobs:
           DOCKER_BUILDKIT: "1"
         run: |
           TAG="${GITHUB_SHA::12}"
+          # Skip the build only when the image cannot depend on the commit. A Dockerfile
+          # that reads nothing from the build context (no COPY, no ADD, no bind mount: a
+          # runtime pinned by digest, tenishai/kobo#434) builds the same bytes for every
+          # push, so a push that changes settings or other files must not spend minutes
+          # rebuilding them. The registry keeps each such build under a second tag,
+          # build-<sha of the Dockerfile blob>; when that tag exists the commit's tag is
+          # added to the same digest and the build is skipped. A Dockerfile that reads
+          # the context is a function of the commit and always builds, as before. The
+          # Redeploy button (workflow_dispatch) always builds too: a mutable base tag in
+          # FROM is refreshed only by a Dockerfile change or that button.
+          BUILD_KEY=""
+          if ! grep -qiE '^[[:space:]]*(COPY|ADD)[[:space:]]|--mount=type=bind' Dockerfile; then
+            BUILD_KEY="build-$(git rev-parse "HEAD:Dockerfile" | cut -c1-12)"
+          fi
+          EXISTING=""
+          if [ -n "$BUILD_KEY" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            # --filter on a tag is a prefix match (finding #47): take one exact row.
+            EXISTING=$(gcloud artifacts docker tags list "$IMAGE" --filter="tag:$BUILD_KEY" --format='value(tag,version)' 2>/dev/null \
+              | awk -v k="$BUILD_KEY" '{ n = split($1, t, "/"); if (t[n] == k) { print $2; exit } }' || true)
+          fi
+          if [ -n "$EXISTING" ]; then
+            echo "image for this Dockerfile already built ($BUILD_KEY -> $EXISTING); tagging it $TAG, no build"
+            gcloud artifacts docker tags add "$IMAGE@$EXISTING" "$IMAGE:$TAG" --quiet
+            exit 0
+          fi
           AR_TOKEN="$(gcloud auth print-access-token)"
           export AR_TOKEN
           docker build --platform linux/amd64 --secret id=ar_token,env=AR_TOKEN -t "$IMAGE:$TAG" .
           docker push "$IMAGE:$TAG"
+          if [ -n "$BUILD_KEY" ]; then
+            gcloud artifacts docker tags add "$IMAGE:$TAG" "$IMAGE:$BUILD_KEY" --quiet
+          fi
 
       - uses: google-github-actions/get-gke-credentials@64bc7249bbcf78056bb92f14d3cedc2da193946c  # v2.3.5
         with:

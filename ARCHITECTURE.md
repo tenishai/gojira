@@ -33,7 +33,15 @@ SEAMS → card:
   manifests from opinions+config. `preserve_patches`/`preserve_resources`/`preserve_generators`
   carry operator- and drift-authored kustomization entries through a re-render (findings
   #12, #18); `contract_fingerprint`/`stamp_contract` stop a gojira.yaml push and its setup
-  PR landing as two separate deploys. Golden-file tested (tests/test_generator.py).
+  PR landing as two separate deploys. `secrets_from_optional` renders Secret references the
+  pod reads when present (`optional: true`); `bundle_image` mounts an OCI image read-only at
+  /bundle as a Kubernetes image volume (pullPolicy Always: the node pulls it on every start with
+  its own credentials, so the pod holds none); and the generated CI skips a
+  build only for a Dockerfile that reads nothing from the build context (no COPY, ADD or bind
+  mount): the registry keeps each such build under `build-<Dockerfile blob sha>` and a push whose
+  Dockerfile matches re-tags that digest; a context-reading Dockerfile always builds, and a mutable
+  base tag in FROM is refreshed only by a Dockerfile change or Redeploy (tenishai/kobo#434).
+  Golden-file tested (tests/test_generator.py).
 - (uncarded) gojira/github.py — `GitHubClient` ABC: `GhCLI` (shells to `gh`/`git`, laptop
   mode) and `GitHubAppClient` (RS256 JWT -> installation token, hosted mode).
 - (uncarded) gojira/gcp.py, gojira/k8s.py — `GCPClient`/`KubectlClient` ABCs, same
