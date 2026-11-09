@@ -1,7 +1,7 @@
 ---
 card: arch-card:gojira-observe-noto
-updated: 2026-10-23
-anchor: gojira/steps.py sha=6e5d2caefd8d85a1eeb5c8ea521603028be236f8
+updated: 2026-11-09
+anchor: gojira/steps.py sha=1c61dfbea8f0be9a082144fd0bc2cef6e57d1220
 anchor: gojira/web/metrics.py sha=77176d6ce0984db7bfb1f165a59f5299cd19b2a1
 ---
 # observe-noto — the cross-repo contract with sibling repo noto (named argus until 2026-10-12)

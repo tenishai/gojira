@@ -1148,6 +1148,7 @@ class EnsureRunIdentity:
     Design: docs/grants-and-platform-facts-design.md §1."""
 
     name = "ensure_run_identity"
+    rechecks = True  # the contract may gain or change identity: on a live app
 
     def check(self, ctx: ProvisionContext) -> str | None:
         spec, ident = _run_identity(ctx)
@@ -1194,6 +1195,7 @@ class GrantRunRoles:
     a security boundary, so a role off the list fails the provision."""
 
     name = "grant_run_roles"
+    rechecks = True
 
     def _plan(self, ctx: ProvisionContext):
         spec, ident = _run_identity(ctx)
@@ -1237,6 +1239,7 @@ class BindRunWorkloadIdentity:
     CI applies the matching annotation from GOJIRA_<ENV>_RUN_SA."""
 
     name = "bind_run_workload_identity"
+    rechecks = True
     role = "roles/iam.workloadIdentityUser"
 
     def _bindings(self, ctx):
@@ -1278,6 +1281,7 @@ class BindClusterRoles:
     docs/grants-and-platform-facts-design.md §2."""
 
     name = "bind_cluster_roles"
+    rechecks = True  # cluster_roles: may grow on a live app
 
     def _plan(self, ctx: ProvisionContext):
         spec = _app_spec(ctx)
@@ -1362,6 +1366,7 @@ class SetRepoVariables:
     """
 
     name = "set_repo_variables"
+    rechecks = True  # GOJIRA_<ENV>_RUN_SA appears when the contract gains an identity
 
     def _wanted(self, ctx: ProvisionContext) -> dict[str, str]:
         want: dict[str, str] = {}
