@@ -165,5 +165,8 @@ spec:
         - name: {{ m.volume }}
           secret:
             secretName: {{ m.name }}
+{% if m.optional %}
+            optional: true
+{% endif %}
 {% endfor %}
 {% endif %}

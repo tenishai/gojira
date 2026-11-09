@@ -64,9 +64,9 @@ config_mounts:                # ConfigMaps read as files (key: one entry as that
 {% endfor %}
 {% endif %}
 {% if spec.secret_mounts %}
-secret_mounts:                # Secrets read as files
+secret_mounts:                # Secrets read as files (optional: an empty dir until the Secret exists)
 {% for m in spec.secret_mounts %}
-  - { name: {{ m.name }}, path: {{ m.path }}{% if m.key %}, key: {{ m.key }}{% endif %} }
+  - { name: {{ m.name }}, path: {{ m.path }}{% if m.key %}, key: {{ m.key }}{% endif %}{% if m.optional %}, optional: true{% endif %} }
 {% endfor %}
 {% endif %}
 {% if spec.build_args %}
