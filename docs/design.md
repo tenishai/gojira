@@ -148,6 +148,7 @@ config_mounts:                              # ConfigMaps read as files
   - { name: clips-config, path: /app/config.yaml, key: config.yaml }   # one entry, as that file
 secret_mounts:                              # Secrets read as files
   - { name: clips-github, path: /secrets/github }                      # the whole object, as a dir
+  - { name: clips-vendor, path: /etc/vendor, optional: true }          # an empty dir until a console writes it
 build_args:                                 # to docker build; in git, so never a secret
   EXTRA_INDEX_URL: ${GOJIRA_PYTHON_INDEX}   #   `${NAME}`: a variable the install sets, not a literal
   BASE_IMAGE: python:3.12-slim              #   anything else is the literal it looks like

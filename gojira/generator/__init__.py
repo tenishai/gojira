@@ -492,13 +492,23 @@ class ConfigMount(FileMount):
 
 class SecretMount(FileMount):
     kind_prefix: str = "secret"
+    # `optional: true` mounts an empty directory until the Secret exists: a
+    # vendor credential a console writes after the app is up (bab's Datadog
+    # and GitHub keys, read live from the directory on every call, so a
+    # connect needs no restart — 2026-11-09). Required mounts keep the pod
+    # from starting without the object, which is right for a key the app
+    # cannot run without.
+    optional: bool = False
 
 
 def _read_mounts(raw, cls):
     out = []
     for m in raw if isinstance(raw, list) else []:
         if isinstance(m, dict) and m.get("name") and m.get("path"):
-            out.append(cls(name=str(m["name"]), path=str(m["path"]), key=str(m.get("key") or "")))
+            fields = {"name": str(m["name"]), "path": str(m["path"]), "key": str(m.get("key") or "")}
+            if cls is SecretMount:
+                fields["optional"] = bool(m.get("optional", False))
+            out.append(cls(**fields))
     return out
 
 

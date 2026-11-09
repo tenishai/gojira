@@ -712,6 +712,23 @@ def test_config_and_secret_mounts_render_as_files():
     assert volumes[mounts["/secrets/github"]["name"]]["secret"] == {"secretName": "kobo-github"}
 
 
+def test_an_optional_secret_mount_is_an_empty_dir_until_the_secret_exists():
+    """A vendor key a console writes after the app is up (bab, 2026-11-09):
+    the pod starts without it and reads the directory live once it lands."""
+    from gojira.generator import SecretMount
+
+    files = render(spec(secret_mounts=[SecretMount(name="bab-github", path="/etc/bab/github", optional=True),
+                                       SecretMount(name="bab-secrets", path="/etc/bab/core")]))
+    pod, c0 = _first_container(files)
+    by_mount = {m["mountPath"]: m["name"] for m in c0["volumeMounts"]}
+    volumes = {v["name"]: v for v in pod["volumes"]}
+    assert volumes[by_mount["/etc/bab/github"]]["secret"] == {"secretName": "bab-github", "optional": True}
+    assert volumes[by_mount["/etc/bab/core"]]["secret"] == {"secretName": "bab-secrets"}   # required: no key
+    needs = read_app_needs(files["gojira.yaml"])
+    assert [m.optional for m in needs["secret_mounts"]] == [True, False]
+    assert read_app_needs("secret_mounts:\n  - {name: x, path: /x}\n")["secret_mounts"][0].optional is False
+
+
 def test_a_configmap_and_a_secret_of_the_same_name_get_distinct_volumes():
     from gojira.generator import ConfigMount, SecretMount
 
