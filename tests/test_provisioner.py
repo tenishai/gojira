@@ -240,3 +240,40 @@ def test_ephemeral_step_can_still_skip_via_check(session, ctx):
     calls.clear()
     assert engine.run(session, ctx).completed
     assert "check:prepare_workdir" in calls and "apply:prepare_workdir" not in calls
+
+
+def test_a_rechecked_step_redecides_after_a_skipped_row(session, ctx):
+    """A contract that gains identity: on a live app. The identity steps were
+    SKIPPED ("no identity declared") on the first provision; a plain cloud
+    step would stay skipped forever, a `rechecks` step asks check() again
+    (2026-11-09: the regenerated workflow wanted GOJIRA_PROD_RUN_SA that no
+    step would ever set)."""
+    calls = []
+    identity = FakeStep("ensure_run_identity", calls, exists=True)   # nothing declared yet
+    identity.rechecks = True
+    plain = FakeStep("ensure_artifact_repo", calls, exists=True)
+    engine = ProvisionEngine([identity, plain])
+    assert engine.run(session, ctx).completed
+    assert ledger(session, ctx.app, "ensure_run_identity").status == StepStatus.SKIPPED
+
+    calls.clear()
+    identity.exists = plain.exists = False      # the contract now declares one
+    assert engine.run(session, ctx).completed
+    assert calls == ["check:ensure_run_identity", "apply:ensure_run_identity"]
+    assert ledger(session, ctx.app, "ensure_run_identity").status == StepStatus.DONE
+    assert ledger(session, ctx.app, "ensure_artifact_repo").status == StepStatus.SKIPPED  # ledger-skipped, as before
+
+
+def test_the_contract_reading_steps_recheck():
+    from gojira.steps import (
+        BindClusterRoles,
+        BindRunWorkloadIdentity,
+        EnsureArtifactRepo,
+        EnsureRunIdentity,
+        GrantRunRoles,
+        SetRepoVariables,
+    )
+
+    for step in (EnsureRunIdentity, GrantRunRoles, BindRunWorkloadIdentity, BindClusterRoles, SetRepoVariables):
+        assert step.rechecks is True, step.name
+    assert not getattr(EnsureArtifactRepo, "rechecks", False)

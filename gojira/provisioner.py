@@ -94,7 +94,15 @@ class Step(Protocol):
     Steps whose "resource" doesn't outlive the run (a temp working tree, files
     rendered into it) set `ephemeral = True`: their ledger row records what the
     last run did, but a DONE status never skips them — check() re-decides
-    against the real world each run. Cloud steps stay ledger-skipped.
+    against the real world each run.
+
+    Steps whose outcome follows the contract (the run identity, its roles and
+    bindings, the cluster roles, the repo variables) set `rechecks = True` for
+    the same reason: a contract that gains `identity:` on a live app must take
+    effect at the next provision. Without it the ledger's "no identity
+    declared" row from the first provision stood forever while the regenerated
+    workflow already expected the identity's variable (2026-11-09). Every
+    other cloud step stays ledger-skipped.
     """
 
     name: str
@@ -139,8 +147,8 @@ class ProvisionEngine:
             ledger_name = f"{step.name}@{scope_key}" if scope_key else step.name
             ledger = self._ledger_row(session, app, ledger_name)
 
-            if ledger.status in (StepStatus.DONE, StepStatus.SKIPPED) and not getattr(
-                step, "ephemeral", False
+            if ledger.status in (StepStatus.DONE, StepStatus.SKIPPED) and not (
+                getattr(step, "ephemeral", False) or getattr(step, "rechecks", False)
             ):
                 log.debug("step %s already %s, skipping", ledger_name, ledger.status)
                 continue
