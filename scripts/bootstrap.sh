@@ -27,7 +27,8 @@
 #   4. render + apply deploy/     (placeholders filled in a temp copy; your
 #                                  working tree stays clean)
 #   5. wait for the pod, print how to reach the UI + the minted secrets
-#   6. (only with GOJIRA_HOSTNAME) static IP, IAP OAuth client, ingress
+#   6. (only with GOJIRA_HOSTNAME) static IP, ingress with IAP on (Google's
+#      managed sign-in client), IAP accessor grants
 #
 # It deliberately does NOT read terraform state: every value is derived from
 # PROJECT/REGION and the conventions in terraform/ (GSA `gojira@<project>`,
@@ -168,31 +169,30 @@ if [ -n "${GOJIRA_HOSTNAME:-}" ]; then
     || gcloud compute addresses create "$IP_NAME" --global --project "$PROJECT"
   STATIC_IP="$(gcloud compute addresses describe "$IP_NAME" --global --project "$PROJECT" --format='value(address)')"
 
-  # IAP OAuth client. Brands are one-per-project; API-created brands are
-  # manageable here, Console-created ones are not — in that case create a
-  # client by hand and pre-create the secret (we skip if it already exists).
-  if ! kubectl -n gojira get secret gojira-iap-oauth >/dev/null 2>&1; then
-    BRAND="$(gcloud iap oauth-brands list --project "$PROJECT" --format='value(name)' 2>/dev/null | head -1)"
-    if [ -z "$BRAND" ]; then
-      BRAND="$(gcloud iap oauth-brands create --project "$PROJECT" \
-        --application_title="Gojira" \
-        --support_email="$(gcloud config get-value account 2>/dev/null)" \
-        --format='value(name)')"
-    fi
-    CLIENT_LINE="$(gcloud iap oauth-clients create "$BRAND" --display_name="gojira" \
-      --format='value(name,secret)')"
-    CLIENT_ID="$(basename "$(echo "$CLIENT_LINE" | cut -f1)")"
-    CLIENT_SECRET="$(echo "$CLIENT_LINE" | cut -f2)"
-    kubectl -n gojira create secret generic gojira-iap-oauth \
-      --from-literal=client_id="$CLIENT_ID" \
-      --from-literal=client_secret="$CLIENT_SECRET"
-  fi
-
   TMP_ING="$(mktemp -d)"
   cp -r "$REPO_ROOT/deploy/ingress/." "$TMP_ING/"
   sed -i.bak "s#REPLACE_HOSTNAME#${GOJIRA_HOSTNAME}#" "$TMP_ING"/*.yaml
   sed -i.bak "s#REPLACE_STATIC_IP_NAME#${IP_NAME}#" "$TMP_ING"/*.yaml
   rm -f "$TMP_ING"/*.bak
+
+  # IAP's sign-in client. New installs use Google's managed OAuth client: the
+  # BackendConfig says `iap: enabled: true` and nothing more (GKE >= 1.29.4).
+  # This script used to mint a client per install through the IAP OAuth Admin
+  # API, which Google shut down on 2026-03-19 (issue #72). An install that
+  # still holds that client's secret keeps using it: switching a live backend
+  # to the managed client means recreating the backend (downtime), so that is
+  # a change to make on purpose, not something a rerun does by itself.
+  if kubectl -n gojira get secret gojira-iap-oauth >/dev/null 2>&1; then
+    echo "iap: keeping this install's own OAuth client (secret gojira-iap-oauth)"
+    cat >> "$TMP_ING/kustomization.yaml" <<'EOP'
+patches:
+  - target: { kind: BackendConfig, name: gojira-ui }
+    patch: |-
+      - op: add
+        path: /spec/iap/oauthclientCredentials
+        value: { secretName: gojira-iap-oauth }
+EOP
+  fi
   kubectl apply -k "$TMP_ING"
   rm -rf "$TMP_ING"
 
