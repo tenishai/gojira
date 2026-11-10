@@ -12,7 +12,10 @@ spec:
     requestPath: /healthz
     port: 8080
     type: HTTP
+  # Sign-in through Google's managed OAuth client: `enabled` alone, no
+  # oauthclientCredentials (GKE >= 1.29.4-gke.1043000). The IAP OAuth Admin
+  # API that minted a client per install shut down on 2026-03-19. Installs
+  # from before then keep their own client: scripts/bootstrap.sh patches the
+  # credentials back in while secret gojira-iap-oauth exists.
   iap:
     enabled: true
-    oauthclientCredentials:
-      secretName: gojira-iap-oauth
