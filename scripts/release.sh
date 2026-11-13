@@ -8,7 +8,10 @@
 #   1. refuses unless on main, with no tracked changes, at origin/main, and
 #      the tag does not exist yet
 #   2. bumps pyproject.toml, gojira/__init__.py and uv.lock (the lock records
-#      the project's own version; `uv sync --locked` would fail otherwise)
+#      the project's own version; `uv sync --locked` would fail otherwise),
+#      and the repo card (ARCHITECTURE.md anchors pyproject.toml and names
+#      the version; CI's card check fails a bump that leaves it behind — the
+#      v1.0.0 release did, 2026-11-13)
 #   3. commits that (signed off), tags it, pushes main and the tag
 #   4. publishes the GitHub release with generated notes
 # Installs that pull main afterwards build gojira:vX.Y.Z@sha256:<digest>
@@ -46,6 +49,19 @@ if [ -f uv.lock ]; then
   command -v uv >/dev/null || { echo "error: uv not installed (uv.lock records the version)" >&2; exit 1; }
   uv lock --quiet
   files+=(uv.lock)
+fi
+
+if [ -f ARCHITECTURE.md ]; then
+  card_sha="$(git hash-object pyproject.toml)"
+  sed -i.bak -E \
+    -e "s/^(anchor: pyproject\.toml sha=)[0-9a-f]+$/\1$card_sha/" \
+    -e "s/^updated: .*/updated: $(date -u +%F)/" \
+    -e "s/^(STATE: main, )v[0-9]+\.[0-9]+\.[0-9]+/\1$VERSION/" ARCHITECTURE.md
+  rm -f ARCHITECTURE.md.bak
+  files+=(ARCHITECTURE.md)
+  if [ -f scripts/check_arch_cards.py ] && ! python3 scripts/check_arch_cards.py >/dev/null; then
+    echo "error: the architecture cards are not fresh after the bump; see scripts/check_arch_cards.py" >&2; exit 1
+  fi
 fi
 
 git add "${files[@]}"

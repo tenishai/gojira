@@ -20,6 +20,7 @@ case "$tool $*" in
   "git rev-parse HEAD") echo aaaa ;;
   "git rev-parse origin/main") echo "${ORIGIN:-aaaa}" ;;
   "git rev-parse -q --verify refs/tags/"*) [ -n "${TAG_EXISTS:-}" ] && exit 0; exit 1 ;;
+  "git hash-object pyproject.toml") echo cafef00d ;;
 esac
 exit 0
 """
@@ -34,6 +35,11 @@ def run(tmp_path):
     (tree / "pyproject.toml").write_text('[project]\nname = "tenish-gojira"\nversion = "0.1.0"\n')
     (tree / "gojira" / "__init__.py").write_text('__version__ = "0.1.0"\n')
     (tree / "uv.lock").write_text('version = 1\n')
+    (tree / "ARCHITECTURE.md").write_text(
+        "---\ncard: repo-card:gojira\nupdated: 2026-10-07\n"
+        "anchor: pyproject.toml sha=607f25b8\nanchor: gojira/web/__main__.py sha=0aaa920c\n---\n"
+        "STATE: main, v0.1.0, working\n"
+    )
     bindir = tmp_path / "bin"
     bindir.mkdir()
     for tool in ("git", "gh", "uv"):
@@ -59,7 +65,11 @@ def test_a_release_bumps_tags_pushes_and_publishes(run):
     assert 'version = "1.2.0"' in (tree / "pyproject.toml").read_text()
     assert '__version__ = "1.2.0"' in (tree / "gojira" / "__init__.py").read_text()
     assert "uv lock --quiet" in calls
-    assert "git add pyproject.toml gojira/__init__.py uv.lock" in calls
+    card = (tree / "ARCHITECTURE.md").read_text()
+    assert "anchor: pyproject.toml sha=cafef00d\n" in card  # re-anchored to the bumped file
+    assert "anchor: gojira/web/__main__.py sha=0aaa920c\n" in card  # the other anchor untouched
+    assert "STATE: main, v1.2.0, working" in card and "updated: 2026-10-07" not in card
+    assert "git add pyproject.toml gojira/__init__.py uv.lock ARCHITECTURE.md" in calls
     assert "git commit --quiet --signoff -m release: v1.2.0" in calls
     assert "git tag -a v1.2.0 -m Gojira v1.2.0" in calls
     assert "git push --quiet origin main v1.2.0" in calls
@@ -84,4 +94,5 @@ def test_refusals_happen_before_anything_is_written(run, env, word):
     done, calls, tree = run(**env)
     assert done.returncode == 2 and word in done.stderr, done.stderr
     assert 'version = "0.1.0"' in (tree / "pyproject.toml").read_text()
+    assert "sha=607f25b8" in (tree / "ARCHITECTURE.md").read_text()
     assert not any(c.startswith(("git tag", "git push", "git commit", "gh ")) for c in calls)
