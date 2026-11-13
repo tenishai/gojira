@@ -71,16 +71,19 @@ Then it checks your tools and the cluster, builds the image in Cloud Build,
 creates the secret (your App key, plus a webhook secret and an API token it
 mints), applies the manifests and waits for the pod.
 
-The image is tagged with the commit it was built from and the pod runs it by
-digest, the same receipt Gojira gives every app it deploys. The closing
-message names it, and so does the cluster:
+The image is named after the checkout's nearest release tag (`v1.2.0`, or
+`v1.2.0-3-g<commit>` when main has moved on since) and the pod runs it by
+digest, the same receipt Gojira gives every app it deploys. The UI footer and
+`/healthz` show the version; the closing message names the image, and so does
+the cluster:
 
 ```bash
 kubectl -n gojira get deploy gojira -o jsonpath='{.spec.template.spec.containers[0].image}'
-# …/gojira/gojira:<commit>@sha256:<digest>
+# …/gojira/gojira:v1.2.0@sha256:<digest>
 ```
 
-`:dev` is kept as a floating alias of the latest build.
+`:dev` is kept as a floating alias of the latest build. Releases are cut on
+the repo with `make release VERSION=vX.Y.Z` (see CONTRIBUTING.md).
 
 It is safe to rerun. Rerunning is also how you upgrade and how you change any
 value in `gojira.env`. On a rerun terraform takes seconds, and it will not

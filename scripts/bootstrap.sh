@@ -20,7 +20,8 @@
 #                                  cluster DNS access, App id + pem)
 #   1. cluster credentials        (gcloud get-credentials)
 #   2. build + push the image     (Cloud Build — works from ARM machines too;
-#                                  tagged with the commit, pinned by digest)
+#                                  named after the nearest release tag, pinned
+#                                  by digest)
 #   3. namespace + Gojira secret  (App id + pem you supply; webhook secret and
 #                                  API token minted here, preserved on rerun)
 #      + gojira-install ConfigMap (the optional knobs, as pod env — the
@@ -73,17 +74,20 @@ gcloud container clusters get-credentials "$CLUSTER" --region "$REGION" --projec
 
 step "2/5 build + push image via Cloud Build (avoids the ARM/amd64 trap)"
 gcloud services enable cloudbuild.googleapis.com --project "$PROJECT" --quiet
-# The image is tagged with the commit it was built from, and the pod runs it
-# by digest (step 4). A tag says which build a person meant; the digest is the
-# receipt — the rule Gojira applies to every app it deploys (#37), applied to
-# Gojira itself (prod ran a bare ":dev" for two months, 2026-11-13). ":dev"
-# stays as a floating alias of the latest build for anything that reads it.
-# Untracked files do not make a tree dirty here: gojira.env and the operator's
-# notes live beside the checkout; only a changed tracked file does.
-IMAGE_TAG="$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD 2>/dev/null || date -u +%Y%m%d%H%M%S)"
-if [ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
-  IMAGE_TAG="${IMAGE_TAG}-dirty-$(date -u +%H%M%S)"
-fi
+# The image is named after the checkout — the nearest release tag (v1.2.0),
+# or that tag plus the distance and commit between releases
+# (v1.2.0-3-gc21f2ce21f21), or the bare commit before any tag exists — and
+# the pod runs it by digest (step 4). A tag says which build a person meant;
+# the digest is the receipt — the rule Gojira applies to every app it deploys
+# (#37), applied to Gojira itself (prod ran a bare ":dev" for two months,
+# 2026-11-13). ":dev" stays as a floating alias of the latest build for
+# anything that reads it. Releases are cut with `make release VERSION=vX.Y.Z`
+# (scripts/release.sh); tags are fetched here so a clone that predates them
+# still names its build after one. Untracked files do not make a tree dirty:
+# gojira.env and the operator's notes live beside the checkout.
+git -C "$REPO_ROOT" fetch --quiet --tags origin 2>/dev/null || true
+IMAGE_TAG="$(git -C "$REPO_ROOT" describe --tags --always --abbrev=12 --dirty="-dirty-$(date -u +%H%M%S)" 2>/dev/null \
+  || date -u +%Y%m%d%H%M%S)"
 # A project that has never built before answers PERMISSION_DENIED — to its own
 # owner — for about a minute after the API is enabled, while Google grants the
 # build service its identity (first install into a fresh project, 2026-09-29).
@@ -137,6 +141,7 @@ if [ -n "${GOJIRA_HOSTNAME:-}" ] && [ -n "${GOJIRA_ALLOWED_DOMAIN:-}${GOJIRA_ALL
 fi
 kubectl -n gojira create configmap gojira-install \
   --from-literal=GOJIRA_AUTH_ENABLED="$AUTH_ENABLED" \
+  --from-literal=GOJIRA_VERSION="$IMAGE_TAG" \
   --from-literal=GOJIRA_ALLOWED_DOMAIN="${GOJIRA_ALLOWED_DOMAIN:-}" \
   --from-literal=GOJIRA_ALLOWED_EMAILS="${GOJIRA_ALLOWED_EMAILS:-}" \
   --from-literal=GOJIRA_NAMESPACE_LABELS="${GOJIRA_NAMESPACE_LABELS:-}" \

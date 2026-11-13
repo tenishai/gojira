@@ -237,6 +237,10 @@ class IamConfig(BaseModel):
 
 
 class Config(BaseModel):
+    # What this install built and runs: the image tag bootstrap derived from
+    # the checkout (a release tag such as v1.2.0, or v1.2.0-3-g<sha> between
+    # releases). Shown on every page and by /healthz; empty when run by hand.
+    version: str = ""
     auth: AuthConfig = AuthConfig()
     ci: CIConfig = CIConfig()
     iam: IamConfig = IamConfig()

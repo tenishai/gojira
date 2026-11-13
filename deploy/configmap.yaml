@@ -13,6 +13,9 @@ data:
     # that gate covers the human UI, not the /api/v1/* exemption.
     # The GOJIRA_* knobs with defaults come from the gojira-install ConfigMap
     # that bootstrap.sh builds from gojira.env — nobody edits this file.
+    # The build this install runs (bootstrap derives it from the checkout's
+    # nearest release tag); the UI footer and /healthz show it.
+    version: "${GOJIRA_VERSION:-}"
     auth:
       api_token: "${GOJIRA_API_TOKEN}"
       enabled: "${GOJIRA_AUTH_ENABLED:-false}"

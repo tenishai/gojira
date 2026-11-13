@@ -1,8 +1,8 @@
 ---
 card: arch-card:gojira-auth
-updated: 2026-10-23
+updated: 2026-11-13
 anchor: gojira/web/auth.py sha=a1241f6cfab86d6380710dc2c8a3085cd6b5e5e5
-anchor: gojira/config.py sha=b681f9d910751f6c02a39ac8e010cdd9d2313c42
+anchor: gojira/config.py sha=b5dc87fe7a1c2e52554e4675d29a3576c2be10f1
 ---
 # auth — three independent front-door mechanisms
 
@@ -50,3 +50,5 @@ API: `install`, `identity_from`, `allowed`, `api_token_error` (web/auth.py);
 CHANGE 2026-10-13: build_args may reference a repository variable as ${NAME}; CIConfig.repo_variables (GOJIRA_REPO_VARIABLES) names the values and SetRepoVariables sets them; an unknown reference refuses the provision (#102).
 
 CHANGE 2026-10-23: config.py — ObserveClusterConfig defaults are noto/noto-observe; the GOJIRA_OBSERVE_CLUSTERS string accepts name=namespace/service_account (auth untouched).
+
+CHANGE 2026-11-13: config.py — Config.version (GOJIRA_VERSION, set by bootstrap from the checkout's nearest release tag) names the running build; /healthz carries it and stays identity-exempt, the footer shows it. Auth untouched.

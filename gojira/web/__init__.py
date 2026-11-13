@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from gojira import models, service, webhooks
+from gojira import __version__, models, service, webhooks
 from gojira.web import metrics, tracing
 from gojira.config import Config, load_config
 from gojira.opinions import WORKLOAD_CLASSES
@@ -55,6 +55,10 @@ def create_app(
         config=app.state.config, session_factory=session_factory
     )
     auth.install(app, app.state.config.auth)
+    # The build this install runs — bootstrap's image tag, or the package
+    # version when run by hand. One place, read by the footer and /healthz.
+    app.state.version = app.state.config.version or __version__
+    TEMPLATES.env.globals["gojira_version"] = app.state.version
 
     if app.state.config.drift.enabled:
         @app.on_event("startup")
@@ -77,8 +81,10 @@ def create_app(
 
     @app.get("/healthz")
     def healthz():
-        """Probe target — identity-exempt (finding #17: kubelet has no IAP)."""
-        return {"ok": True}
+        """Probe target — identity-exempt (finding #17: kubelet has no IAP).
+        Carries the running version so a reader with curl learns what this
+        is without kubectl."""
+        return {"ok": True, "version": app.state.version}
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request, session: Session = Depends(get_session)):
