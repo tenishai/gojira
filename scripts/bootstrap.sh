@@ -19,14 +19,16 @@
 #   0. preflight                  (scripts/preflight.sh --fix: tools, project,
 #                                  cluster DNS access, App id + pem)
 #   1. cluster credentials        (gcloud get-credentials)
-#   2. build + push the image     (Cloud Build — works from ARM machines too)
+#   2. build + push the image     (Cloud Build — works from ARM machines too;
+#                                  tagged with the commit, pinned by digest)
 #   3. namespace + Gojira secret  (App id + pem you supply; webhook secret and
 #                                  API token minted here, preserved on rerun)
 #      + gojira-install ConfigMap (the optional knobs, as pod env — the
 #                                  committed configmap.yaml interpolates them)
 #   4. render + apply deploy/     (placeholders filled in a temp copy; your
 #                                  working tree stays clean)
-#   5. wait for the pod, print how to reach the UI + the minted secrets
+#   5. wait for the pod, print the image it runs, how to reach the UI + the
+#      minted secrets
 #   6. (only with GOJIRA_HOSTNAME) static IP, ingress with IAP on (Google's
 #      managed sign-in client), IAP accessor grants
 #
@@ -71,13 +73,24 @@ gcloud container clusters get-credentials "$CLUSTER" --region "$REGION" --projec
 
 step "2/5 build + push image via Cloud Build (avoids the ARM/amd64 trap)"
 gcloud services enable cloudbuild.googleapis.com --project "$PROJECT" --quiet
+# The image is tagged with the commit it was built from, and the pod runs it
+# by digest (step 4). A tag says which build a person meant; the digest is the
+# receipt — the rule Gojira applies to every app it deploys (#37), applied to
+# Gojira itself (prod ran a bare ":dev" for two months, 2026-11-13). ":dev"
+# stays as a floating alias of the latest build for anything that reads it.
+# Untracked files do not make a tree dirty here: gojira.env and the operator's
+# notes live beside the checkout; only a changed tracked file does.
+IMAGE_TAG="$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD 2>/dev/null || date -u +%Y%m%d%H%M%S)"
+if [ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+  IMAGE_TAG="${IMAGE_TAG}-dirty-$(date -u +%H%M%S)"
+fi
 # A project that has never built before answers PERMISSION_DENIED — to its own
 # owner — for about a minute after the API is enabled, while Google grants the
 # build service its identity (first install into a fresh project, 2026-09-29).
 # Wait and retry that one error; any other failure is the build's own.
 BUILD_LOG="$(mktemp)"
 for attempt in 1 2 3; do
-  if gcloud builds submit --tag "${AR_PATH}/gojira:dev" --project "$PROJECT" "$REPO_ROOT" \
+  if gcloud builds submit --tag "${AR_PATH}/gojira:${IMAGE_TAG}" --project "$PROJECT" "$REPO_ROOT" \
       2>&1 | tee "$BUILD_LOG"; then
     break
   fi
@@ -89,6 +102,15 @@ for attempt in 1 2 3; do
   sleep 45
 done
 rm -f "$BUILD_LOG"
+gcloud artifacts docker tags add "${AR_PATH}/gojira:${IMAGE_TAG}" "${AR_PATH}/gojira:dev" \
+  --project "$PROJECT" --quiet
+# `tags list` is pure Artifact Registry (describe pays Container Analysis's
+# toll, #47); its tag: filter is a prefix match, so select the exact tag here.
+IMAGE_DIGEST="$(gcloud artifacts docker tags list "${AR_PATH}/gojira" --filter="tag:${IMAGE_TAG}" \
+  --format='value(tag,version)' --project "$PROJECT" 2>/dev/null | awk -v t="$IMAGE_TAG" '$1==t{print $2; exit}')"
+[ -n "$IMAGE_DIGEST" ] || { echo "error: the registry holds no digest for ${AR_PATH}/gojira:${IMAGE_TAG}" >&2; exit 1; }
+IMAGE_REF="${AR_PATH}/gojira:${IMAGE_TAG}@${IMAGE_DIGEST}"
+echo "built ${IMAGE_REF}"
 
 step "3/5 namespace + Gojira secret"
 kubectl create namespace gojira --dry-run=client -o yaml | kubectl apply -f -
@@ -137,29 +159,16 @@ trap 'rm -rf "$TMP"' EXIT
 cp -r "$REPO_ROOT/deploy/." "$TMP/"
 sed -i.bak "s#REPLACE_GSA_EMAIL#${GSA}#" "$TMP/serviceaccount.yaml"
 sed -i.bak "s#REPLACE_AR_PATH#${AR_PATH}#" "$TMP/kustomization.yaml"
+sed -i.bak "s#REPLACE_IMAGE_TAG#${IMAGE_TAG}@${IMAGE_DIGEST}#" "$TMP/kustomization.yaml"
 rm -f "$TMP"/*.bak
 kubectl apply -k "$TMP"
 
-step "5/5 roll onto the image just built, then wait for Gojira to come up"
-# Gojira's own image ships under the mutable :dev tag, so a rebuild with no
-# manifest change is an apply no-op and the old pod keeps running the old
-# image (#37's shape, on our own install — found 2026-09-25). Compare the
-# digest the registry holds for the tag with the digest the pod is running
-# and restart when they differ. `tags list` is pure Artifact Registry
-# (describe pays Container Analysis's toll, #47).
-# gcloud's tag: filter is a prefix match (tag:dev also lists dev-…, and
-# other rows besides) — select the exact tag ourselves.
-WANT="$(gcloud artifacts docker tags list "${AR_PATH}/gojira" --filter=tag:dev \
-  --format='value(tag,version)' --project "$PROJECT" 2>/dev/null | awk '$1=="dev"{print $2; exit}')"
-HAVE="$(kubectl -n gojira get pods -l app.kubernetes.io/name=gojira \
-  -o jsonpath='{.items[0].status.containerStatuses[0].imageID}' 2>/dev/null | sed 's/.*@//')"
-# No digest on the pod = nothing has run yet (first install): the pod being
-# created pulls what was just built (imagePullPolicy: Always), so a restart
-# would only kill it mid-pull.
-if [ -n "$WANT" ] && [ -n "$HAVE" ] && [ "$WANT" != "$HAVE" ]; then
-  echo "rolling: registry has ${WANT:0:19}, pod runs ${HAVE:0:19}"
-  kubectl -n gojira rollout restart deploy/gojira
-fi
+step "5/5 wait for Gojira to come up on ${IMAGE_TAG}"
+# The pod template names the image by digest, so a new build is a manifest
+# change and the apply above rolls it; the same build is a no-op and the pod
+# already running it stays. (Until 2026-11-13 the tag was mutable and this
+# step compared registry and pod digests by hand to restart — #37's shape on
+# our own install, found 2026-09-25.)
 kubectl -n gojira rollout status deploy/gojira --timeout=300s
 
 if [ -n "${GOJIRA_HOSTNAME:-}" ]; then
@@ -217,7 +226,7 @@ fi
 
 cat <<EOF
 
-Gojira is running. Reach the UI:
+Gojira is running ${IMAGE_REF}. Reach the UI:
 
   kubectl -n gojira port-forward svc/gojira 8080:80
   open http://localhost:8080

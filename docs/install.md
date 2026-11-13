@@ -71,6 +71,17 @@ Then it checks your tools and the cluster, builds the image in Cloud Build,
 creates the secret (your App key, plus a webhook secret and an API token it
 mints), applies the manifests and waits for the pod.
 
+The image is tagged with the commit it was built from and the pod runs it by
+digest, the same receipt Gojira gives every app it deploys. The closing
+message names it, and so does the cluster:
+
+```bash
+kubectl -n gojira get deploy gojira -o jsonpath='{.spec.template.spec.containers[0].image}'
+# …/gojira/gojira:<commit>@sha256:<digest>
+```
+
+`:dev` is kept as a floating alias of the latest build.
+
 It is safe to rerun. Rerunning is also how you upgrade and how you change any
 value in `gojira.env`. On a rerun terraform takes seconds, and it will not
 delete or replace anything: if a change would, `make install` stops and
