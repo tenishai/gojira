@@ -43,7 +43,8 @@ make release VERSION=v1.2.0
 ```
 
 `scripts/release.sh` bumps the version in `pyproject.toml`, `gojira/__init__.py`
-and `uv.lock`, commits that as `release: v1.2.0`, tags it, pushes both, and
+and `uv.lock`, re-anchors the repo card (`ARCHITECTURE.md` pins `pyproject.toml`
+and names the version), commits that as `release: v1.2.0`, tags it, pushes both, and
 publishes a GitHub release with generated notes. It refuses to run off `main`,
 with tracked changes, behind `origin/main`, or for a tag that exists. Every
 install that pulls `main` afterwards builds `gojira:v1.2.0@sha256:<digest>`;
