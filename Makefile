@@ -1,4 +1,4 @@
-.PHONY: venv dev install uninstall test lint check build run preflight clean
+.PHONY: venv dev install uninstall test lint check build run preflight release clean
 
 VENV := venv
 # env -u PYTHONPATH: a globally-set PYTHONPATH leaks foreign packages into
@@ -39,6 +39,11 @@ build:
 
 preflight:
 	./scripts/preflight.sh
+
+# Cut a release: bump the version, tag main, push, publish the GitHub release.
+# Installs that pull main then build gojira:vX.Y.Z@sha256:<digest>.
+release:
+	./scripts/release.sh $(VERSION)
 
 run:
 	$(PY) -m gojira.web

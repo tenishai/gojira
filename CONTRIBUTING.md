@@ -34,6 +34,21 @@ Do not commit secrets (`gojira.env`, `*.pem`); both are gitignored.
 By contributing you agree your work is licensed under the project's
 AGPL-3.0-or-later license.
 
+## Cut a release
+
+A release is a tag on `main`. From a clean, up-to-date checkout of `main`:
+
+```bash
+make release VERSION=v1.2.0
+```
+
+`scripts/release.sh` bumps the version in `pyproject.toml`, `gojira/__init__.py`
+and `uv.lock`, commits that as `release: v1.2.0`, tags it, pushes both, and
+publishes a GitHub release with generated notes. It refuses to run off `main`,
+with tracked changes, behind `origin/main`, or for a tag that exists. Every
+install that pulls `main` afterwards builds `gojira:v1.2.0@sha256:<digest>`;
+between releases an install names its build `v1.2.0-<n>-g<commit>`.
+
 ## Using AI tools
 
 AI-assisted contributions are welcome; we build this way ourselves. You are

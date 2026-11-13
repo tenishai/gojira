@@ -104,7 +104,8 @@ def test_configmap_env_refs_are_all_provided():
 
 def test_example_values_cover_every_install_knob():
     example = (ROOT / "gojira.env.example").read_text()
-    derived = {"GOJIRA_AUTH_ENABLED"}  # bootstrap computes it from hostname + allowlist
+    # bootstrap computes these: auth from hostname + allowlist, version from the checkout
+    derived = {"GOJIRA_AUTH_ENABLED", "GOJIRA_VERSION"}
     for key in _install_configmap_keys() - derived:
         assert re.search(rf"^{key}=", example, re.M), f"{key} missing from gojira.env.example"
 
@@ -223,6 +224,10 @@ def test_the_build_is_tagged_with_the_commit_and_the_pod_pinned_to_its_digest(tm
     assert "built r/gojira:abc123def456@sha256:c0ffee" in out, out
     assert (tmp_path / "pin" / "tags").read_text() == "tags add r/gojira:abc123def456 r/gojira:dev\n"
     assert '--tag "${AR_PATH}/gojira:${IMAGE_TAG}"' in BOOTSTRAP
+    # the tag is the nearest release (git describe), fetched first so an old clone sees it
+    assert "git -C \"$REPO_ROOT\" describe --tags --always" in BOOTSTRAP
+    assert 'fetch --quiet --tags origin' in BOOTSTRAP
+    assert '--from-literal=GOJIRA_VERSION="$IMAGE_TAG"' in BOOTSTRAP
 
 
 def test_every_placeholder_in_deploy_is_filled_by_bootstrap():
