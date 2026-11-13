@@ -44,9 +44,9 @@ spec:
             # builds) and /tmp (ephemeral clone workdirs). SQLite lives on the
             # /data PVC. Nothing else on this image writes at runtime.
             readOnlyRootFilesystem: true
-          # The dev tag is mutable — without Always, a node that cached an old
-          # (e.g. wrong-arch) image under the same tag will keep running it.
-          imagePullPolicy: Always
+          # The image is pinned by digest (deploy/kustomization.yaml), so a
+          # cached copy is the same bytes; nothing to re-pull.
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8080

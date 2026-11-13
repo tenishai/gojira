@@ -10,15 +10,14 @@ resources:
   - deployment.yaml
   - service.yaml
 
-# Point this at the image you pushed (see the runbook). Example:
-#   images:
-#     - name: gojira
-#       newName: us-central1-docker.pkg.dev/your-sandbox-project/gojira/gojira
-#       newTag: dev
+# scripts/bootstrap.sh fills both placeholders from the build it just made:
+# the tag is the commit, the digest is the receipt. Rendered, the pod runs
+#   us-central1-docker.pkg.dev/<project>/gojira/gojira:<sha>@sha256:<digest>
+# By hand, the same two lines with your own values.
 images:
   - name: gojira
     newName: REPLACE_AR_PATH/gojira
-    newTag: dev
+    newTag: REPLACE_IMAGE_TAG
 
 # The gojira-github-app Secret (app_id, webhook_secret, api_token, private_key)
 # is created out-of-band so the private key never lands in git — see

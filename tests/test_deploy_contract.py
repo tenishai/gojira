@@ -153,6 +153,10 @@ def test_bootstrap_registers_the_cluster_under_its_real_name():
 
 
 FAKE_GCLOUD = """#!/usr/bin/env bash
+case "$1 $2 $3 $4" in
+  "artifacts docker tags add") echo "tags add $5 $6" >> "$TAGS"; exit 0 ;;
+  "artifacts docker tags list") printf 'abc123def456-other sha256:f00d\\nabc123def456 sha256:c0ffee\\n'; exit 0 ;;
+esac
 n=$(( $(cat "$STATE" 2>/dev/null || echo 0) + 1 )); echo $n > "$STATE"
 case "$MODE" in
   lag) [ $n -lt 2 ] && { echo "ERROR: (gcloud.builds.submit) PERMISSION_DENIED: The caller does not have permission." >&2; exit 1; }
@@ -163,14 +167,16 @@ esac
 """
 
 
-def _run_build_step(tmp_path, mode: str) -> tuple[int, int]:
-    """Run bootstrap's Cloud Build block against a fake gcloud; (exit, calls)."""
+def _run_build_step(tmp_path, mode: str, through: str = 'rm -f "$BUILD_LOG"') -> tuple[int, int]:
+    """Run bootstrap's Cloud Build block against a fake gcloud; (exit, calls).
+    The block starts at BUILD_LOG= and ends at the first line equal to
+    `through` — the retry loop by default, the digest pin when asked."""
     import os
     import subprocess
 
     lines = BOOTSTRAP.splitlines()
     start = next(i for i, line in enumerate(lines) if line.startswith("BUILD_LOG="))
-    end = next(i for i in range(start, len(lines)) if lines[i] == 'rm -f "$BUILD_LOG"')
+    end = next(i for i in range(start, len(lines)) if lines[i] == through)
     block = "\n".join(lines[start : end + 1]).replace("sleep 45", "sleep 0")
     bindir = tmp_path / "bin"
     bindir.mkdir(parents=True)
@@ -179,11 +185,13 @@ def _run_build_step(tmp_path, mode: str) -> tuple[int, int]:
     state = tmp_path / "calls"
     env = {
         "PATH": f"{bindir}:{os.environ['PATH']}", "MODE": mode, "STATE": str(state),
-        "AR_PATH": "r", "PROJECT": "p", "REPO_ROOT": ".",
+        "TAGS": str(tmp_path / "tags"),
+        "AR_PATH": "r", "PROJECT": "p", "REPO_ROOT": ".", "IMAGE_TAG": "abc123def456",
     }
     done = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", block], env=env, capture_output=True, text=True
     )
+    _run_build_step.last = done  # type: ignore[attr-defined]
     return done.returncode, int(state.read_text())
 
 
@@ -201,3 +209,29 @@ def test_cloud_build_does_not_retry_a_broken_build(tmp_path):
 
 def test_cloud_build_gives_up_on_a_real_permission_problem(tmp_path):
     assert _run_build_step(tmp_path / "denied", "denied") == (1, 3)
+
+
+def test_the_build_is_tagged_with_the_commit_and_the_pod_pinned_to_its_digest(tmp_path):
+    """Gojira held its apps to tag@digest (#37) while its own pod ran a
+    mutable ":dev" — prod did for two months, found 2026-11-13 when a reader
+    asked why. The build is tagged with the commit, ":dev" becomes a floating
+    alias of it, and the digest the registry reports for exactly that tag (the
+    tag: filter is a prefix match, #47) is what the manifest pins."""
+    code, calls = _run_build_step(tmp_path / "pin", "lag", through='echo "built ${IMAGE_REF}"')
+    assert (code, calls) == (0, 2)
+    out = _run_build_step.last.stdout  # type: ignore[attr-defined]
+    assert "built r/gojira:abc123def456@sha256:c0ffee" in out, out
+    assert (tmp_path / "pin" / "tags").read_text() == "tags add r/gojira:abc123def456 r/gojira:dev\n"
+    assert '--tag "${AR_PATH}/gojira:${IMAGE_TAG}"' in BOOTSTRAP
+
+
+def test_every_placeholder_in_deploy_is_filled_by_bootstrap():
+    """deploy/ is applied from a temp copy with its REPLACE_ placeholders
+    substituted; one left behind is a pod that cannot pull or a service
+    account that does not exist."""
+    placeholders = set()
+    for path in (ROOT / "deploy").glob("*.yaml"):
+        placeholders |= set(re.findall(r"REPLACE_[A-Z_]+", path.read_text()))
+    assert placeholders >= {"REPLACE_AR_PATH", "REPLACE_IMAGE_TAG", "REPLACE_GSA_EMAIL"}
+    filled = set(re.findall(r's#(REPLACE_[A-Z_]+)#', BOOTSTRAP))
+    assert placeholders <= filled, placeholders - filled
