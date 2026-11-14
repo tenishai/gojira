@@ -802,16 +802,82 @@ def preserve_resources(existing_text: str, rendered_text: str, file_exists) -> s
     if not entries:
         return rendered_text
 
+    return add_resources(rendered_text, [e for e in entries if file_exists(e)])
+
+
+def add_resources(
+    rendered_text: str, entries: list[str], comment: str = "app-authored resources, preserved by Gojira:"
+) -> str:
+    """Append `entries` to a rendered base kustomization's `resources:`, under
+    a one-line comment saying whose they are. Entries the render already lists
+    are not repeated. Appended textually; the render's comments survive."""
     rendered = yaml.safe_load(rendered_text) or {}
     have = set(rendered.get("resources") or [])
-    keep = [e for e in entries if e not in have and file_exists(e)]
+    keep = [e for e in entries if e not in have]
     if not keep:
         return rendered_text
 
     sep = "" if rendered_text.endswith("\n") else "\n"
-    lines = ["  # app-authored resources, preserved by Gojira:"]
+    lines = [f"  # {comment}"]
     lines += [f"  - {e}" for e in keep]
     return f"{rendered_text}{sep}" + "\n".join(lines) + "\n"
+
+
+# A caller's seed for the first setup PR (POST /api/v1/apps `seed`): the
+# contract keys it may name, and the bounds on the files it may add.
+SEED_FILE_NAME = re.compile(r"[a-z0-9][a-z0-9-]*\.yaml")
+SEED_FILE_MAX = 8
+SEED_FILE_MAX_BYTES = 16 * 1024
+# What a seed file may hold: the objects a contract's own keys point at
+# (`service_account:`, `data_mount:`, `config_from:`) and nothing that grants.
+SEED_KINDS = frozenset({"ServiceAccount", "PersistentVolumeClaim", "ConfigMap"})
+
+
+def seed_needs(needs: dict) -> dict:
+    """A seed's `needs` as GeneratorSpec updates: the same keys, read by the
+    same reader, as a repo's own gojira.yaml. Raises ValueError naming a key
+    the contract does not have, or one whose value the reader would drop: a
+    caller that asked for something must not find out from a pod that it was
+    never rendered."""
+    if not isinstance(needs, dict):
+        raise ValueError("seed.needs must be a mapping of gojira.yaml keys")
+    read = read_app_needs(yaml.safe_dump(needs))
+    # read_app_needs names two keys differently on the spec than in the file.
+    spec_key = {"env": "env_vars", "image": "published_image"}
+    dropped = sorted(k for k in needs if spec_key.get(k, k) not in read)
+    if dropped:
+        raise ValueError(
+            "seed.needs: not an app-needs key of gojira.yaml, or not in its shape: "
+            + ", ".join(dropped)
+        )
+    return read
+
+
+def check_seed_files(base_files: dict) -> None:
+    """Refuse a seed file that is not a plain `<name>.yaml` of the kinds a
+    seed may add (`SEED_KINDS`): the objects a contract key names, never one
+    that grants access or runs something."""
+    if not isinstance(base_files, dict):
+        raise ValueError("seed.base_files must map a file name to its text")
+    if len(base_files) > SEED_FILE_MAX:
+        raise ValueError(f"seed.base_files: at most {SEED_FILE_MAX} files")
+    for name, text in base_files.items():
+        if not isinstance(name, str) or not SEED_FILE_NAME.fullmatch(name) or name == "kustomization.yaml":
+            raise ValueError(f"seed.base_files: {name!r} is not a plain <name>.yaml in k8s/base")
+        if not isinstance(text, str) or len(text.encode()) > SEED_FILE_MAX_BYTES:
+            raise ValueError(f"seed.base_files: {name} must be text of at most {SEED_FILE_MAX_BYTES} bytes")
+        try:
+            docs = [d for d in yaml.safe_load_all(text) if d is not None]
+        except yaml.YAMLError as exc:
+            raise ValueError(f"seed.base_files: {name} is not YAML") from exc
+        if not docs or not all(isinstance(d, dict) and d.get("kind") for d in docs):
+            raise ValueError(f"seed.base_files: {name} must hold Kubernetes objects")
+        for doc in docs:
+            if doc["kind"] not in SEED_KINDS:
+                raise ValueError(
+                    f"seed.base_files: {name} holds a {doc['kind']}; a seed adds only "
+                    + ", ".join(sorted(SEED_KINDS))
+                )
 
 
 GENERATOR_KEYS = ("configMapGenerator", "secretGenerator", "generatorOptions")

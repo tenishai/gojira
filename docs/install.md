@@ -167,6 +167,34 @@ Gojira creates the app's deploy identity, the GitHub-to-GCP trust, an image
 repo and the namespace, then opens a **setup PR** on your repo and waits for
 you. The app page shows each step and links the PR.
 
+A service that connects apps for other people (a portal, say) and needs a
+little of its own in each one can ask for it in the same call, so the repo's
+owner reviews one PR instead of two. `seed` is read only for a repo that has
+neither a `gojira.yaml` nor a `k8s/base/deployment.yaml`; a repo that already
+has either is rendered from what is in it, and the seed is ignored.
+
+```json
+"seed": {
+  "needs": {"service_account": "hello", "secrets_from_optional": ["hello-extra"]},
+  "base_files": {"serviceaccount.yaml": "apiVersion: v1\nkind: ServiceAccount\nmetadata: {name: hello}\n"},
+  "note": "One paragraph for the person who reviews the PR."
+}
+```
+
+- `needs` are the app-needs keys of `gojira.yaml` (`service_account`, `env`,
+  `secrets_from`, `secrets_from_optional`, `data_mount`, `port`, ...), in the
+  shape the file takes. They are written into the contract and rendered.
+- `base_files` are added to `k8s/base/` as written and listed in its
+  `kustomization.yaml`: at most 8 files of 16 KiB, each one object of kind
+  `ServiceAccount`, `PersistentVolumeClaim` or `ConfigMap`. A name Gojira
+  renders itself, or one already in the repo, is left alone.
+- `note` is quoted in the setup PR, beside the list of what the seed added.
+
+The call is refused with `422` when a key or a file is not one of those, when
+a value is one the contract would not keep (the wrong shape, or a default such
+as `port: 8080`), and when `seed` comes with `auto_merge_setup_pr`: a seed is
+always reviewed by a person.
+
 ## 7. Merge the setup PR
 
 Read it first: it adds `gojira.yaml` (the contract), `k8s/` and one workflow.

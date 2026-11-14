@@ -15,13 +15,14 @@ from urllib.parse import quote
 from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from gojira import __version__, models, service, webhooks
 from gojira.web import metrics, tracing
 from gojira.config import Config, load_config
+from gojira.generator import check_seed_files, seed_needs
 from gojira.opinions import WORKLOAD_CLASSES
 from gojira.service import ProvisionClients
 from gojira.web.auth import identity_from
@@ -391,12 +392,42 @@ def create_app(
                 raise ValueError(f"namespace {v!r} is not a valid DNS-1123 label")
             return v
 
+    class SeedIn(BaseModel):
+        """What the caller wants the first setup PR to carry beside the
+        render, for a repo with no contract and no manifests of its own:
+        contract keys, files for k8s/base, and a note for the reviewer."""
+
+        needs: dict = Field(default_factory=dict)
+        base_files: dict[str, str] = Field(default_factory=dict)
+        note: str = Field(default="", max_length=4000)
+
+        @field_validator("needs")
+        @classmethod
+        def _contract_keys(cls, v: dict) -> dict:
+            seed_needs(v)
+            return v
+
+        @field_validator("base_files")
+        @classmethod
+        def _base_objects(cls, v: dict[str, str]) -> dict[str, str]:
+            check_seed_files(v)
+            return v
+
     class ConnectIn(BaseModel):
         name: str = Field(min_length=1, max_length=63, pattern=DNS1123_LABEL.pattern)
         repo_full_name: str = Field(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
         workload_class: str
         environments: list[EnvIn] = Field(min_length=1)
         auto_merge_setup_pr: bool = False
+        seed: SeedIn | None = None
+
+        @model_validator(mode="after")
+        def _a_seed_is_reviewed(self):
+            # A seed is the caller's content in a repo it did not write; the
+            # setup PR is where a person agrees to it.
+            if self.seed is not None and self.auto_merge_setup_pr:
+                raise ValueError("seed cannot be combined with auto_merge_setup_pr")
+            return self
 
         @field_validator("environments")
         @classmethod
@@ -465,6 +496,8 @@ def create_app(
                 installation_id=installation_id,
             )
             app_obj.auto_merge_setup_pr = body.auto_merge_setup_pr
+            if body.seed is not None:
+                app_obj.setup_seed_json = json.dumps(body.seed.model_dump(), sort_keys=True)
             session.commit()
         except IntegrityError:
             session.rollback()

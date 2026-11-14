@@ -5,6 +5,7 @@ Gojira's deployment; the objects they reference stay app-authored and
 preserve_resources keeps them in the build across regeneration.
 """
 
+import json
 import yaml
 
 from gojira.generator import (
@@ -436,7 +437,7 @@ def test_zero_touch_onboarding_seeds_the_contract(tmp_path):
         (tmp_path / "k8s/base/kustomization.yaml").read_text())["resources"])
 
 
-def _onboard(tmp_path, github, *, auto_merge):
+def _onboard(tmp_path, github, *, auto_merge, seed=None):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
@@ -453,7 +454,8 @@ def _onboard(tmp_path, github, *, auto_merge):
         session.add(c)
         session.commit()
         a = App(name="watson", repo_full_name="acme/watson", installation_id=1,
-                workload_class="agent", auto_merge_setup_pr=auto_merge)
+                workload_class="agent", auto_merge_setup_pr=auto_merge,
+                setup_seed_json=json.dumps(seed) if seed else None)
         session.add(a)
         session.commit()
         session.add(Environment(app_id=a.id, name="dev", cluster_id=c.id, namespace="watson"))
@@ -970,3 +972,113 @@ def test_cluster_roles_round_trip_and_render_the_ksa():
     pod, _ = _first_container(files)
     assert pod["serviceAccountName"] == "atlas"
     assert "RUN_SA" not in files[".github/workflows/gojira-ci.yaml"]  # no GCP identity asked for
+
+
+SEED = {
+    "needs": {
+        "service_account": "agent-watson",
+        "secrets_from": ["watson-pass"],
+        "secrets_from_optional": ["watson-slack"],
+        "env": {"AGENT_MODEL": "balanced"},
+        "data_mount": {"pvc": "agent-watson-data", "path": "/data"},
+    },
+    "base_files": {
+        "serviceaccount.yaml": "apiVersion: v1\nkind: ServiceAccount\nmetadata: {name: agent-watson}\n",
+        "storage.yaml": (
+            "# the caller's own words, kept\napiVersion: v1\nkind: PersistentVolumeClaim\n"
+            "metadata: {name: agent-watson-data}\n"
+            "spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 1Gi}}}\n"
+        ),
+    },
+    "note": "The room that connected this agent gives it storage and a pass to its tools.",
+}
+
+
+def test_a_seed_shapes_the_one_setup_pr_of_a_repo_with_nothing_of_its_own(tmp_path):
+    """A caller that connects a repo and then needs a contract key and a file
+    of its own in it used to open a second pull request after the setup PR,
+    and a third followed when the contract changed. With `seed`, a repo that
+    has no contract and no manifests gets all of it in the one setup PR: the
+    keys in gojira.yaml and rendered into the Deployment, the files in
+    k8s/base as written and listed in the kustomization, and the PR saying so
+    to the person who reviews it."""
+    from tests.fakes import FakeGitHubClient
+
+    class Bodies(FakeGitHubClient):
+        def open_pr(self, repo, head, base, title, body):
+            self.body = body
+            return super().open_pr(repo, head, base, title, body)
+
+    gh = Bodies()
+    result, app = _onboard(tmp_path, gh, auto_merge=False, seed=SEED)
+
+    assert result.completed and app.setup_pr_url
+    needs = read_app_needs((tmp_path / "gojira.yaml").read_text())
+    assert needs["service_account"] == "agent-watson"
+    assert (needs["secrets_from"], needs["secrets_from_optional"]) == (["watson-pass"], ["watson-slack"])
+    assert needs["env_vars"] == {"AGENT_MODEL": "balanced"}
+    assert needs["data_mount"].pvc == "agent-watson-data"
+    base = tmp_path / "k8s" / "base"
+    for name, text in SEED["base_files"].items():
+        assert (base / name).read_text() == text
+    assert {"deployment.yaml", "serviceaccount.yaml", "storage.yaml"} <= set(
+        yaml.safe_load((base / "kustomization.yaml").read_text())["resources"])
+    pod = yaml.safe_load((base / "deployment.yaml").read_text())["spec"]["template"]["spec"]
+    assert pod["serviceAccountName"] == "agent-watson"
+    assert SEED["note"] in gh.body and "`k8s/base/storage.yaml`" in gh.body and "`data_mount`" in gh.body
+
+    # The same repo again, before anyone merged: the same tree, from the row.
+    again = tmp_path / "again"
+    again.mkdir()
+    from gojira.provisioner import ProvisionContext
+    from gojira.steps import GenerateArtifacts
+    from tests.fakes import FakeGCPClient
+    from gojira.config import Config
+
+    ctx = ProvisionContext(app=app, config=Config(), clients={"gcp": FakeGCPClient()}, workdir=again,
+                           environments=list(app.environments))
+    GenerateArtifacts().apply(ctx)
+    kept = ("gojira.yaml", "k8s/base/kustomization.yaml", "k8s/base/deployment.yaml", "k8s/base/storage.yaml")
+    for rel in kept:
+        assert (again / rel).read_text() == (tmp_path / rel).read_text()
+
+    # And once it is merged: the repo's own contract and files are what is
+    # read, and they render to themselves. No second pull request follows.
+    before = {rel: (tmp_path / rel).read_text() for rel in kept}
+    merged = ProvisionContext(app=app, config=Config(), clients={"gcp": FakeGCPClient()}, workdir=tmp_path,
+                              environments=list(app.environments))
+    GenerateArtifacts().apply(merged)
+    assert {rel: (tmp_path / rel).read_text() for rel in kept} == before
+    assert merged.seed_needs == [] and merged.seed_files == []
+
+
+def test_a_seed_is_never_laid_over_what_a_person_wrote(tmp_path):
+    """The seed is for a repo with nothing to read. One with hand-built
+    manifests is adopted from those, one with a contract is read from that,
+    and in neither does a caller's seed add a key or a file."""
+    from tests.fakes import FakeGitHubClient
+
+    class HandBuilt(FakeGitHubClient):
+        def clone(self, repo, workdir):
+            super().clone(repo, workdir)
+            base = workdir / "k8s" / "base"
+            base.mkdir(parents=True)
+            (base / "deployment.yaml").write_text(PROBE_SHAPED)
+            (base / "kustomization.yaml").write_text("resources:\n  - deployment.yaml\n")
+
+    class Contract(FakeGitHubClient):
+        def clone(self, repo, workdir):
+            super().clone(repo, workdir)
+            (workdir / "gojira.yaml").write_text("name: watson\nclass: agent\n")
+
+    for i, gh in enumerate([HandBuilt(), Contract()]):
+        work = tmp_path / str(i)
+        work.mkdir()
+        result, _ = _onboard(work, gh, auto_merge=False, seed=SEED)
+        assert result.completed
+        needs = read_app_needs((work / "gojira.yaml").read_text())
+        assert needs.get("service_account") != "agent-watson"
+        assert "watson-slack" not in needs.get("secrets_from_optional", [])
+        mount = needs.get("data_mount")
+        assert mount is None or mount.pvc != "agent-watson-data"
+        assert not (work / "k8s" / "base" / "storage.yaml").exists()

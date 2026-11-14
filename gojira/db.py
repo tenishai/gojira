@@ -47,4 +47,8 @@ def init_db(engine) -> None:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE apps ADD COLUMN run_identity_json TEXT"))
         log.info("migrated apps table: added run_identity_json")
+    if "setup_seed_json" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE apps ADD COLUMN setup_seed_json TEXT"))
+        log.info("migrated apps table: added setup_seed_json")
     log.info("database initialized")
