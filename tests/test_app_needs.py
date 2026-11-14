@@ -1025,7 +1025,7 @@ def test_a_seed_shapes_the_one_setup_pr_of_a_repo_with_nothing_of_its_own(tmp_pa
         yaml.safe_load((base / "kustomization.yaml").read_text())["resources"])
     pod = yaml.safe_load((base / "deployment.yaml").read_text())["spec"]["template"]["spec"]
     assert pod["serviceAccountName"] == "agent-watson"
-    assert SEED["note"] in gh.body and "`k8s/base/storage.yaml`" in gh.body and "`data_mount`" in gh.body
+    assert "> " + SEED["note"] in gh.body and "`k8s/base/storage.yaml`" in gh.body and "`data_mount`" in gh.body
 
     # The same repo again, before anyone merged: the same tree, from the row.
     again = tmp_path / "again"
@@ -1055,7 +1055,8 @@ def test_a_seed_shapes_the_one_setup_pr_of_a_repo_with_nothing_of_its_own(tmp_pa
 def test_a_seed_is_never_laid_over_what_a_person_wrote(tmp_path):
     """The seed is for a repo with nothing to read. One with hand-built
     manifests is adopted from those, one with a contract is read from that,
-    and in neither does a caller's seed add a key or a file."""
+    one with only a kustomization of its own keeps it, and in none of them
+    does a caller's seed add a key or a file."""
     from tests.fakes import FakeGitHubClient
 
     class HandBuilt(FakeGitHubClient):
@@ -1071,7 +1072,15 @@ def test_a_seed_is_never_laid_over_what_a_person_wrote(tmp_path):
             super().clone(repo, workdir)
             (workdir / "gojira.yaml").write_text("name: watson\nclass: agent\n")
 
-    for i, gh in enumerate([HandBuilt(), Contract()]):
+    class OwnBase(FakeGitHubClient):
+        def clone(self, repo, workdir):
+            super().clone(repo, workdir)
+            base = workdir / "k8s" / "base"
+            base.mkdir(parents=True)
+            (base / "extra.yaml").write_text("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: extra}\n")
+            (base / "kustomization.yaml").write_text("resources:\n  - extra.yaml\n")
+
+    for i, gh in enumerate([HandBuilt(), Contract(), OwnBase()]):
         work = tmp_path / str(i)
         work.mkdir()
         result, _ = _onboard(work, gh, auto_merge=False, seed=SEED)

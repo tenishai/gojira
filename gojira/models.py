@@ -86,7 +86,7 @@ class App(Base):
     # Gojira's own files (POST /api/v1/apps `seed`): {"needs": {...contract
     # keys...}, "base_files": {name: text}, "note": "..."}. Kept on the row
     # because every provision run renders from a fresh clone; read only while
-    # the repo has no contract and no manifests of its own. NULL: none.
+    # the repo has no contract and no `k8s/` of its own. NULL: none.
     setup_seed_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(default=utcnow, server_default=func.now())
 

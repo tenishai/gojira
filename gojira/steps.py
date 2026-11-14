@@ -425,11 +425,12 @@ class GenerateArtifacts:
                     spec = spec.model_copy(update=inferred)
                     log.info("adopt: inferred needs from existing deployment: %s",
                              sorted(inferred))
-            else:
-                # A repo with nothing of its own to read. Only here may the
-                # caller that connected it shape the first contract (its
-                # `seed`): once a person's contract or manifests exist, they
-                # are what is read, and a seed is never laid over them.
+            elif not (ctx.workdir / "k8s").exists():
+                # A repo with nothing of its own to read: no contract and no
+                # `k8s/` at all. Only here may the caller that connected it
+                # shape the first contract (its `seed`): once a person's
+                # contract or any manifest of theirs exists, that is what is
+                # read, and a seed is never laid over or beside it.
                 seed = _setup_seed(ctx.app)
                 if seed.get("needs"):
                     spec = spec.model_copy(update=seed_needs(seed["needs"]))
@@ -830,8 +831,10 @@ def _seed_summary(ctx: ProvisionContext) -> str:
     if ctx.seed_needs:
         lines.append("- in `gojira.yaml`: " + ", ".join(f"`{k}`" for k in ctx.seed_needs))
     lines += [f"- `k8s/base/{name}`" for name in ctx.seed_files]
+    # Quoted, line by line: the caller's words must not read as Gojira's.
     note = (_setup_seed(ctx.app).get("note") or "").strip()
-    return "\n".join(lines) + "\n\n" + (note + "\n\n" if note else "")
+    quoted = "\n".join(f"> {line}".rstrip() for line in note.splitlines())
+    return "\n".join(lines) + "\n\n" + (quoted + "\n\n" if quoted else "")
 
 
 def _stale_summary(ctx: ProvisionContext) -> str:

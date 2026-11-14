@@ -505,14 +505,21 @@ def test_api_connect_echoes_auto_merge_setup_pr_on_status(client, session_factor
 def test_api_connect_keeps_a_seed_and_refuses_one_it_could_not_render(client, session_factory):
     """`seed` is the caller's share of the first setup PR. It is kept on the
     row (every provision run renders from a fresh clone) and refused whole,
-    before anything is connected, when it names a key gojira.yaml does not
-    have, a file that is not a plain object of the kinds a seed may add, or
-    asks for the pull request to be merged unreviewed."""
+    before anything is connected, when it names a key a seed may not set
+    (one gojira.yaml does not have, or one the platform would grant before
+    anyone read the pull request), a name the written contract would read
+    back as something else, a file that is not a plain object of the kinds a
+    seed may add, or asks for the pull request to be merged unreviewed."""
     _register_three(session_factory)
     account = "apiVersion: v1\nkind: ServiceAccount\nmetadata: {name: agent-clio}\n"
     for seed in (
         {"needs": {"service_acount": "agent-clio"}},
         {"needs": {"data_mount": "agent-clio-data"}},
+        {"needs": {"identity": {"gcp_roles": ["roles/aiplatform.user"]}}},
+        {"needs": {"cluster_roles": ["node-reader"]}},
+        {"needs": {"secrets_from": ["clio-keys", "on"]}},
+        {"needs": {"service_account": "agent-clio\ncluster_roles: [node-reader]"}},
+        {"base_files": {"odd.yaml": "kind: [ServiceAccount]\n"}},
         {"base_files": {"../workflow.yaml": account}},
         {"base_files": {"kustomization.yaml": account}},
         {"base_files": {"role.yaml": "apiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nmetadata: {name: x}\n"}},
