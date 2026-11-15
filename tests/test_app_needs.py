@@ -6,6 +6,8 @@ preserve_resources keeps them in the build across regeneration.
 """
 
 import json
+
+import pytest
 import yaml
 
 from gojira.generator import (
@@ -1091,3 +1093,41 @@ def test_a_seed_is_never_laid_over_what_a_person_wrote(tmp_path):
         mount = needs.get("data_mount")
         assert mount is None or mount.pvc != "agent-watson-data"
         assert not (work / "k8s" / "base" / "storage.yaml").exists()
+
+
+def test_a_seed_is_read_as_sent_or_refused():
+    """What a seed asks for is what the contract says, in the shape gojira.yaml
+    takes; a value of another shape is refused rather than coerced (review of
+    #140: `{a: 1}` became the name "{'a': 1}", `true` the string "True",
+    `fs_group: -5` quietly 999)."""
+    from gojira.generator import seed_needs
+
+    read = seed_needs({"env": {"A": "1"}, "data_mount": {"pvc": "d", "path": "/d"},
+                       "secret_mounts": [{"name": "pem", "path": "/secrets", "optional": True}]})
+    assert read["env_vars"] == {"A": "1"}
+    assert (read["data_mount"].pvc, read["data_mount"].fs_group) == ("d", 999)
+    assert read["secret_mounts"][0].optional is True
+    for bad in ({"env": {"A": 1}}, {"service_account": {"a": 1}}, {"secrets_from": [""]},
+                {"data_mount": {"pvc": "d", "path": "/d", "fs_group": "x"}},
+                {"data_mount": {"pvc": "d", "path": "relative"}},
+                {"config_mounts": [{"name": "c", "path": "/c", "mode": 420}]}):
+        with pytest.raises(ValueError):
+            seed_needs(bad)
+
+
+def test_seed_files_are_named_core_objects_that_build_once():
+    """A seed file kustomize would refuse is refused at the door, since the seed
+    cannot be changed afterwards: nesting past the parser's depth, metadata
+    that is not a mapping, an object with no name, two files for one object,
+    a kind from another API group."""
+    from gojira.generator import check_seed_files
+
+    cm = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: same}\n"
+    check_seed_files({"a.yaml": cm})
+    for bad in ({"a.yaml": "kind: ConfigMap\nx: " + "[" * 5000 + "]" * 5000},
+                {"a.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: x\n"},
+                {"a.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {labels: {a: b}}\n"},
+                {"a.yaml": cm, "b.yaml": cm},
+                {"a.yaml": "apiVersion: acme.io/v1\nkind: ConfigMap\nmetadata: {name: x}\n"}):
+        with pytest.raises(ValueError):
+            check_seed_files(bad)

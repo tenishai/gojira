@@ -703,9 +703,11 @@ def _rendered_targets(files: dict[str, str]) -> set[tuple[str, str]]:
             continue
         try:
             for doc in yaml.safe_load_all(content):
-                if doc and doc.get("kind") and doc.get("metadata", {}).get("name"):
+                if not isinstance(doc, dict) or not isinstance(doc.get("metadata"), dict):
+                    continue
+                if doc.get("kind") and doc["metadata"].get("name"):
                     targets.add((doc["kind"], doc["metadata"]["name"]))
-        except yaml.YAMLError:
+        except (yaml.YAMLError, RecursionError):
             continue
     return targets
 

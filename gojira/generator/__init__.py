@@ -22,7 +22,7 @@ import shlex
 
 import yaml
 from jinja2 import Environment, PackageLoader, StrictUndefined
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from gojira.opinions import WORKLOAD_CLASSES, WorkloadClass, load_sizing
 
@@ -841,13 +841,70 @@ SEED_NEEDS = frozenset({
 })
 
 
+# A seed's `needs`, typed as gojira.yaml takes them and nothing looser. Strict:
+# JSON `true` is not the string "true", `{a: 1}` is not a name, and a key the
+# contract does not have is refused, so a wrong shape is turned away here
+# rather than coerced by the reader into something the pod reads differently
+# (review of #140). Names are DNS-1123 labels, paths are absolute.
+_NAME_RE = r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+_NAME = Field(pattern=_NAME_RE, max_length=253)
+_PATH = Field(pattern=r"^/\S*$", max_length=1024)
+_ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+class _SeedDataMount(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    pvc: str = _NAME
+    path: str = _PATH
+    fs_group: int = Field(default=999, ge=0, le=2**31 - 1)
+
+
+class _SeedConfigMount(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    name: str = _NAME
+    path: str = _PATH
+    key: str = Field(default="", max_length=253)
+
+
+class _SeedSecretMount(_SeedConfigMount):
+    optional: bool = False
+
+
+class SeedNeeds(BaseModel):
+    """The contract keys a seed may set (`SEED_NEEDS`), each in the shape
+    gojira.yaml takes. `identity` and `cluster_roles` are not fields: the
+    steps that run before the setup PR would grant them unreviewed."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+    service_account: str | None = Field(default=None, pattern=_NAME_RE, max_length=253)
+    env: dict[str, str] | None = None
+    secrets_from: list[str] | None = None
+    secrets_from_optional: list[str] | None = None
+    config_from: list[str] | None = None
+    data_mount: _SeedDataMount | None = None
+    config_mounts: list[_SeedConfigMount] | None = None
+    secret_mounts: list[_SeedSecretMount] | None = None
+
+    @model_validator(mode="after")
+    def _names_and_keys(self):
+        for key in ("secrets_from", "secrets_from_optional", "config_from"):
+            for name in getattr(self, key) or []:
+                if not re.fullmatch(_NAME_RE, name) or len(name) > 253:
+                    raise ValueError(f"{key}: {name!r} is not a Kubernetes object name")
+        for k in self.env or {}:
+            if not _ENV_KEY.fullmatch(k):
+                raise ValueError(f"env: {k!r} is not an environment variable name")
+        return self
+
+
 def seed_needs(needs: dict) -> dict:
     """A seed's `needs` as GeneratorSpec updates: the same keys, read by the
     same reader, as a repo's own gojira.yaml. Raises ValueError naming a key
-    a seed may not set (`SEED_NEEDS`), one whose value the reader would drop,
-    or one that would not read back from the written contract as it was
-    asked for: a caller that asked for something must not find out from a pod
-    that it was never rendered, nor a reviewer merge one name and run another."""
+    a seed may not set (`SEED_NEEDS`), a value not in the shape the contract
+    takes (`SeedNeeds`), or one that would not read back from the written
+    contract as it was asked for: a caller that asked for something must not
+    find out from a pod that it was never rendered, nor a reviewer merge one
+    name and run another."""
     if not isinstance(needs, dict):
         raise ValueError("seed.needs must be a mapping of gojira.yaml keys")
     refused = sorted(str(k) for k in needs if k not in SEED_NEEDS)
@@ -856,10 +913,16 @@ def seed_needs(needs: dict) -> dict:
             "seed.needs: a seed sets only " + ", ".join(sorted(SEED_NEEDS))
             + "; not " + ", ".join(refused)
         )
-    read = read_app_needs(yaml.safe_dump(needs))
+    try:
+        typed = SeedNeeds.model_validate(needs)
+    except ValidationError as exc:
+        where = sorted({".".join(str(p) for p in e["loc"]) or "needs" for e in exc.errors()})
+        raise ValueError("seed.needs: not in the shape gojira.yaml takes: " + ", ".join(where)) from exc
+    data = typed.model_dump(exclude_none=True)
+    read = read_app_needs(yaml.safe_dump(data))
     # read_app_needs names one of these keys differently on the spec.
     spec_key = {"env": "env_vars"}
-    dropped = sorted(k for k in needs if spec_key.get(k, k) not in read)
+    dropped = sorted(k for k in data if spec_key.get(k, k) not in read)
     if dropped:
         raise ValueError("seed.needs: not in the shape gojira.yaml takes: " + ", ".join(dropped))
     # The contract is written by a template, not a YAML dumper, so a name
@@ -870,7 +933,7 @@ def seed_needs(needs: dict) -> dict:
         app="seed", repo_full_name="seed/seed", workload_class="service", environments=[],
     ).model_copy(update=read)
     back = read_app_needs(_t("gojira.yaml.j2", {"spec": spec}))
-    changed = sorted(k for k in needs if back.get(spec_key.get(k, k)) != read[spec_key.get(k, k)])
+    changed = sorted(k for k in data if back.get(spec_key.get(k, k)) != read[spec_key.get(k, k)])
     if changed:
         raise ValueError(
             "seed.needs: would not read back from gojira.yaml as written: " + ", ".join(changed)
@@ -879,13 +942,16 @@ def seed_needs(needs: dict) -> dict:
 
 
 def check_seed_files(base_files: dict) -> None:
-    """Refuse a seed file that is not a plain `<name>.yaml` of the kinds a
-    seed may add (`SEED_KINDS`): the objects a contract key names, never one
-    that grants access or runs something."""
+    """Refuse a seed file that is not a plain `<name>.yaml` holding named
+    core objects of the kinds a seed may add (`SEED_KINDS`): the objects a
+    contract key names, never one that grants access or runs something. Two
+    files naming the same object are refused too: kustomize would refuse the
+    build, and a seed cannot be changed once it is on the row."""
     if not isinstance(base_files, dict):
         raise ValueError("seed.base_files must map a file name to its text")
     if len(base_files) > SEED_FILE_MAX:
         raise ValueError(f"seed.base_files: at most {SEED_FILE_MAX} files")
+    seen: dict[tuple[str, str], str] = {}
     for name, text in base_files.items():
         if not isinstance(name, str) or not SEED_FILE_NAME.fullmatch(name) or name == "kustomization.yaml":
             raise ValueError(f"seed.base_files: {name!r} is not a plain <name>.yaml in k8s/base")
@@ -893,7 +959,7 @@ def check_seed_files(base_files: dict) -> None:
             raise ValueError(f"seed.base_files: {name} must be text of at most {SEED_FILE_MAX_BYTES} bytes")
         try:
             docs = [d for d in yaml.safe_load_all(text) if d is not None]
-        except yaml.YAMLError as exc:
+        except (yaml.YAMLError, RecursionError) as exc:  # nesting past the parser's depth is a RecursionError
             raise ValueError(f"seed.base_files: {name} is not YAML") from exc
         if not docs or not all(isinstance(d, dict) and isinstance(d.get("kind"), str) for d in docs):
             raise ValueError(f"seed.base_files: {name} must hold Kubernetes objects")
@@ -903,6 +969,17 @@ def check_seed_files(base_files: dict) -> None:
                     f"seed.base_files: {name} holds a {doc['kind']}; a seed adds only "
                     + ", ".join(sorted(SEED_KINDS))
                 )
+            if doc.get("apiVersion") != "v1":
+                raise ValueError(f"seed.base_files: {name}: a {doc['kind']} has apiVersion v1")
+            meta = doc.get("metadata")
+            obj = meta.get("name") if isinstance(meta, dict) else None
+            if not isinstance(obj, str) or not obj:
+                raise ValueError(f"seed.base_files: {name}: every object needs metadata.name")
+            if (doc["kind"], obj) in seen:
+                raise ValueError(
+                    f"seed.base_files: {name} and {seen[(doc['kind'], obj)]} both hold {doc['kind']} {obj}"
+                )
+            seen[(doc["kind"], obj)] = name
 
 
 GENERATOR_KEYS = ("configMapGenerator", "secretGenerator", "generatorOptions")
