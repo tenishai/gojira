@@ -2,6 +2,7 @@
 end to end against in-memory fakes (no gcloud/git/kubectl)."""
 
 import inspect
+import json
 import time
 
 import pytest
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from gojira import service
+from gojira import models, service
 from gojira.config import Config
 from gojira.github import SETUP_BRANCH
 from gojira.models import Base
@@ -499,6 +500,58 @@ def test_api_connect_echoes_auto_merge_setup_pr_on_status(client, session_factor
     app_id = resp.json()["id"]
     status = client.get(f"/api/v1/apps/{app_id}").json()
     assert status["auto_merge_setup_pr"] is True
+
+
+def test_api_connect_keeps_a_seed_and_refuses_one_it_could_not_render(client, session_factory):
+    """`seed` is the caller's share of the first setup PR. It is kept on the
+    row (every provision run renders from a fresh clone) and refused whole,
+    before anything is connected, when it names a key a seed may not set
+    (one gojira.yaml does not have, or one the platform would grant before
+    anyone read the pull request), a name the written contract would read
+    back as something else, a file that is not a plain object of the kinds a
+    seed may add, or asks for the pull request to be merged unreviewed."""
+    _register_three(session_factory)
+    account = "apiVersion: v1\nkind: ServiceAccount\nmetadata: {name: agent-clio}\n"
+    for seed in (
+        {"needs": {"service_acount": "agent-clio"}},
+        {"needs": {"data_mount": "agent-clio-data"}},
+        {"needs": {"identity": {"gcp_roles": ["roles/aiplatform.user"]}}},
+        {"needs": {"cluster_roles": ["node-reader"]}},
+        {"needs": {"secrets_from": ["clio-keys", "on"]}},
+        {"needs": {"service_account": "agent-clio\ncluster_roles: [node-reader]"}},
+        # the wrong shape is refused, never coerced: `true` is not "true", a map is not a name
+        {"needs": {"service_account": {"a": 1}}},
+        {"needs": {"service_account": ["agent-clio"]}},
+        {"needs": {"env": {"DEBUG": True, "X": None}}},
+        {"needs": {"env": {"bad key": "v"}}},
+        {"needs": {"secrets_from": [{"a": 1}]}},
+        {"needs": {"data_mount": {"pvc": "agent-clio-data", "path": "/data", "fs_group": -5}}},
+        {"needs": {"data_mount": {"pvc": "agent-clio-data", "path": "/data", "extra": 1}}},
+        {"base_files": {"odd.yaml": "kind: [ServiceAccount]\n"}},
+        # a file that would never build is refused now, not at every provision
+        {"base_files": {"deep.yaml": "kind: ConfigMap\nx: " + "[" * 5000 + "]" * 5000}},
+        {"base_files": {"meta.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: x\n"}},
+        {"base_files": {"noname.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {labels: {a: b}}\n"}},
+        {"base_files": {"a.yaml": account, "b.yaml": account}},
+        {"base_files": {"crd.yaml": "apiVersion: acme.io/v1\nkind: ConfigMap\nmetadata: {name: x}\n"}},
+        {"base_files": {"../workflow.yaml": account}},
+        {"base_files": {"kustomization.yaml": account}},
+        {"base_files": {"role.yaml": "apiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nmetadata: {name: x}\n"}},
+        {"base_files": {"notes.yaml": "just: words\n"}},
+    ):
+        refused = client.post("/api/v1/apps", json=_api_body(seed=seed))
+        assert refused.status_code == 422, seed
+    unreviewed = client.post("/api/v1/apps", json=_api_body(
+        seed={"needs": {"service_account": "agent-clio"}}, auto_merge_setup_pr=True))
+    assert unreviewed.status_code == 422
+    with session_factory() as s:
+        assert s.query(models.App).count() == 0
+
+    seed = {"needs": {"service_account": "agent-clio"}, "base_files": {"serviceaccount.yaml": account}, "note": "why"}
+    resp = client.post("/api/v1/apps", json=_api_body(seed=seed))
+    assert resp.status_code == 201
+    with session_factory() as s:
+        assert json.loads(s.get(models.App, resp.json()["id"]).setup_seed_json) == seed
 
 
 def test_api_connect_auto_merge_activates(client, session_factory, clients):

@@ -1,7 +1,7 @@
 ---
 card: arch-card:gojira-provisioner-steps
-updated: 2026-11-09
-anchor: gojira/steps.py sha=1c61dfbea8f0be9a082144fd0bc2cef6e57d1220
+updated: 2026-11-15
+anchor: gojira/steps.py sha=8dd8e4088784f4c48df633c2c633624433f55790
 ---
 # provisioner-steps — the idempotent scoped step engine (Deploy loop)
 
@@ -60,3 +60,5 @@ CHANGE 2026-10-15: generate_artifacts refuses a contract that names both `image:
 
 CHANGE 2026-10-23: observe defaults and Job name follow the noto rename; GOJIRA_OBSERVE_CLUSTERS entries may name the namespace/service account per cluster.
 CHANGE 2026-11-09: the identity steps, bind_cluster_roles and set_repo_variables carry `rechecks = True`: a DONE/SKIPPED ledger row no longer skips them, so a contract that gains `identity:` or `cluster_roles:` on a live app takes effect at the next provision (the engine honours `rechecks` beside `ephemeral`).
+CHANGE 2026-11-14: `POST /api/v1/apps` takes `seed` (contract keys, a few `k8s/base` files, a note), kept on `App.setup_seed_json`; generate_artifacts applies it only to a repo with no `gojira.yaml` and no `k8s/` directory, sets `ProvisionContext.seed_needs` / `seed_files`, and the setup PR lists them. A seed is refused with `auto_merge_setup_pr`, and may set only the keys in `SEED_NEEDS` (never `identity` or `cluster_roles`, which the steps before the PR would grant unreviewed).
+CHANGE 2026-11-15: a seed's needs are typed (`SeedNeeds`, strict: a wrong shape is refused, never coerced) and its files must be named core objects, one file per object; the seed cannot change once on the row, so what would fail every provision is refused at the door. `_rendered_targets` skips a document whose metadata is not a mapping.

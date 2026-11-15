@@ -82,6 +82,12 @@ class App(Base):
     # {"gsa_by_project": {project: email}, "adopted": bool, "roles": [...],
     #  "bindings": [[project, gsa, member]]}. NULL: no identity declared.
     run_identity_json: Mapped[str | None] = mapped_column(Text)
+    # What a programmatic caller asked the FIRST setup PR to carry beside
+    # Gojira's own files (POST /api/v1/apps `seed`): {"needs": {...contract
+    # keys...}, "base_files": {name: text}, "note": "..."}. Kept on the row
+    # because every provision run renders from a fresh clone; read only while
+    # the repo has no contract and no `k8s/` of its own. NULL: none.
+    setup_seed_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(default=utcnow, server_default=func.now())
 
     environments: Mapped[list["Environment"]] = relationship(

@@ -26,6 +26,7 @@ from gojira.generator import (
     CLUSTER_SCOPED_KINDS,
     EnvSpec,
     GeneratorSpec,
+    add_resources,
     contract_fingerprint,
     infer_app_needs,
     preserve_generators,
@@ -35,6 +36,7 @@ from gojira.generator import (
     read_app_needs,
     read_overrides,
     render,
+    seed_needs,
 )
 from gojira.github import SETUP_BRANCH, GitHubClient
 from gojira.k8s import K8sError, KubectlClient, kustomize_build
@@ -406,6 +408,7 @@ class GenerateArtifacts:
         if ctx.workdir is None:
             raise ValueError("generate_artifacts requires ctx.workdir (the repo working tree)")
         spec = build_spec(ctx, _gcp(ctx))
+        seed: dict = {}
         # Honor the repo's contract: regeneration must produce the sized
         # manifests (overrides) and the app's declared needs (finding #12),
         # not revert them to bare class defaults.
@@ -422,6 +425,16 @@ class GenerateArtifacts:
                     spec = spec.model_copy(update=inferred)
                     log.info("adopt: inferred needs from existing deployment: %s",
                              sorted(inferred))
+            elif not (ctx.workdir / "k8s").exists():
+                # A repo with nothing of its own to read: no contract and no
+                # `k8s/` at all. Only here may the caller that connected it
+                # shape the first contract (its `seed`): once a person's
+                # contract or any manifest of theirs exists, that is what is
+                # read, and a seed is never laid over or beside it.
+                seed = _setup_seed(ctx.app)
+                if seed.get("needs"):
+                    spec = spec.model_copy(update=seed_needs(seed["needs"]))
+                    ctx.seed_needs = sorted(seed["needs"])
         if existing_spec.exists():
             text = existing_spec.read_text()
             spec = spec.model_copy(
@@ -462,6 +475,21 @@ class GenerateArtifacts:
             )
             rendered_targets |= _preserved_targets(base_dir, files[base_key])
 
+        # The seed's files, beside the render's. Never over one: a name the
+        # render produces, or the repo already has, stays whose it is.
+        for name, text in (seed.get("base_files") or {}).items():
+            relpath = f"k8s/base/{name}"
+            if relpath in files or (base_dir / name).exists():
+                continue
+            files[relpath] = text
+            ctx.seed_files.append(name)
+        if ctx.seed_files and base_key in files:
+            # Listed exactly as preserve_resources will list them once the PR
+            # is merged, so the next render of the merged repo changes nothing
+            # and asks its owner for no second pull request.
+            files[base_key] = add_resources(files[base_key], ctx.seed_files)
+            rendered_targets |= _rendered_targets(files)
+
         _refuse_cluster_scoped_base(ctx.workdir / "k8s" / "base", files)
 
         for relpath, content in files.items():
@@ -487,6 +515,16 @@ class GenerateArtifacts:
         build_overlays(ctx.workdir, ctx.environments)
         log.info("generated %d artifacts into %s", len(files), ctx.workdir)
         return f"{len(files)} files"
+
+
+def _setup_seed(app: App) -> dict:
+    """The seed the app was connected with (`App.setup_seed_json`), or `{}`.
+    Validated when it was stored; a row that does not parse is no seed."""
+    try:
+        seed = json.loads(app.setup_seed_json or "{}")
+    except ValueError:
+        return {}
+    return seed if isinstance(seed, dict) else {}
 
 
 def build_overlays(workdir, environments) -> None:
@@ -665,9 +703,11 @@ def _rendered_targets(files: dict[str, str]) -> set[tuple[str, str]]:
             continue
         try:
             for doc in yaml.safe_load_all(content):
-                if doc and doc.get("kind") and doc.get("metadata", {}).get("name"):
+                if not isinstance(doc, dict) or not isinstance(doc.get("metadata"), dict):
+                    continue
+                if doc.get("kind") and doc["metadata"].get("name"):
                     targets.add((doc["kind"], doc["metadata"]["name"]))
-        except yaml.YAMLError:
+        except (yaml.YAMLError, RecursionError):
             continue
     return targets
 
@@ -773,6 +813,7 @@ class OpenSetupPr:
                 f"(`{ctx.app.workload_class}`).\n\n"
                 f"Environments: {envs}.\n\n"
                 + _identity_summary(ctx)
+                + _seed_summary(ctx)
                 + _stale_summary(ctx)
                 + "Merge to enable push-to-deploy: merge to main → dev, "
                 "tag → qa, manual approval → prod."
@@ -780,6 +821,22 @@ class OpenSetupPr:
         )
         ctx.app.setup_pr_url = url
         return url
+
+
+def _seed_summary(ctx: ProvisionContext) -> str:
+    """What the caller that connected the app asked this pull request to
+    carry beside Gojira's own render, and its own words for why: the reviewer
+    is agreeing to that too."""
+    if not ctx.seed_needs and not ctx.seed_files:
+        return ""
+    lines = ["Asked for by the service that connected this app, beside what Gojira renders:"]
+    if ctx.seed_needs:
+        lines.append("- in `gojira.yaml`: " + ", ".join(f"`{k}`" for k in ctx.seed_needs))
+    lines += [f"- `k8s/base/{name}`" for name in ctx.seed_files]
+    # Quoted, line by line: the caller's words must not read as Gojira's.
+    note = (_setup_seed(ctx.app).get("note") or "").strip()
+    quoted = "\n".join(f"> {line}".rstrip() for line in note.splitlines())
+    return "\n".join(lines) + "\n\n" + (quoted + "\n\n" if quoted else "")
 
 
 def _stale_summary(ctx: ProvisionContext) -> str:
