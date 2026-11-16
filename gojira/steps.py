@@ -29,6 +29,7 @@ from gojira.generator import (
     add_resources,
     contract_fingerprint,
     infer_app_needs,
+    named_objects,
     preserve_generators,
     preserve_patches,
     preserve_resources,
@@ -36,6 +37,7 @@ from gojira.generator import (
     read_app_needs,
     read_overrides,
     render,
+    seed_beside,
     seed_needs,
 )
 from gojira.github import SETUP_BRANCH, GitHubClient
@@ -413,10 +415,12 @@ class GenerateArtifacts:
         # manifests (overrides) and the app's declared needs (finding #12),
         # not revert them to bare class defaults.
         existing_spec = ctx.workdir / "gojira.yaml"
+        asked: dict = {}
         if not existing_spec.exists():
             # Adopt-mode (zero-touch onboarding): no contract yet, but the
             # repo's existing deployment declares its needs — read them and
             # seed the contract the setup PR proposes for review.
+            inferred: dict = {}
             old_deployment = ctx.workdir / "k8s" / "base" / "deployment.yaml"
             if old_deployment.exists():
                 ctx.adopted = True  # human content: MergeSetupPr refuses to auto-merge
@@ -425,16 +429,17 @@ class GenerateArtifacts:
                     spec = spec.model_copy(update=inferred)
                     log.info("adopt: inferred needs from existing deployment: %s",
                              sorted(inferred))
-            elif not (ctx.workdir / "k8s").exists():
-                # A repo with nothing of its own to read: no contract and no
-                # `k8s/` at all. Only here may the caller that connected it
-                # shape the first contract (its `seed`): once a person's
-                # contract or any manifest of theirs exists, that is what is
-                # read, and a seed is never laid over or beside it.
-                seed = _setup_seed(ctx.app)
-                if seed.get("needs"):
-                    spec = spec.model_copy(update=seed_needs(seed["needs"]))
-                    ctx.seed_needs = sorted(seed["needs"])
+            # No contract yet, so this pull request proposes the first one,
+            # and the caller that connected the repo may shape it (its
+            # `seed`): beside what the repo already says for itself, never
+            # over it (`seed_beside`), so a repo with deploy files of its own
+            # is asked once too. A seed is never auto-merged, and once a
+            # person's contract exists that is what is read and no seed is.
+            seed = _setup_seed(ctx.app)
+            if seed.get("needs"):
+                asked = seed_needs(seed["needs"])
+                beside, ctx.seed_needs, ctx.seed_left = seed_beside(asked, inferred)
+                spec = spec.model_copy(update=beside)
         if existing_spec.exists():
             text = existing_spec.read_text()
             spec = spec.model_copy(
@@ -476,10 +481,16 @@ class GenerateArtifacts:
             rendered_targets |= _preserved_targets(base_dir, files[base_key])
 
         # The seed's files, beside the render's. Never over one: a name the
-        # render produces, or the repo already has, stays whose it is.
+        # render produces, or the repo already has, stays whose it is, and so
+        # does an object the repo keeps in a file of another name. Nor one
+        # nothing would use: the object behind a need the repo had settled
+        # its own way (`seed_left`) is not laid.
+        unused = named_objects(asked) - named_objects(spec)
         for name, text in (seed.get("base_files") or {}).items():
             relpath = f"k8s/base/{name}"
             if relpath in files or (base_dir / name).exists():
+                continue
+            if _rendered_targets({relpath: text}) & (rendered_targets | unused):
                 continue
             files[relpath] = text
             ctx.seed_files.append(name)
@@ -827,12 +838,17 @@ def _seed_summary(ctx: ProvisionContext) -> str:
     """What the caller that connected the app asked this pull request to
     carry beside Gojira's own render, and its own words for why: the reviewer
     is agreeing to that too."""
-    if not ctx.seed_needs and not ctx.seed_files:
+    if not ctx.seed_needs and not ctx.seed_files and not ctx.seed_left:
         return ""
     lines = ["Asked for by the service that connected this app, beside what Gojira renders:"]
     if ctx.seed_needs:
         lines.append("- in `gojira.yaml`: " + ", ".join(f"`{k}`" for k in ctx.seed_needs))
     lines += [f"- `k8s/base/{name}`" for name in ctx.seed_files]
+    if ctx.seed_left:
+        lines.append(
+            "- asked for and not changed, because this repo already says otherwise: "
+            + ", ".join(f"`{k}`" for k in ctx.seed_left)
+        )
     # Quoted, line by line: the caller's words must not read as Gojira's.
     note = (_setup_seed(ctx.app).get("note") or "").strip()
     quoted = "\n".join(f"> {line}".rstrip() for line in note.splitlines())

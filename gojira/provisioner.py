@@ -87,10 +87,12 @@ class ProvisionContext:
     # it left them alone: the setup PR lists them for a human (finding #96).
     stale_kept: list[str] = field(default_factory=list)
     # Set by GenerateArtifacts when the caller's seed shaped this render (a
-    # repo with no contract and no manifests): the contract keys it set and
-    # the base files it added, for the setup PR to say so to its reviewer.
+    # repo with no contract yet): the contract keys it added to, the base
+    # files it added, and what it asked for that the repo had already settled
+    # its own way, for the setup PR to say so to its reviewer.
     seed_needs: list[str] = field(default_factory=list)
     seed_files: list[str] = field(default_factory=list)
+    seed_left: list[str] = field(default_factory=list)
 
 
 class Step(Protocol):

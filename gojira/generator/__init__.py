@@ -941,6 +941,79 @@ def seed_needs(needs: dict) -> dict:
     return read
 
 
+def seed_beside(asked: dict, own: dict) -> tuple[dict, list[str], list[str]]:
+    """A seed's needs (as `seed_needs` returned them) laid beside what a repo
+    already says for itself (`infer_app_needs`), never over it. Returns the
+    GeneratorSpec updates, the contract keys the seed added to, and what it
+    asked for that the repo had settled another way, for the setup PR to say.
+
+    One value per key (`service_account`, `data_mount`): the repo's stands.
+    A name per entry (`env`, the `*_from` lists, the file mounts): the seed
+    adds the names the repo does not use and the paths it does not mount. A
+    Secret the repo already reads is not read a second time, whichever of
+    the two lists either side put it in. With nothing of the repo's own to
+    read (`own` empty) the seed is the contract, exactly as asked."""
+    updates: dict = {}
+    added: list[str] = []
+    left: list[str] = []
+    contract_key = {"env_vars": "env"}
+
+    def take(key: str, value) -> None:
+        updates[key] = value
+        added.append(contract_key.get(key, key))
+
+    # Where the repo already mounts something: no seed mount lands there.
+    paths = {m.path for k in ("config_mounts", "secret_mounts") for m in own.get(k) or []}
+    paths |= {own["data_mount"].path} if own.get("data_mount") else set()
+
+    for key in ("service_account", "data_mount"):
+        if key not in asked or own.get(key) == asked[key]:
+            continue
+        if own.get(key) or (key == "data_mount" and asked[key].path in paths):
+            left.append(key)
+        else:
+            take(key, asked[key])
+
+    if "env_vars" in asked:
+        mine = dict(own.get("env_vars") or {})
+        fresh = {k: v for k, v in asked["env_vars"].items() if k not in mine}
+        left += [f"env.{k}" for k, v in asked["env_vars"].items() if k in mine and mine[k] != v]
+        if fresh:
+            take("env_vars", {**mine, **fresh})
+
+    read = set(own.get("secrets_from") or []) | set(own.get("secrets_from_optional") or [])
+    for key in ("secrets_from", "secrets_from_optional"):
+        fresh = [n for n in asked.get(key) or [] if n not in read]
+        if fresh:
+            take(key, [*(own.get(key) or []), *fresh])
+    fresh = [n for n in asked.get("config_from") or [] if n not in (own.get("config_from") or [])]
+    if fresh:
+        take("config_from", [*(own.get("config_from") or []), *fresh])
+
+    for key in ("config_mounts", "secret_mounts"):
+        mine = own.get(key) or []
+        fresh = [m for m in asked.get(key) or [] if m.path not in paths]
+        left += [f"{key}.{m.name}" for m in asked.get(key) or [] if m.path in paths and m not in mine]
+        if fresh:
+            take(key, [*mine, *fresh])
+    return updates, sorted(added), sorted(left)
+
+
+def named_objects(needs) -> set[tuple[str, str]]:
+    """(kind, name) of the objects a contract's needs name and expect to
+    find beside the Deployment: the service account, the claim behind
+    `data_mount`, the ConfigMaps read as env or as files. `needs` is a
+    GeneratorSpec, or a mapping of its fields (`seed_needs`' answer)."""
+    get = needs.get if isinstance(needs, dict) else lambda key: getattr(needs, key, None)
+    named = {("ConfigMap", name) for name in get("config_from") or []}
+    named |= {("ConfigMap", m.name) for m in get("config_mounts") or []}
+    if get("service_account"):
+        named.add(("ServiceAccount", get("service_account")))
+    if get("data_mount"):
+        named.add(("PersistentVolumeClaim", get("data_mount").pvc))
+    return named
+
+
 def check_seed_files(base_files: dict) -> None:
     """Refuse a seed file that is not a plain `<name>.yaml` holding named
     core objects of the kinds a seed may add (`SEED_KINDS`): the objects a

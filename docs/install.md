@@ -170,8 +170,12 @@ you. The app page shows each step and links the PR.
 A service that connects apps for other people (a portal, say) and needs a
 little of its own in each one can ask for it in the same call, so the repo's
 owner reviews one PR instead of two. `seed` is read only for a repo that has
-neither a `gojira.yaml` nor a `k8s/` directory; a repo that already has either
-is rendered from what is in it, and the seed is ignored.
+no `gojira.yaml` yet, where the setup PR proposes the first one; a repo with a
+contract is rendered from it, and the seed is ignored. When the repo already
+has deploy files of its own, the seed is laid beside what they say and never
+over it: the repo keeps its own service account, its own volume and its own
+value for a variable, the seed adds the names the repo does not use, and the
+PR lists what was added and what was left as it was.
 
 ```json
 "seed": {
@@ -190,7 +194,10 @@ is rendered from what is in it, and the seed is ignored.
 - `base_files` are added to `k8s/base/` as written and listed in its
   `kustomization.yaml`: at most 8 files of 16 KiB, each one object of kind
   `ServiceAccount`, `PersistentVolumeClaim` or `ConfigMap`. A name Gojira
-  renders itself, or one already in the repo, is left alone.
+  renders itself, or one already in the repo, is left alone; so is an object
+  the repo already holds in another file, and one that backs a need the repo
+  had settled its own way (the seed's service account, say, when the repo
+  runs as its own).
 - `note` is quoted in the setup PR, beside the list of what the seed added.
 
 The call is refused with `422` when a key or a file is not one of those, when

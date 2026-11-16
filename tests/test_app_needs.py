@@ -1054,11 +1054,15 @@ def test_a_seed_shapes_the_one_setup_pr_of_a_repo_with_nothing_of_its_own(tmp_pa
     assert merged.seed_needs == [] and merged.seed_files == []
 
 
-def test_a_seed_is_never_laid_over_what_a_person_wrote(tmp_path):
-    """The seed is for a repo with nothing to read. One with hand-built
-    manifests is adopted from those, one with a contract is read from that,
-    one with only a kustomization of its own keeps it, and in none of them
-    does a caller's seed add a key or a file."""
+def test_a_seed_is_laid_beside_a_repos_own_deploy_files_never_over_them(tmp_path):
+    """A repo that already runs from hand-built manifests used to be asked
+    twice: the setup PR read its deployment and ignored the seed, and the
+    caller came back with a pull request of its own for what it needed. Now
+    the one setup PR carries both. What the repo says for itself stands (its
+    service account, its volume, its value for a variable); the seed adds the
+    names the repo does not use; a seed file is laid only when something
+    will use it; and the PR tells its reviewer which was which. Adopted, so
+    never auto-merged; and once merged, the contract renders to itself."""
     from tests.fakes import FakeGitHubClient
 
     class HandBuilt(FakeGitHubClient):
@@ -1069,30 +1073,136 @@ def test_a_seed_is_never_laid_over_what_a_person_wrote(tmp_path):
             (base / "deployment.yaml").write_text(PROBE_SHAPED)
             (base / "kustomization.yaml").write_text("resources:\n  - deployment.yaml\n")
 
+        def open_pr(self, repo, head, base, title, body):
+            self.body = body
+            return super().open_pr(repo, head, base, title, body)
+
+    seed = {
+        "needs": {
+            **SEED["needs"],
+            "secrets_from": ["watson-pass", "probe-secrets"],
+            "env": {"AGENT_MODEL": "balanced", "LOG_LEVEL": "INFO"},
+            "config_from": ["watson-room"],
+        },
+        "base_files": {
+            **SEED["base_files"],
+            "room.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: watson-room}\ndata: {a: b}\n",
+        },
+        "note": SEED["note"],
+    }
+    gh = HandBuilt()
+    result, app = _onboard(tmp_path, gh, auto_merge=False, seed=seed)
+
+    assert result.completed and app.setup_pr_url and not gh.merged
+    needs = read_app_needs((tmp_path / "gojira.yaml").read_text())
+    # The repo's own word stands...
+    assert needs["service_account"] == "probe"
+    assert needs["data_mount"] == DataMount(pvc="probe-data", path="/data", fs_group=999)
+    assert needs["env_vars"]["LOG_LEVEL"] == "DEBUG"
+    # ...and the seed's is added beside it, a Secret the repo reads named once.
+    assert needs["env_vars"]["AGENT_MODEL"] == "balanced"
+    assert needs["secrets_from"] == ["probe-secrets", "watson-pass"]
+    assert needs["secrets_from_optional"] == ["watson-slack"]
+    assert needs["config_from"] == ["watson-room"]
+    base = tmp_path / "k8s" / "base"
+    # The ConfigMap the contract now names is laid; the service account and
+    # the claim behind needs the repo had settled its own way are not.
+    assert (base / "room.yaml").read_text() == seed["base_files"]["room.yaml"]
+    assert not (base / "serviceaccount.yaml").exists() and not (base / "storage.yaml").exists()
+    resources = yaml.safe_load((base / "kustomization.yaml").read_text())["resources"]
+    assert {"deployment.yaml", "room.yaml"} <= set(resources)
+    assert not {"serviceaccount.yaml", "storage.yaml"} & set(resources)
+    assert "- in `gojira.yaml`: `config_from`, `env`, `secrets_from`, `secrets_from_optional`" in gh.body
+    assert "- `k8s/base/room.yaml`" in gh.body and "serviceaccount.yaml" not in gh.body
+    assert "this repo already says otherwise: `data_mount`, `env.LOG_LEVEL`, `service_account`" in gh.body
+
+    from gojira.config import Config
+    from gojira.provisioner import ProvisionContext
+    from gojira.steps import GenerateArtifacts
+    from tests.fakes import FakeGCPClient
+
+    kept = ("gojira.yaml", "k8s/base/kustomization.yaml", "k8s/base/deployment.yaml", "k8s/base/room.yaml")
+    before = {rel: (tmp_path / rel).read_text() for rel in kept}
+    merged = ProvisionContext(app=app, config=Config(), clients={"gcp": FakeGCPClient()}, workdir=tmp_path,
+                              environments=list(app.environments))
+    GenerateArtifacts().apply(merged)
+    assert {rel: (tmp_path / rel).read_text() for rel in kept} == before
+    assert (merged.seed_needs, merged.seed_files, merged.seed_left) == ([], [], [])
+
+
+def test_a_seed_never_reaches_a_contract_or_an_object_a_person_wrote(tmp_path):
+    """Where a seed stops. A repo with a contract is read from that, and the
+    seed adds no key and no file to it, whatever the contract leaves unsaid.
+    A repo with manifests but no contract keeps every file of its own, and
+    an object it already holds under another file name is not laid a second
+    time (kustomize would refuse the build)."""
+    from tests.fakes import FakeGitHubClient
+
     class Contract(FakeGitHubClient):
         def clone(self, repo, workdir):
             super().clone(repo, workdir)
             (workdir / "gojira.yaml").write_text("name: watson\nclass: agent\n")
+
+    work = tmp_path / "contract"
+    work.mkdir()
+    result, _ = _onboard(work, Contract(), auto_merge=False, seed=SEED)
+    assert result.completed
+    needs = read_app_needs((work / "gojira.yaml").read_text())
+    assert needs.get("service_account") != "agent-watson" and needs.get("data_mount") is None
+    assert "watson-slack" not in needs.get("secrets_from_optional", [])
+    assert not (work / "k8s" / "base" / "storage.yaml").exists()
+
+    own_account = "apiVersion: v1\nkind: ServiceAccount\nmetadata: {name: agent-watson, labels: {mine: yes}}\n"
 
     class OwnBase(FakeGitHubClient):
         def clone(self, repo, workdir):
             super().clone(repo, workdir)
             base = workdir / "k8s" / "base"
             base.mkdir(parents=True)
-            (base / "extra.yaml").write_text("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: extra}\n")
-            (base / "kustomization.yaml").write_text("resources:\n  - extra.yaml\n")
+            (base / "sa.yaml").write_text(own_account)
+            (base / "kustomization.yaml").write_text("resources:\n  - sa.yaml\n")
 
-    for i, gh in enumerate([HandBuilt(), Contract(), OwnBase()]):
-        work = tmp_path / str(i)
-        work.mkdir()
-        result, _ = _onboard(work, gh, auto_merge=False, seed=SEED)
-        assert result.completed
-        needs = read_app_needs((work / "gojira.yaml").read_text())
-        assert needs.get("service_account") != "agent-watson"
-        assert "watson-slack" not in needs.get("secrets_from_optional", [])
-        mount = needs.get("data_mount")
-        assert mount is None or mount.pvc != "agent-watson-data"
-        assert not (work / "k8s" / "base" / "storage.yaml").exists()
+    work = tmp_path / "own"
+    work.mkdir()
+    result, _ = _onboard(work, OwnBase(), auto_merge=False, seed=SEED)
+    assert result.completed
+    base = work / "k8s" / "base"
+    assert (base / "sa.yaml").read_text() == own_account
+    assert not (base / "serviceaccount.yaml").exists()
+    assert (base / "storage.yaml").read_text() == SEED["base_files"]["storage.yaml"]
+    assert read_app_needs((work / "gojira.yaml").read_text())["service_account"] == "agent-watson"
+    resources = yaml.safe_load((base / "kustomization.yaml").read_text())["resources"]
+    assert "sa.yaml" in resources and "storage.yaml" in resources and "serviceaccount.yaml" not in resources
+
+
+def test_seed_beside_adds_names_and_leaves_what_is_settled():
+    """The merge on its own: with nothing of the repo's, the seed as asked;
+    with something, single values stand, names are added once, and a mount
+    never lands on a path the repo already mounts."""
+    from gojira.generator import ConfigMount, SecretMount, seed_beside, seed_needs
+
+    asked = seed_needs({
+        **SEED["needs"],
+        "config_mounts": [{"name": "room", "path": "/etc/room"}],
+        "secret_mounts": [{"name": "key", "path": "/mine"}, {"name": "pem", "path": "/etc/pem"}],
+    })
+    updates, added, left = seed_beside(asked, {})
+    assert updates == asked and left == [] and added == sorted(
+        {"env" if k == "env_vars" else k for k in asked})
+
+    own = {
+        "service_account": "agent-watson",                      # the same word: nothing to say
+        "secrets_from_optional": ["watson-pass"],               # read already, in the other list
+        "data_mount": DataMount(pvc="mine", path="/mine"),
+        "config_mounts": [ConfigMount(name="other", path="/etc/room")],
+    }
+    updates, added, left = seed_beside(asked, own)
+    assert "service_account" not in updates and "data_mount" not in updates and "secrets_from" not in updates
+    assert updates["secrets_from_optional"] == ["watson-pass", "watson-slack"]
+    assert updates["secret_mounts"] == [SecretMount(name="pem", path="/etc/pem")]
+    assert "config_mounts" not in updates
+    assert added == ["env", "secret_mounts", "secrets_from_optional"]
+    assert left == ["config_mounts.room", "data_mount", "secret_mounts.key"]
 
 
 def test_a_seed_is_read_as_sent_or_refused():
