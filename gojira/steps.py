@@ -38,7 +38,7 @@ from gojira.generator import (
     render,
     seed_needs,
 )
-from gojira.github import SETUP_BRANCH, GitHubClient
+from gojira.github import SETUP_BRANCH, GitHubClient, GitHubError
 from gojira.k8s import K8sError, KubectlClient, kustomize_build
 from gojira.models import App, AppStatus, Environment
 from gojira.opinions import WORKLOAD_CLASSES
@@ -419,7 +419,9 @@ class GenerateArtifacts:
             # seed the contract the setup PR proposes for review.
             old_deployment = ctx.workdir / "k8s" / "base" / "deployment.yaml"
             if old_deployment.exists():
-                ctx.adopted = True  # human content: MergeSetupPr refuses to auto-merge
+                # Human content: MergeSetupPr refuses to auto-merge it unless
+                # the owner handed the repo over.
+                ctx.adopted = True
                 inferred = infer_app_needs(old_deployment.read_text())
                 if inferred:
                     spec = spec.model_copy(update=inferred)
@@ -815,12 +817,26 @@ class OpenSetupPr:
                 + _identity_summary(ctx)
                 + _seed_summary(ctx)
                 + _stale_summary(ctx)
-                + "Merge to enable push-to-deploy: merge to main → dev, "
-                "tag → qa, manual approval → prod."
+                + _merge_summary(ctx)
             ),
         )
         ctx.app.setup_pr_url = url
         return url
+
+
+def _merge_summary(ctx: ProvisionContext) -> str:
+    """Who merges this pull request. For a handed-over repo nobody is being
+    asked, and the record should say whose word that was."""
+    flow = "merge to main → dev, tag → qa, manual approval → prod."
+    if ctx.app.handed_over:
+        return (
+            "Gojira merges this itself. The service that connected this app says "
+            "its owner handed the repo's deploy files (`gojira.yaml`, `k8s/`, the "
+            "`gojira-*` workflows) to the platform, so nobody is asked to review "
+            "it. A branch rule that refuses the merge leaves it open for a person.\n\n"
+            f"Push-to-deploy from here: {flow}"
+        )
+    return f"Merge to enable push-to-deploy: {flow}"
 
 
 def _seed_summary(ctx: ProvisionContext) -> str:
@@ -876,11 +892,14 @@ def _identity_summary(ctx: ProvisionContext) -> str:
 
 
 class MergeSetupPr:
-    """Auto-merge the setup PR when the app opted in (caller-created repos).
+    """Auto-merge the setup PR when the app opted in.
 
     The one-click contract: a programmatic caller that authored the repo has
-    no human content to protect, so the review gate is theirs to waive. Like
-    OpenSetupPr, re-decides against the real world each run.
+    no human content to protect, so the review gate is theirs to waive. A repo
+    with human content is merged only when the caller says its owner handed
+    it over (`App.handed_over`); the waiver is the owner's then, given to the
+    caller before it connected the app. Like OpenSetupPr, re-decides against
+    the real world each run.
     """
 
     name = "merge_setup_pr"
@@ -891,13 +910,14 @@ class MergeSetupPr:
             return "auto-merge not requested"
         if not ctx.app.setup_pr_url:
             return "no setup PR to merge"
-        if ctx.adopted:
+        if ctx.adopted and not ctx.app.handed_over:
             # Finding #22: a programmatic caller asked for auto-merge on a
             # repo it did NOT author — hand-built manifests, no contract. The
             # one-click contract above only waives review for repos with no
             # human content; this one regenerates a human's k8s/ (and can
             # rename their objects out from under other overlays). The PR
-            # stays open for a person; the app waits in awaiting_pr.
+            # stays open for a person; the app waits in awaiting_pr. Only the
+            # owner's own hand-over, stated by the caller, lifts this.
             log.warning("auto-merge refused for %s: adopted a repo with hand-built "
                         "manifests; the setup PR %s needs a human review",
                         ctx.app.name, ctx.app.setup_pr_url)
@@ -925,7 +945,20 @@ class MergeSetupPr:
             ctx.app.status = AppStatus.ACTIVE  # load-bearing for direct apply() callers
             ctx.app.setup_pr_url = None
             return "already merged"
-        gh.merge_pr(repo, url)
+        try:
+            gh.merge_pr(repo, url)
+        except GitHubError as exc:
+            if not ctx.app.handed_over:
+                raise
+            # A handed-over repo is still its owner's on GitHub, and a branch
+            # rule there (a required review, a required check) outranks the
+            # hand-over. That is a person's merge, not a failed provision:
+            # the PR stays open and the app waits in awaiting_pr, the state
+            # every caller already knows how to wait on. The next run tries
+            # again.
+            log.warning("handed-over app %s: GitHub refused the merge of %s (%s); "
+                        "left open for a person", ctx.app.name, url, exc)
+            return f"left open: GitHub refused the merge of {url}"
         # Load-bearing for direct apply() callers; provision_app's recompute
         # derives the same status from the cleared setup_pr_url below.
         ctx.app.status = AppStatus.ACTIVE

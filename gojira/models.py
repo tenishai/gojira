@@ -77,6 +77,12 @@ class App(Base):
     # Caller-created repos (cortex) opt in to auto-merging the setup PR — the
     # one-click deploy contract. Human-connected repos keep the review gate.
     auto_merge_setup_pr: Mapped[bool] = mapped_column(default=False, server_default="0")
+    # The caller that connected this app says the repo's owner handed its
+    # deploy files to the platform: `gojira.yaml`, `k8s/` and the generated
+    # workflows are Gojira's to write there, and its pull requests are merged
+    # without a person. It lifts the two refusals auto-merge alone keeps (an
+    # adopted repo, a seed). A repo nobody handed over keeps the review gate.
+    handed_over: Mapped[bool] = mapped_column(default=False, server_default="0")
     # What the identity steps made or adopted for this app, so delete can
     # reverse exactly that without re-reading the contract:
     # {"gsa_by_project": {project: email}, "adopted": bool, "roles": [...],

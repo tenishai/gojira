@@ -419,14 +419,22 @@ def create_app(
         workload_class: str
         environments: list[EnvIn] = Field(min_length=1)
         auto_merge_setup_pr: bool = False
+        # The caller's statement that the repo's owner handed its deploy files
+        # to the platform (App.handed_over). Never inferred: auto-merge alone
+        # is what a caller sets for a repo it wrote, and finding #22 was that
+        # flag arriving for a repo somebody else had.
+        handed_over: bool = False
         seed: SeedIn | None = None
 
         @model_validator(mode="after")
         def _a_seed_is_reviewed(self):
             # A seed is the caller's content in a repo it did not write; the
-            # setup PR is where a person agrees to it.
-            if self.seed is not None and self.auto_merge_setup_pr:
+            # setup PR is where a person agrees to it, unless the owner has
+            # already handed the repo over.
+            if self.seed is not None and self.auto_merge_setup_pr and not self.handed_over:
                 raise ValueError("seed cannot be combined with auto_merge_setup_pr")
+            if self.handed_over and not self.auto_merge_setup_pr:
+                raise ValueError("handed_over needs auto_merge_setup_pr")
             return self
 
         @field_validator("environments")
@@ -496,6 +504,7 @@ def create_app(
                 installation_id=installation_id,
             )
             app_obj.auto_merge_setup_pr = body.auto_merge_setup_pr
+            app_obj.handed_over = body.handed_over
             if body.seed is not None:
                 app_obj.setup_seed_json = json.dumps(body.seed.model_dump(), sort_keys=True)
             session.commit()
@@ -574,6 +583,7 @@ def create_app(
                 "status": app_obj.status,
                 "setup_pr_url": app_obj.setup_pr_url,
                 "auto_merge_setup_pr": app_obj.auto_merge_setup_pr,
+                "handed_over": app_obj.handed_over,
                 "steps": [
                     {"name": s.step_name, "status": s.status, "error": s.error}
                     for s in app_obj.steps
@@ -608,8 +618,16 @@ def create_app(
             return JSONResponse({"error": "not found"}, status_code=404)
         return JSONResponse(body)
 
+    class ProvisionIn(BaseModel):
+        handed_over: bool = False
+
     @app.post("/api/v1/apps/{app_id}/provision")
-    def api_provision(app_id: int, request: Request, session: Session = Depends(get_session)):
+    def api_provision(
+        app_id: int,
+        request: Request,
+        body: ProvisionIn | None = None,
+        session: Session = Depends(get_session),
+    ):
         # The automation-tier twin of the UI's Provision-again button: that
         # form route sits behind the IAP-identity gate, which a
         # server-to-server caller can never satisfy — so programmatic
@@ -620,6 +638,14 @@ def create_app(
         app_obj = session.get(models.App, app_id)
         if app_obj is None:
             return JSONResponse({"error": "not found"}, status_code=404)
+        if body is not None and body.handed_over and not app_obj.handed_over:
+            # An app connected before its owner handed the repo over: the
+            # caller says so now, and this run and every later one merge
+            # their own pull request. One way only; nothing here hands a
+            # repo back.
+            app_obj.auto_merge_setup_pr = True
+            app_obj.handed_over = True
+            session.commit()
         service.start_provision(
             request.app.state.session_factory,
             app_id,
