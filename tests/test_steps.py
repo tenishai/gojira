@@ -902,6 +902,59 @@ def test_cluster_roles_step_is_quiet_without_any(session):
     assert ctx.app.run_identity_json is None
 
 
+def _label_ctx(session, labels, install_labels=None, multiproject=True):
+    ctx, _ = _identity_ctx(session, multiproject=multiproject)
+    ctx.spec = ctx.spec.model_copy(update={"identity": None, "namespace_labels": dict(labels)})
+    ctx.config = Config.model_validate({"defaults": {"namespace_labels": dict(install_labels or {})}})
+    kube = KubectlFactory()
+    for env in ctx.environments:  # ensure_namespace made these earlier, with the install's labels
+        kube(env.cluster).namespaces[env.namespace] = {**MANAGED_LABEL, **(install_labels or {})}
+    ctx.clients["kubectl_for"] = kube
+    return ctx, kube
+
+
+def test_namespace_labels_are_added_on_every_environments_namespace(session):
+    from gojira.steps import LabelNamespaces
+
+    ctx, kube = _label_ctx(session, {"sero.dev/caller": "true"}, install_labels={"example.com/team": "sre"})
+    assert LabelNamespaces().check(ctx) is None
+    assert LabelNamespaces().apply(ctx) == "dev:clips, prod:clips"
+    for env in ctx.environments:
+        ns = kube(env.cluster).namespaces["clips"]
+        assert ns["sero.dev/caller"] == "true"
+        assert ns["example.com/team"] == "sre" and ns["gojira.dev/managed"] == "true"  # kept
+    assert LabelNamespaces().check(ctx) == "sero.dev/caller=true"  # idempotent
+    assert not any(c.startswith("ensure_ns") for k in kube.by_cluster.values() for c in k.calls)
+
+
+def test_namespace_labels_missing_on_one_cluster_are_re_applied(session):
+    from gojira.steps import LabelNamespaces
+
+    ctx, kube = _label_ctx(session, {"sero.dev/caller": "true"})
+    LabelNamespaces().apply(ctx)
+    del kube(ctx.environments[1].cluster).namespaces["clips"]["sero.dev/caller"]
+    assert LabelNamespaces().check(ctx) is None
+
+
+def test_namespace_labels_step_is_quiet_without_any(session):
+    from gojira.steps import LabelNamespaces
+
+    ctx, kube = _label_ctx(session, {})
+    assert LabelNamespaces().check(ctx) == "no namespace labels asked for"
+    assert all(not k.calls for k in kube.by_cluster.values())
+
+
+def test_a_label_the_install_sets_is_not_the_contracts_to_set(session):
+    from gojira.steps import LabelNamespaces
+
+    ctx, _ = _label_ctx(session, {"example.com/team": "data"}, install_labels={"example.com/team": "sre"})
+    with pytest.raises(ValueError, match="example.com/team is set by this install"):
+        LabelNamespaces().check(ctx)
+    ctx, _ = _label_ctx(session, {"gojira.dev/managed": "false"})
+    with pytest.raises(ValueError, match="gojira.dev/managed"):
+        LabelNamespaces().apply(ctx)
+
+
 def test_a_base_with_a_cluster_scoped_object_is_refused_before_the_setup_pr(tmp_path, session):
     from gojira.steps import IdentityRefused, _refuse_cluster_scoped_base
 

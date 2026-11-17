@@ -274,6 +274,13 @@ sets storage limits itself. The capture PR records them too.
   `GOJIRA_GRANTABLE_CLUSTER_ROLES`, and the app says `cluster_roles:
   [that-name]`. Gojira binds the app's ServiceAccount to it on every
   environment's cluster. `k8s/base` must hold only namespaced objects.
+- **Apps whose namespace must carry a label** (a secrets service that admits
+  a caller by a label on its namespace): the app says `namespace_labels:
+  { sero.dev/caller: "true" }` and Gojira sets it on the namespace in every
+  environment, on every provision. The install's own labels
+  (`GOJIRA_NAMESPACE_LABELS`, the managed label) are not an app's to change;
+  a contract that names one is refused. A label the contract drops is left
+  in place: remove it by hand if it must go.
 - **Upgrading an install from before this** (October 2026): give the App
   the Variables permission first ([github-app-setup.md](github-app-setup.md)
   §1); existing apps keep their old workflows until you press **Provision**

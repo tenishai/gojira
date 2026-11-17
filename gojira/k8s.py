@@ -49,6 +49,10 @@ class KubectlClient(ABC):
     def ensure_namespace(self, namespace: str, labels: dict[str, str]) -> None: ...
 
     @abstractmethod
+    def label_namespace(self, namespace: str, labels: dict[str, str]) -> None:
+        """Set these labels on an existing namespace, keeping the others."""
+
+    @abstractmethod
     def delete_namespace(self, namespace: str) -> None: ...
 
     @abstractmethod
@@ -125,6 +129,14 @@ class KubectlCLI(KubectlClient):
         result = self._run("apply", "-f", "-", stdin=manifest)
         if result.returncode != 0:
             raise K8sError(f"kubectl apply namespace {namespace} failed: {result.stderr}")
+
+    def label_namespace(self, namespace: str, labels: dict[str, str]) -> None:
+        # `label --overwrite` adds or changes the named labels only; an apply of a
+        # Namespace manifest would also work but shares the object with ensure_namespace.
+        pairs = [f"{k}={v}" for k, v in labels.items()]
+        result = self._run("label", "--overwrite", "namespace", namespace, *pairs)
+        if result.returncode != 0:
+            raise K8sError(f"kubectl label namespace {namespace} failed: {result.stderr}")
 
     def delete_namespace(self, namespace: str) -> None:
         # --wait=false: return immediately; termination runs async on the cluster.

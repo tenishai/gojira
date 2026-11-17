@@ -274,6 +274,13 @@ def read_app_needs(gojira_yaml_text: str) -> dict:
         needs["identity"] = Identity.model_validate(doc["identity"])
     if isinstance(doc.get("cluster_roles"), list):
         needs["cluster_roles"] = [str(r) for r in doc["cluster_roles"] if r]
+    if isinstance(doc.get("namespace_labels"), dict):
+        # A YAML `true` is a bool; a label value is a string, and the gate that
+        # reads it (a NetworkPolicy, a caller allowlist) compares "true".
+        needs["namespace_labels"] = {
+            str(k): (str(v).lower() if isinstance(v, bool) else str(v))
+            for k, v in doc["namespace_labels"].items() if k
+        }
     if isinstance(doc.get("build_args"), dict):
         needs["build_args"] = {str(k): str(v) for k, v in doc["build_args"].items() if k}
     if isinstance(doc.get("image"), str) and doc["image"].strip():
@@ -541,6 +548,13 @@ class GeneratorSpec(BaseModel):
     # identity cannot create cluster-scoped RBAC and must not be able to
     # (issue #86), so the role is the operator's and the binding is Gojira's.
     cluster_roles: list[str] = []
+    # Labels the app's namespace must carry on every environment's cluster, for
+    # what gates on them (2026-11-17: sero admits a machine caller by the label
+    # `sero.dev/caller: "true"` on its namespace; the label had been hand-made on
+    # two namespaces and would not survive a reinstall). Gojira adds them to the
+    # namespace it made; the install's own labels (defaults.namespace_labels,
+    # the managed label) are not the app's to set.
+    namespace_labels: dict[str, str] = {}
     data_mount: DataMount | None = None
     config_mounts: list[ConfigMount] = []  # ConfigMaps read as files
     secret_mounts: list[SecretMount] = []  # Secrets read as files (key files)

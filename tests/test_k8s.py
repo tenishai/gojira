@@ -50,6 +50,22 @@ def test_ensure_namespace_applies_manifest_with_labels():
     assert "gojira.dev/managed: 'true'" in stdin
 
 
+def test_label_namespace_overwrites_only_the_named_labels():
+    runner = FakeRunner(CommandResult(0, "namespace/clips labeled", ""))
+    cli = KubectlCLI("ctx", runner=runner)
+    cli.label_namespace("clips", {"sero.dev/caller": "true"})
+    args, stdin = runner.calls[0]
+    assert args[2:] == ["label", "--overwrite", "namespace", "clips", "sero.dev/caller=true"]
+    assert stdin is None
+
+
+def test_label_namespace_raises_on_failure():
+    runner = FakeRunner(CommandResult(1, "", "forbidden"))
+    cli = KubectlCLI("ctx", runner=runner)
+    with pytest.raises(K8sError, match="label namespace clips failed"):
+        cli.label_namespace("clips", {"a": "b"})
+
+
 def test_ensure_namespace_raises_on_failure():
     runner = FakeRunner(CommandResult(1, "", "forbidden"))
     cli = KubectlCLI("ctx", runner=runner)
