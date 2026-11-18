@@ -70,6 +70,22 @@ GOLDEN_CASES = {
 }
 
 
+def test_internal_access_renders_the_private_endpoint():
+    """A cluster registered with access internal: the workflows reach the
+    control plane by its private IP (the runner is inside the network) and
+    never ask for the DNS endpoint. Default clusters keep the golden text."""
+    spec = GOLDEN_CASES["web"]
+    internal = spec.model_copy(update={
+        "environments": [e.model_copy(update={"access": "internal"}) for e in spec.environments],
+    })
+    files = render(internal)
+    for name in (".github/workflows/gojira-ci.yaml", ".github/workflows/gojira-promote.yaml"):
+        assert "use_internal_ip: true" in files[name]
+        assert "use_dns_based_endpoint" not in files[name]
+    for name in (".github/workflows/gojira-ci.yaml", ".github/workflows/gojira-promote.yaml"):
+        assert "use_internal_ip" not in render(spec)[name]
+
+
 @pytest.mark.parametrize("case", GOLDEN_CASES)
 def test_golden(case):
     files = render(GOLDEN_CASES[case])

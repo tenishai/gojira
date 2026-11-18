@@ -91,6 +91,37 @@ def test_register_cluster_enables_dns_access_first(session):
     assert "enable_dns:gke-2" not in already.calls  # already on: no cluster update
 
 
+def test_register_cluster_with_internal_access_probes_the_private_endpoint(session):
+    gcp = FakeGCPClient()
+    c = service.register_cluster(
+        session, name="prod", gcp_project="proj-a", location="us-central1",
+        gke_cluster="prod-gke", gcp=gcp, access="internal",
+    )
+    assert c.access == "internal"
+    assert gcp.cred_access["prod-gke"] == "internal"
+    assert not any(x.startswith("enable_dns") for x in gcp.calls)  # the DNS endpoint stays closed
+
+    with pytest.raises(ValueError, match="dns, internal"):
+        service.register_cluster(
+            session, name="x", gcp_project="proj-a", location="us-central1",
+            gke_cluster="x-gke", gcp=gcp, access="public",
+        )
+
+
+def test_set_cluster_access_probes_then_records(session):
+    gcp = FakeGCPClient()
+    c = service.register_cluster(
+        session, name="dev", gcp_project="proj-a", location="us-central1",
+        gke_cluster="dev-gke", gcp=gcp,
+    )
+    assert c.access == "dns"
+    service.set_cluster_access(session, c, "internal", gcp=gcp)
+    assert c.access == "internal" and gcp.cred_access["dev-gke"] == "internal"
+    with pytest.raises(ValueError):
+        service.set_cluster_access(session, c, "vpn", gcp=gcp)
+    assert c.access == "internal"  # a refused value changes nothing
+
+
 # --- connect_app -------------------------------------------------------------
 
 

@@ -69,8 +69,14 @@ step "1/5 cluster credentials ($CLUSTER @ $PROJECT/$REGION)"
 # IAM-authenticated DNS endpoint (brownfield clusters often have no public
 # endpoint and a VPN-only private one; the operator machine may be on
 # neither). Requires allowExternalTraffic on the cluster's dnsEndpointConfig.
+# GOJIRA_CLUSTER_ACCESS=internal: this machine is inside the cluster's network
+# (VPN); use the private endpoint and leave the DNS endpoint closed.
+case "${GOJIRA_CLUSTER_ACCESS:-}" in
+  internal) ENDPOINT_FLAG=--internal-ip ;;
+  *) ENDPOINT_FLAG="${GOJIRA_DNS_ENDPOINT:+--dns-endpoint}" ;;
+esac
 gcloud container clusters get-credentials "$CLUSTER" --region "$REGION" --project "$PROJECT" \
-  ${GOJIRA_DNS_ENDPOINT:+--dns-endpoint}
+  ${ENDPOINT_FLAG:-}
 
 step "2/5 build + push image via Cloud Build (avoids the ARM/amd64 trap)"
 gcloud services enable cloudbuild.googleapis.com --project "$PROJECT" --quiet

@@ -108,7 +108,11 @@ jobs:
           cluster_name: {{ d.v(env, 'GKE_CLUSTER') }}
           location: {{ d.v(env, 'LOCATION') }}
           project_id: {{ d.v(env, 'PROJECT') }}
+{% if env.access == 'internal' %}
+          use_internal_ip: true  # the cluster is registered with internal access; see gojira-ci.yaml
+{% else %}
           use_dns_based_endpoint: true  # see gojira-ci.yaml (finding #14)
+{% endif %}
 
 {{ d.deploy_step(env.name, env.namespace, spec.app, '$GITHUB_REF_NAME', is_cron, spec.ksa_name if spec.identity else '') }}
 {% endfor %}

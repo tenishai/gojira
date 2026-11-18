@@ -1145,7 +1145,39 @@ def test_api_list_clusters(client, session_factory):
     _register_three(session_factory)
     clusters = client.get("/api/v1/clusters").json()["clusters"]
     assert {c["name"] for c in clusters} >= {"dev"}
-    assert {"name", "gcp_project", "location", "gke_cluster", "ar_repo"} == set(clusters[0])
+    assert {"name", "gcp_project", "location", "gke_cluster", "ar_repo", "access"} == set(clusters[0])
+    assert clusters[0]["access"] == "dns"
+
+
+def test_register_cluster_form_takes_access_and_the_page_shows_it(client):
+    r = client.post(
+        "/clusters",
+        data={"name": "prod", "gcp_project": "proj-b", "location": "us-east4",
+              "gke_cluster": "prod-gke", "ar_repo": "", "access": "internal"},
+        follow_redirects=True,
+    )
+    assert r.status_code == 200
+    assert '<option value="internal" selected>' in r.text
+    assert client.get("/api/v1/clusters").json()["clusters"][0]["access"] == "internal"
+
+
+def test_api_patch_cluster_access(client, session_factory):
+    _register_three(session_factory)
+    r = client.patch("/api/v1/clusters/dev", json={"access": "internal"})
+    assert r.status_code == 200 and r.json() == {"name": "dev", "access": "internal"}
+    assert next(c for c in client.get("/api/v1/clusters").json()["clusters"] if c["name"] == "dev")["access"] == "internal"
+    assert client.patch("/api/v1/clusters/dev", json={"access": "public"}).status_code == 422
+    assert client.patch("/api/v1/clusters/nope", json={"access": "dns"}).status_code == 404
+
+
+def test_api_patch_cluster_access_is_token_gated(session_factory, clients):
+    cfg = Config()
+    cfg.auth.api_token = "s3cr3t"
+    c = TestClient(create_app(session_factory, clients=clients, config=cfg))
+    _register_three(session_factory)
+    assert c.patch("/api/v1/clusters/dev", json={"access": "internal"}).status_code == 401
+    assert c.patch("/api/v1/clusters/dev", json={"access": "internal"},
+                   headers={"Authorization": "Bearer s3cr3t"}).status_code == 200
 
 
 def test_api_list_routes_are_token_gated(session_factory, clients):

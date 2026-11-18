@@ -113,10 +113,17 @@ jobs:
           cluster_name: {{ d.v(env, 'GKE_CLUSTER') }}
           location: {{ d.v(env, 'LOCATION') }}
           project_id: {{ d.v(env, 'PROJECT') }}
+{% if env.access == 'internal' %}
+          # The cluster is registered with internal access: this runner sits
+          # inside its network and reaches the private endpoint; the DNS
+          # endpoint stays closed to the internet.
+          use_internal_ip: true
+{% else %}
           # IAM-authenticated DNS endpoint: works for private control planes
           # (GitHub runners can't reach a private IP) and public ones alike.
           # The provisioner ensures DNS access is enabled on every registered
           # cluster (finding #14).
           use_dns_based_endpoint: true
+{% endif %}
 
 {{ d.deploy_step(env.name, env.namespace, spec.app, '${GITHUB_SHA::12}', is_cron, spec.ksa_name if spec.identity else '') }}

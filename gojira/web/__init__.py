@@ -134,6 +134,7 @@ def create_app(
         location: str = Form(...),
         gke_cluster: str = Form(...),
         ar_repo: str = Form(""),
+        access: str = Form("dns"),
     ):
         try:
             service.register_cluster(
@@ -144,10 +145,28 @@ def create_app(
                 gke_cluster=gke_cluster,
                 ar_repo=ar_repo or None,
                 gcp=request.app.state.clients.gcp,
+                access=access,
             )
         except Exception as exc:  # connectivity check or DB error → show it
             log.warning("cluster registration failed: %s", exc)
             return RedirectResponse(f"/clusters?error=Registration failed: {exc}", status_code=303)
+        return RedirectResponse("/clusters", status_code=303)
+
+    @app.post("/clusters/{cluster_id}/access")
+    def set_cluster_access(
+        cluster_id: int,
+        request: Request,
+        session: Session = Depends(get_session),
+        access: str = Form(...),
+    ):
+        cluster = session.get(models.Cluster, cluster_id)
+        if cluster is None:
+            return RedirectResponse("/clusters?error=no such cluster", status_code=303)
+        try:
+            service.set_cluster_access(session, cluster, access, gcp=request.app.state.clients.gcp)
+        except Exception as exc:
+            log.warning("cluster %s access change failed: %s", cluster.name, exc)
+            return RedirectResponse(f"/clusters?error=Access change failed: {exc}", status_code=303)
         return RedirectResponse("/clusters", status_code=303)
 
     @app.get("/connect", response_class=HTMLResponse)
@@ -563,11 +582,39 @@ def create_app(
                         "location": c.location,
                         "gke_cluster": c.gke_cluster,
                         "ar_repo": c.ar_repo,
+                        "access": c.access,
                     }
                     for c in service.list_clusters(session)
                 ]
             }
         )
+
+    class ClusterAccessIn(BaseModel):
+        access: str
+
+    @app.patch("/api/v1/clusters/{name}")
+    def api_set_cluster_access(
+        name: str,
+        body: ClusterAccessIn,
+        request: Request,
+        session: Session = Depends(get_session),
+    ):
+        """Change how a registered cluster is reached ("dns" or "internal").
+        Probed like a registration; the generated workflows follow at each
+        app's next provision. The automation twin of the clusters page's
+        form, under the same bearer gate as the rest of /api/v1."""
+        if err := auth.api_token_error(request, request.app.state.config.auth):
+            return err
+        cluster = session.query(models.Cluster).filter_by(name=name).one_or_none()
+        if cluster is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        try:
+            service.set_cluster_access(session, cluster, body.access, gcp=request.app.state.clients.gcp)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+        except Exception as exc:
+            return JSONResponse({"error": f"cluster unreachable with access {body.access!r}: {exc}"}, status_code=409)
+        return JSONResponse({"name": cluster.name, "access": cluster.access})
 
     @app.get("/api/v1/apps/{app_id}")
     def api_app_status(app_id: int, request: Request, session: Session = Depends(get_session)):

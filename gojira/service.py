@@ -27,6 +27,7 @@ from gojira.github import CI_WORKFLOW, GhCLI, GitHubAppClient, GitHubClient
 from gojira.installations import DbInstallationResolver
 from gojira.k8s import KubectlCLI, KubectlClient, kustomize_build
 from gojira.models import (
+    CLUSTER_ACCESS,
     App,
     AppStatus,
     Cluster,
@@ -85,7 +86,7 @@ class ProvisionClients:
 
         def kubectl_for(cluster: Cluster) -> KubectlClient:
             ctx = gcp.get_gke_credentials(
-                cluster.gcp_project, cluster.location, cluster.gke_cluster
+                cluster.gcp_project, cluster.location, cluster.gke_cluster, cluster.access
             )
             return KubectlCLI(context=ctx)
 
@@ -105,30 +106,57 @@ def register_cluster(
     gke_cluster: str,
     ar_repo: str | None = None,
     gcp: GCPClient | None = None,
+    access: str = "dns",
 ) -> Cluster:
     """Register a deploy target. If a GCP client is given, validate connectivity
     by fetching credentials first (raises if the cluster is unreachable).
 
-    Credentials are fetched over GKE's DNS-based endpoint — the only path
-    that works for private control planes off-VPC and from CI runners
-    (finding #14) — so that endpoint is enabled here, at registration, not
-    first at provision time: a fresh cluster with it off used to fail
-    registration with a bare gcloud error and nothing saying why."""
+    With access "dns" (the default) credentials are fetched over GKE's
+    DNS-based endpoint — the path that works for private control planes
+    off-VPC and from GitHub-hosted runners (finding #14) — so that endpoint is
+    enabled here, at registration, not first at provision time: a fresh
+    cluster with it off used to fail registration with a bare gcloud error
+    and nothing saying why. With "internal" the private endpoint is used and
+    the DNS endpoint is left alone: Gojira and its runners sit inside the
+    cluster's network, and the control plane stays closed."""
+    access = check_cluster_access(access)
     if gcp is not None:
-        if not gcp.dns_access_enabled(gcp_project, location, gke_cluster):
+        if access == "dns" and not gcp.dns_access_enabled(gcp_project, location, gke_cluster):
             log.info("enabling DNS-based control-plane access on %s", gke_cluster)
             gcp.enable_dns_access(gcp_project, location, gke_cluster)
-        gcp.get_gke_credentials(gcp_project, location, gke_cluster)
+        gcp.get_gke_credentials(gcp_project, location, gke_cluster, access)
     cluster = Cluster(
         name=name,
         gcp_project=gcp_project,
         location=location,
         gke_cluster=gke_cluster,
         ar_repo=ar_repo or default_ar_repo(gcp_project, location),
+        access=access,
     )
     session.add(cluster)
     session.commit()
     log.info("registered cluster %s (%s/%s)", name, gcp_project, gke_cluster)
+    return cluster
+
+
+def check_cluster_access(access: str) -> str:
+    """The access mode as the DB takes it, or ValueError naming the choices."""
+    if access not in CLUSTER_ACCESS:
+        raise ValueError(f"access must be one of {', '.join(CLUSTER_ACCESS)}, not {access!r}")
+    return access
+
+
+def set_cluster_access(session: Session, cluster: Cluster, access: str, gcp: GCPClient | None = None) -> Cluster:
+    """Change how a registered cluster is reached. Probed first like a
+    registration (an unreachable private endpoint is refused here, not found
+    at the next deploy); generated workflows follow at each app's next
+    provision, since the access mode is rendered into them."""
+    access = check_cluster_access(access)
+    if gcp is not None:
+        gcp.get_gke_credentials(cluster.gcp_project, cluster.location, cluster.gke_cluster, access)
+    cluster.access = access
+    session.commit()
+    log.info("cluster %s: access %s", cluster.name, access)
     return cluster
 
 
