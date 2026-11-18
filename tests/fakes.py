@@ -166,6 +166,10 @@ class FakeKubectlClient(KubectlClient):
         self.calls.append(f"ensure_ns:{namespace}")
         self.namespaces[namespace] = labels
 
+    def label_namespace(self, namespace, labels):
+        self.calls.append(f"label_ns:{namespace}")
+        self.namespaces[namespace] = {**self.namespaces.get(namespace, {}), **labels}
+
     def delete_namespace(self, namespace):
         self.calls.append(f"delete_ns:{namespace}")
         self.namespaces.pop(namespace, None)

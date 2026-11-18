@@ -140,6 +140,7 @@ identity:                                   # the pod's GCP identity, made and g
   gcp_roles: [roles/aiplatform.user]        # each on the install's allowlist (GOJIRA_GRANTABLE_ROLES)
   # gsa: kobo-room@my-project.iam.gserviceaccount.com   # adopt a hand-made account instead
 cluster_roles: [kobo-room]                  # ClusterRoles the operator applied and allows; Gojira binds the pod to them
+namespace_labels: { sero.dev/caller: "true" }   # labels the app's namespace carries on every cluster; Gojira applies them
 secrets_from: [clips-api-secrets]           # envFrom Secrets
 config_from: [clips-api-env]                # envFrom ConfigMaps
 env: { LOG_LEVEL: info }                    # plain, non-secret, in git

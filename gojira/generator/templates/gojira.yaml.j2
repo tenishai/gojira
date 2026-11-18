@@ -24,6 +24,12 @@ cluster_roles:                # ClusterRoles the operator defined and allows; Go
   - {{ r }}
 {% endfor %}
 {% endif %}
+{% if spec.namespace_labels %}
+namespace_labels:             # labels the app's namespace carries on every cluster; Gojira applies them
+{% for k, v in spec.namespace_labels.items() %}
+  {{ k }}: "{{ v }}"
+{% endfor %}
+{% endif %}
 {% if spec.identity %}
 identity:                     # the pod's GCP identity, made and granted by the platform
 {% if spec.identity.gsa %}
