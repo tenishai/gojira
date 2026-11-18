@@ -52,9 +52,19 @@ class Cluster(Base):
     location: Mapped[str] = mapped_column(String(63))
     gke_cluster: Mapped[str] = mapped_column(String(63))
     ar_repo: Mapped[str] = mapped_column(String(255))  # shared AR repo for this project
+    # How this cluster's control plane is reached, by Gojira itself and by the
+    # generated CI: "dns" = GKE's IAM-authenticated DNS endpoint, which works
+    # from anywhere (GitHub-hosted runners, a laptop off the VPN) and needs
+    # allowExternalTraffic on the cluster; "internal" = the private endpoint
+    # IP, for an install whose runners and operators sit inside the cluster's
+    # network, so the control plane stays closed to the internet (2026-11-18).
+    access: Mapped[str] = mapped_column(String(16), default="dns", server_default="dns")
     created_at: Mapped[datetime] = mapped_column(default=utcnow, server_default=func.now())
 
     environments: Mapped[list["Environment"]] = relationship(back_populates="cluster")
+
+
+CLUSTER_ACCESS = ("dns", "internal")
 
 
 class App(Base):

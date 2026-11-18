@@ -57,4 +57,9 @@ def init_db(engine) -> None:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE apps ADD COLUMN setup_seed_json TEXT"))
         log.info("migrated apps table: added setup_seed_json")
+    cluster_cols = {c["name"] for c in insp.get_columns("clusters")}
+    if "access" not in cluster_cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE clusters ADD COLUMN access VARCHAR(16) NOT NULL DEFAULT 'dns'"))
+        log.info("migrated clusters table: added access")
     log.info("database initialized")

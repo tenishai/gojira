@@ -85,6 +85,11 @@ class EnvSpec(BaseModel):
     location: str            # GKE cluster location
     gke_cluster: str
     ar_repo: str             # e.g. us-central1-docker.pkg.dev/<project>/apps
+    # How the generated CI reaches the control plane: "dns" (GKE's IAM-
+    # authenticated DNS endpoint, from anywhere) or "internal" (the private
+    # endpoint IP, from a runner inside the cluster's network). The cluster's
+    # registration says which (models.Cluster.access).
+    access: str = "dns"
     wif_provider: str        # full resource name of the WIF provider
     gsa_email: str
     copy_from: str | None = None  # env name to crane-copy from; None = build

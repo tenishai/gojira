@@ -39,6 +39,34 @@ def _make_old_schema_engine(tmp_path):
     return engine
 
 
+def test_init_db_backfills_missing_cluster_access_column(tmp_path):
+    """A clusters table from before Cluster.access: the column is added with
+    'dns', the behaviour every registered cluster had."""
+    from gojira.models import Cluster
+
+    engine = create_engine(f"sqlite:///{tmp_path}/old-clusters.db")
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE clusters (
+                id INTEGER PRIMARY KEY,
+                name VARCHAR(63) NOT NULL UNIQUE,
+                gcp_project VARCHAR(63) NOT NULL,
+                location VARCHAR(63) NOT NULL,
+                gke_cluster VARCHAR(63) NOT NULL,
+                ar_repo VARCHAR(255) NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text(
+            "INSERT INTO clusters (name, gcp_project, location, gke_cluster, ar_repo) VALUES "
+            "('dev', 'acme-dev', 'us-central1', 'dev-gke', 'us-central1-docker.pkg.dev/acme-dev/apps')"
+        ))
+    init_db(engine)
+    sf = sessionmaker(bind=engine, expire_on_commit=False)
+    with sf() as session:
+        assert session.query(Cluster).filter_by(name="dev").one().access == "dns"
+
+
 def test_init_db_backfills_missing_auto_merge_column(tmp_path):
     engine = _make_old_schema_engine(tmp_path)
 

@@ -1,7 +1,7 @@
 ---
 card: arch-card:gojira-provisioner-steps
 updated: 2026-11-18
-anchor: gojira/steps.py sha=b451edd8e51b13d46f1a3878285eb269f461a815
+anchor: gojira/steps.py sha=06698b77b40051ff3766ae8def468ff9e93a076d
 ---
 # provisioner-steps — the idempotent scoped step engine (Deploy loop)
 
@@ -64,3 +64,4 @@ CHANGE 2026-11-14: `POST /api/v1/apps` takes `seed` (contract keys, a few `k8s/b
 CHANGE 2026-11-15: a seed's needs are typed (`SeedNeeds`, strict: a wrong shape is refused, never coerced) and its files must be named core objects, one file per object; the seed cannot change once on the row, so what would fail every provision is refused at the door. `_rendered_targets` skips a document whose metadata is not a mapping.
 CHANGE 2026-11-16: `App.handed_over` (set by the caller, with `auto_merge_setup_pr`): `MergeSetupPr` merges an adopted repo's setup PR, `ConnectIn` accepts a seed with auto-merge, the PR body says nobody is asked to review, and a refused merge waits in `awaiting_pr`. Without it nothing changes (finding #22 stands).
 CHANGE 2026-11-17: `label_namespaces` (per-app, after `bind_cluster_roles`, `rechecks = True`) sets the contract's `namespace_labels:` on the app's namespace in every environment via `KubectlClient.label_namespace` (`kubectl label --overwrite`); `ensure_namespace` still creates the namespace with the install's labels only, since it runs before the contract is read. A key the install sets itself is refused with ValueError.
+CHANGE 2026-11-18: `Cluster.access` (dns | internal): `ensure_cluster_dns_access` skips a cluster registered as internal (`rechecks = True` so a change of mode is seen at the next provision), `EnvSpec.access` renders `use_internal_ip: true` instead of `use_dns_based_endpoint: true` in both workflows, and `GCPClient.get_gke_credentials` takes the mode (`--internal-ip` / `--dns-endpoint`). Default dns = every cluster registered before.

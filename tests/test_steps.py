@@ -551,6 +551,27 @@ def test_dns_access_enabled_once_then_skipped(session_and_app=None):
     assert step.check(ctx) is not None                   # now skips
 
 
+def test_internal_access_leaves_the_dns_endpoint_alone():
+    """A cluster registered with access internal is reached by its private
+    endpoint from runners inside its network; the step must not open the DNS
+    endpoint behind the operator's back."""
+    from gojira.steps import EnsureClusterDnsAccess
+    from tests.fakes import FakeGCPClient
+
+    class Env:
+        class cluster:
+            gcp_project, location, gke_cluster, access = "p", "us-east4", "g", "internal"
+
+    class Ctx:
+        environment = Env()
+        clients = {"gcp": FakeGCPClient()}
+
+    ctx = Ctx()
+    assert "internal access" in EnsureClusterDnsAccess().check(ctx)
+    assert ctx.clients["gcp"].dns_access == set()
+    assert not any(c.startswith("enable_dns") for c in ctx.clients["gcp"].calls)
+
+
 def test_namespace_labels_stamped_and_converged():
     """A tenant's finding: secrets infra gates on namespace labels; the provisioner
     stamps defaults.namespace_labels and re-asserts them on existing

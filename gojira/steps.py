@@ -281,14 +281,21 @@ class EnsureArtifactRepo:
 
 class EnsureClusterDnsAccess:
     """Generated CI reaches this env's control plane through GKE's DNS-based
-    endpoint — the only path that works for private clusters from GitHub
-    runners, and IAM-authenticated everywhere (finding #14). Ensure it's on."""
+    endpoint — the path that works for private clusters from GitHub-hosted
+    runners, and IAM-authenticated everywhere (finding #14). Ensure it's on.
+
+    A cluster registered with access "internal" is reached by its private
+    endpoint instead (runners and Gojira inside its network), and this step
+    leaves the DNS endpoint as the operator set it: closed, usually."""
 
     name = "ensure_cluster_dns_access"
+    rechecks = True  # a cluster's access may change; the next provision says so
 
     def check(self, ctx: ProvisionContext) -> str | None:
         env = _env(ctx)
         c = env.cluster
+        if getattr(c, "access", "dns") == "internal":
+            return f"{c.gke_cluster}: internal access, dns endpoint left alone"
         if _gcp(ctx).dns_access_enabled(c.gcp_project, c.location, c.gke_cluster):
             return f"{c.gke_cluster}: dns access on"
         return None
@@ -1028,6 +1035,7 @@ def build_spec(ctx: ProvisionContext, gcp: GCPClient) -> GeneratorSpec:
                 location=cluster.location,
                 gke_cluster=cluster.gke_cluster,
                 ar_repo=cluster.ar_repo,
+                access=cluster.access,
                 wif_provider=n.wif_provider_name(gcp.project_number(cluster.gcp_project)),
                 gsa_email=n.gsa_email,
                 copy_from=p.copy_from.name if p.copy_from else None,

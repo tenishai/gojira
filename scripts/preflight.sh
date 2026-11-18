@@ -58,6 +58,8 @@ DNS="$(gcloud container clusters describe "$CLUSTER" --location "$REGION" --proj
 rc=$?
 if [ $rc -ne 0 ]; then
   fail "cluster $CLUSTER not found in $PROJECT/$REGION (terraform apply, or set CLUSTER/REGION)"
+elif [ "${GOJIRA_CLUSTER_ACCESS:-}" = "internal" ]; then
+  ok "cluster access internal: the DNS endpoint is not needed (register clusters with access internal)"
 elif [ "$(echo "$DNS" | tr 'A-Z' 'a-z')" = "true" ]; then
   ok "cluster DNS-based access on"
 elif [ $FIX -eq 1 ]; then

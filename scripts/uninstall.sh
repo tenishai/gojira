@@ -167,8 +167,12 @@ FAILED=0
 CLUSTER_UP=0
 if quiet gcloud container clusters describe "$CLUSTER" --location "$REGION" --project "$PROJECT"; then
   CLUSTER_UP=1
+  case "${GOJIRA_CLUSTER_ACCESS:-}" in
+    internal) ENDPOINT_FLAG=--internal-ip ;;
+    *) ENDPOINT_FLAG="${GOJIRA_DNS_ENDPOINT:+--dns-endpoint}" ;;
+  esac
   gcloud container clusters get-credentials "$CLUSTER" --region "$REGION" --project "$PROJECT" \
-    ${GOJIRA_DNS_ENDPOINT:+--dns-endpoint} >/dev/null
+    ${ENDPOINT_FLAG:-} >/dev/null
 fi
 
 # --- 1. apps, while Gojira still knows them -------------------------------------

@@ -341,6 +341,40 @@ your project (APIs, service account, roles, image repo, Workload Identity)
 before installing. For a cluster with no public endpoint also set
 `GOJIRA_DNS_ENDPOINT=1`. Steps 3 onward are unchanged.
 
+### Keeping the control plane closed to the internet
+
+By default Gojira and the CI it generates reach a cluster through GKE's
+DNS-based endpoint: IAM-authenticated, audit-logged, reachable from
+GitHub-hosted runners and from a laptop off the VPN. It needs
+`allowExternalTraffic` on the cluster, which Gojira turns on at registration
+and re-asserts on every provision. Authorized networks do not apply to it;
+a Google credential with `container.clusters.get` and the cluster's RBAC is
+the whole gate.
+
+If your policy wants the control plane reachable only from inside the
+network, register the cluster with access **internal** instead (the
+clusters page, or `PATCH /api/v1/clusters/<name>` with `{"access":
+"internal"}` for one already registered). Then:
+
+- Gojira reaches it by the private endpoint (`get-credentials
+  --internal-ip`), so Gojira must run inside that network, which it does
+  when installed on the cluster itself.
+- The generated workflows do the same, so `GOJIRA_CI_RUNNER` must name a
+  self-hosted runner inside that network (actions-runner-controller on the
+  cluster, a VM in an authorized range). Build-from-repo apps need docker
+  on that runner.
+- The `ensure_cluster_dns_access` step leaves the DNS endpoint as you set
+  it, and the install scripts use the private endpoint with
+  `GOJIRA_CLUSTER_ACCESS=internal` in `gojira.env`, run from a machine on
+  the VPN.
+
+Order for a cluster already running with DNS access: set the runner
+variable and the access mode, press **Provision** again on each app so
+its workflows regenerate, watch one deploy land through the new runner,
+then close the DNS endpoint on the cluster (`allowExternalTraffic:
+false`). Closing it first breaks every deploy until the workflows are
+regenerated.
+
 ---
 
 ## Removing it
@@ -411,6 +445,7 @@ shortest uninstall there is.
 | `make install`: `PERMISSION_DENIED` from `gcloud.builds.submit`, three times | Not the first-use delay: your account cannot use Cloud Build | Grant yourself Cloud Build Editor, or use an Owner account |
 | `kubectl`: `User "<other account>" cannot ...` | The per-cluster token cache, see the note at the top | `rm ~/.kube/gke_gcloud_auth_plugin_cache`, or use a separate `KUBECONFIG` |
 | Registration: cluster unreachable | DNS-based access is off on the cluster | `./scripts/preflight.sh --fix` |
+| Registration with access internal: cluster unreachable | Gojira is not inside the cluster's network, or the private endpoint's authorized networks exclude it | Run Gojira on the cluster (or a peered network), or register with access dns |
 | Connect: `has no Dockerfile and its gojira.yaml names no image:`, or the repo is not listed | Neither a `Dockerfile` nor an `image:` contract on the default branch, or the App is not installed on that repo | Add one, or [github-app-setup.md](github-app-setup.md) §3 |
 | `/api/v1/...`: `404 Not Found` on a route this page names | The running image is older than your checkout | `make install` |
 | App is `active` but its namespace is empty | Connected a repo that already held Gojira's files; nothing was merged, so nothing deployed | **Redeploy** on the app page |

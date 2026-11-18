@@ -5,12 +5,21 @@
   {% if error %}<div class="card err">{{ error }}</div>{% endif %}
   {% if clusters %}
   <table>
-    <thead><tr><th>Name</th><th>Project</th><th>Location</th><th>GKE cluster</th><th>Artifact Registry</th><th>Sizing agent</th></tr></thead>
+    <thead><tr><th>Name</th><th>Project</th><th>Location</th><th>GKE cluster</th><th>Artifact Registry</th><th>Control plane</th><th>Sizing agent</th></tr></thead>
     <tbody>
       {% for c in clusters %}
       <tr>
         <td>{{ c.name }}</td><td class="mono">{{ c.gcp_project }}</td><td>{{ c.location }}</td>
         <td class="mono">{{ c.gke_cluster }}</td><td class="mono">{{ c.ar_repo }}</td>
+        <td>
+          <form method="post" action="/clusters/{{ c.id }}/access" class="row">
+            <select name="access">
+              <option value="dns" {% if c.access == 'dns' %}selected{% endif %}>DNS endpoint</option>
+              <option value="internal" {% if c.access == 'internal' %}selected{% endif %}>internal IP</option>
+            </select>
+            <button type="submit">Save</button>
+          </form>
+        </td>
         <td>
           {% set tok = agents.get(c.id) %}
           <form method="post" action="/clusters/{{ c.id }}/deploy-agent">
@@ -43,6 +52,11 @@
       </div>
       <label>Artifact Registry repo <span class="muted">(optional — defaults to &lt;location&gt;-docker.pkg.dev/&lt;project&gt;/apps)</span></label>
       <input name="ar_repo" placeholder="us-central1-docker.pkg.dev/my-project/apps">
+      <label>Control plane <span class="muted">(how Gojira and the generated CI reach it)</span></label>
+      <select name="access">
+        <option value="dns" selected>DNS endpoint — IAM-authenticated, reachable from anywhere; enabled on the cluster if off</option>
+        <option value="internal">internal IP — for runners and operators inside the cluster's network; the DNS endpoint stays closed</option>
+      </select>
       <button type="submit">Register & validate</button>
     </form>
   </div>

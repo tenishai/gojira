@@ -28,6 +28,7 @@ class FakeGCPClient(GCPClient):
         self.project_bindings = set(e.get("project_bindings", []))  # (project, member, role)
         self.artifact_repos = set(e.get("artifact_repos", []))
         self.dns_access = set(e.get("dns_access", []))  # (project, location, cluster)
+        self.cred_access: dict[str, str] = {}  # cluster -> access mode of the last get_gke_credentials
         self.app_images = {k: list(v) for k, v in e.get("app_images", {}).items()}  # "{ar_repo}/{name}" -> [digests]
         self.image_digests = dict(e.get("image_digests", {}))  # "image:tag" -> "sha256:..."
         self.calls: list[str] = []
@@ -105,8 +106,9 @@ class FakeGCPClient(GCPClient):
         self.calls.append(f"create_ar:{project}/{location}/{repo}")
         self.artifact_repos.add((project, location, repo))
 
-    def get_gke_credentials(self, project, location, cluster):
+    def get_gke_credentials(self, project, location, cluster, access="dns"):
         self.calls.append(f"get_creds:{cluster}")
+        self.cred_access[cluster] = access
         return f"gke_{project}_{location}_{cluster}"
 
     def dns_access_enabled(self, project, location, cluster):

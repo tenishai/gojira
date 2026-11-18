@@ -118,8 +118,11 @@ class GCPClient(ABC):
     def create_artifact_repo(self, project: str, location: str, repo: str) -> None: ...
 
     @abstractmethod
-    def get_gke_credentials(self, project: str, location: str, cluster: str) -> str:
-        """Populate local kubeconfig for the cluster; return the context name."""
+    def get_gke_credentials(self, project: str, location: str, cluster: str, access: str = "dns") -> str:
+        """Populate local kubeconfig for the cluster; return the context name.
+
+        `access` is the cluster's (models.CLUSTER_ACCESS): "dns" reaches the
+        IAM-authenticated DNS endpoint, "internal" the private endpoint IP."""
         ...
 
     @abstractmethod
@@ -399,13 +402,15 @@ class GcloudClient(GCPClient):
             if len(parts) == 2 and parts[0] == tag:
                 return parts[1]
         return None
-    def get_gke_credentials(self, project: str, location: str, cluster: str) -> str:
-        # The pipeline has already ensured DNS access (ensure_cluster_dns_access);
-        # the default endpoint form writes a private IP that is unreachable
-        # off-VPC and silently clobbers the shared kubeconfig.
+    def get_gke_credentials(self, project: str, location: str, cluster: str, access: str = "dns") -> str:
+        # "dns": the pipeline has already ensured DNS access (ensure_cluster_dns_access);
+        # the default endpoint form writes a private IP that is unreachable off-VPC
+        # and silently clobbers the shared kubeconfig. "internal": that private IP
+        # on purpose, from a Gojira that runs inside the cluster's network.
+        endpoint = "--internal-ip" if access == "internal" else "--dns-endpoint"
         self._exec(
             "container", "clusters", "get-credentials", cluster,
-            f"--location={location}", f"--project={project}", "--dns-endpoint",
+            f"--location={location}", f"--project={project}", endpoint,
         )
         return f"gke_{project}_{location}_{cluster}"
 
