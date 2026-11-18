@@ -1,7 +1,7 @@
 ---
 card: repo-card:gojira
 updated: 2026-11-18
-anchor: pyproject.toml sha=2e00059b64d21af5744c4ff070d4f2b94d6385b3
+anchor: pyproject.toml sha=6b1d82f6b478c400d6675f5e654413648ca9fe88
 anchor: gojira/web/__main__.py sha=0aaa920c9cc2a9f82f65d9477eafc654a0a038d5
 ---
 # gojira — repo card
@@ -9,7 +9,7 @@ anchor: gojira/web/__main__.py sha=0aaa920c9cc2a9f82f65d9477eafc654a0a038d5
 WHAT: opinionated deploy platform for GKE. Connects a GitHub repo, provisions
 GCP identity/CI/manifests, deploys, watches for cluster drift (captures it
 back to git as a PR), and ingests usage evidence to open rightsizing PRs.
-STATE: main, v1.2.0, working and actively dogfooded; under active development
+STATE: main, v1.3.0, working and actively dogfooded; under active development
 (a teammate has work in progress in this worktree's sibling checkout).
 STACK: Python >=3.11 (PyPI name `tenish-gojira`, import name `gojira`), FastAPI + Jinja2/htmx web UI, SQLAlchemy (SQLite
 default, Postgres via `[postgres]` extra + `DATABASE_URL`), PyYAML, GitHub App
