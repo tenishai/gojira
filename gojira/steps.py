@@ -1439,6 +1439,46 @@ class BindClusterRoles:
         )
 
 
+class LabelNamespaces:
+    """`namespace_labels:` — labels the app's namespace carries on every
+    environment's cluster, for what gates on them (sero admits a machine caller
+    by `sero.dev/caller: "true"` on its namespace). The namespace is Gojira's
+    (ensure_namespace made it, before the contract is read); the labels are
+    added to it here, after generate_artifacts has applied the contract. Keys
+    the install sets itself (the managed label, defaults.namespace_labels) are
+    refused: an app does not relabel its team."""
+
+    name = "label_namespaces"
+    rechecks = True  # namespace_labels: may grow on a live app
+
+    def _wanted(self, ctx: ProvisionContext) -> dict[str, str]:
+        labels = dict(_app_spec(ctx).namespace_labels)
+        owned = {**MANAGED_LABEL, **ctx.config.defaults.namespace_labels}
+        if taken := sorted(k for k in labels if k in owned):
+            raise ValueError(
+                f"namespace_labels: {', '.join(taken)} is set by this install "
+                "(defaults.namespace_labels), not by the app's contract"
+            )
+        return labels
+
+    def check(self, ctx: ProvisionContext) -> str | None:
+        want = self._wanted(ctx)
+        if not want:
+            return "no namespace labels asked for"
+        for env in ctx.environments:
+            live = ctx.clients["kubectl_for"](env.cluster).get_resource(env.namespace, "namespace", env.namespace) or {}
+            have = live.get("metadata", {}).get("labels") or {}
+            if any(have.get(k) != v for k, v in want.items()):
+                return None
+        return ", ".join(f"{k}={v}" for k, v in want.items())
+
+    def apply(self, ctx: ProvisionContext) -> str:
+        want = self._wanted(ctx)
+        for env in ctx.environments:
+            ctx.clients["kubectl_for"](env.cluster).label_namespace(env.namespace, want)
+        return ", ".join(f"{env.name}:{env.namespace}" for env in ctx.environments)
+
+
 class SetRepoVariables:
     """The install's facts on the repository, as Actions variables (issue #87).
 
@@ -1511,5 +1551,5 @@ def per_app_steps() -> list[Step]:
     return [
         PrepareWorkdir(), GenerateArtifacts(),
         EnsureRunIdentity(), GrantRunRoles(), BindRunWorkloadIdentity(), BindClusterRoles(),
-        SetRepoVariables(), OpenSetupPr(), MergeSetupPr(),
+        LabelNamespaces(), SetRepoVariables(), OpenSetupPr(), MergeSetupPr(),
     ]

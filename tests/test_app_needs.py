@@ -1007,6 +1007,14 @@ def test_identity_contract_is_validated():
 
 
 
+def test_namespace_labels_round_trip_and_a_yaml_true_is_the_string_true():
+    files = render(spec(namespace_labels={"sero.dev/caller": "true"}))
+    assert read_app_needs(files["gojira.yaml"])["namespace_labels"] == {"sero.dev/caller": "true"}
+    # Written by hand, unquoted: YAML makes it a bool; the label stays the lowercase word.
+    assert read_app_needs("namespace_labels: {sero.dev/caller: true}")["namespace_labels"] == {"sero.dev/caller": "true"}
+    assert "namespace_labels" not in read_app_needs("namespace_labels: [a, b]")
+
+
 def test_cluster_roles_round_trip_and_render_the_ksa():
     files = render(spec(cluster_roles=["kobo-room"]))
     assert read_app_needs(files["gojira.yaml"])["cluster_roles"] == ["kobo-room"]
