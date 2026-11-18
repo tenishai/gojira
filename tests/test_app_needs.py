@@ -439,7 +439,7 @@ def test_zero_touch_onboarding_seeds_the_contract(tmp_path):
         (tmp_path / "k8s/base/kustomization.yaml").read_text())["resources"])
 
 
-def _onboard(tmp_path, github, *, auto_merge, seed=None):
+def _onboard(tmp_path, github, *, auto_merge, seed=None, handed_over=False):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
@@ -456,7 +456,7 @@ def _onboard(tmp_path, github, *, auto_merge, seed=None):
         session.add(c)
         session.commit()
         a = App(name="watson", repo_full_name="acme/watson", installation_id=1,
-                workload_class="agent", auto_merge_setup_pr=auto_merge,
+                workload_class="agent", auto_merge_setup_pr=auto_merge, handed_over=handed_over,
                 setup_seed_json=json.dumps(seed) if seed else None)
         session.add(a)
         session.commit()
@@ -492,6 +492,46 @@ def test_adopted_repo_refuses_auto_merge(tmp_path):
     assert app.setup_pr_url                      # the PR is open, for a person
     assert app.status == AppStatus.AWAITING_PR
     assert any(s.startswith("merge_setup_pr") for s in result.steps_skipped)
+
+
+def test_handed_over_repo_is_merged_and_a_refused_merge_waits_for_a_person(tmp_path):
+    """The one thing that lifts finding #22: the caller says the repo's owner
+    handed its deploy files to the platform. Then an adopted repo's setup PR
+    is merged without a person, and its body says whose word that was. The
+    repo is still its owner's on GitHub, so a merge a branch rule refuses is
+    a person's merge and not a failed provision: the PR stays open and the
+    app waits in awaiting_pr."""
+    from gojira.github import GitHubError
+    from gojira.models import AppStatus
+    from tests.fakes import FakeGitHubClient
+
+    class HandBuilt(FakeGitHubClient):
+        def clone(self, repo, workdir):
+            super().clone(repo, workdir)
+            base = workdir / "k8s" / "base"
+            base.mkdir(parents=True)
+            (base / "deployment.yaml").write_text(PROBE_SHAPED)
+            (base / "kustomization.yaml").write_text("resources:\n  - deployment.yaml\n")
+
+        def open_pr(self, repo, head, base, title, body):
+            self.body = body
+            return super().open_pr(repo, head, base, title, body)
+
+    gh = HandBuilt()
+    result, app = _onboard(tmp_path / "merged", gh, auto_merge=True, handed_over=True)
+    assert result.completed
+    assert gh.merged and app.status == AppStatus.ACTIVE and app.setup_pr_url is None
+    assert "Gojira merges this itself" in gh.body
+
+    class Protected(HandBuilt):
+        def merge_pr(self, repo, pr_url):
+            raise GitHubError(f"merge PR {pr_url} failed: 405 review required")
+
+    gh = Protected()
+    result, app = _onboard(tmp_path / "refused", gh, auto_merge=True, handed_over=True)
+    assert result.completed                      # not a failed provision
+    assert app.setup_pr_url                      # the PR is open, for a person
+    assert app.status == AppStatus.AWAITING_PR
 
 
 def test_authored_repo_still_auto_merges(tmp_path):

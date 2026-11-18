@@ -554,6 +554,43 @@ def test_api_connect_keeps_a_seed_and_refuses_one_it_could_not_render(client, se
         assert json.loads(s.get(models.App, resp.json()["id"]).setup_seed_json) == seed
 
 
+def test_api_a_handed_over_repo_merges_what_a_person_would_have_reviewed(client, session_factory, clients):
+    """`handed_over` is the caller's statement that the repo's owner gave its
+    deploy files to the platform. With it a seed may ride an auto-merged
+    setup PR; without auto-merge it means nothing and is refused; and an app
+    connected before its owner handed it over is told so on a provision
+    call, which merges from then on. Auto-merge alone still refuses a seed
+    (the test above)."""
+    _register_three(session_factory)
+    assert client.post("/api/v1/apps", json=_api_body(handed_over=True)).status_code == 422
+
+    def settled(app_id):
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            status = client.get(f"/api/v1/apps/{app_id}").json()
+            if status["status"] in ("active", "awaiting_pr", "failed"):
+                return status
+            time.sleep(0.05)
+        return status
+
+    seed = {"needs": {"service_account": "agent-clio"}}
+    resp = client.post("/api/v1/apps", json=_api_body(seed=seed, auto_merge_setup_pr=True, handed_over=True))
+    assert resp.status_code == 201
+    status = settled(resp.json()["id"])
+    assert (status["status"], status["handed_over"]) == ("active", True)
+    assert clients.github.merged
+
+    later = client.post("/api/v1/apps", json=_api_body(name="otto", repo_full_name="acme/agent-otto"))
+    app_id = later.json()["id"]
+    assert settled(app_id)["status"] == "awaiting_pr"
+    assert client.post(f"/api/v1/apps/{app_id}/provision").status_code == 202   # no body: nothing changes
+    assert settled(app_id)["handed_over"] is False
+    assert client.post(f"/api/v1/apps/{app_id}/provision", json={"handed_over": True}).status_code == 202
+    with session_factory() as s:
+        row = s.get(models.App, app_id)
+        assert (row.auto_merge_setup_pr, row.handed_over) == (True, True)
+
+
 def test_api_connect_auto_merge_activates(client, session_factory, clients):
     _register_three(session_factory)
     resp = client.post("/api/v1/apps", json=_api_body(auto_merge_setup_pr=True))

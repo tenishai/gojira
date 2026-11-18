@@ -196,7 +196,22 @@ is rendered from what is in it, and the seed is ignored.
 The call is refused with `422` when a key or a file is not one of those, when
 a value is one the contract would not keep as written (the wrong shape, or a
 name such as `on` that YAML reads as something else), and when `seed` comes
-with `auto_merge_setup_pr`: a seed is always reviewed by a person.
+with `auto_merge_setup_pr`: a seed is reviewed by a person, unless the repo
+was handed over (below).
+
+A service that wrote the repo itself can pass `"auto_merge_setup_pr": true`,
+and Gojira merges the setup PR without waiting. For a repo somebody else
+wrote, that alone is not enough: a repo with its own `k8s/` keeps its PR open
+for a person, and a seed is refused. `"handed_over": true` beside it is the
+service's statement that the repo's owner gave its deploy files (`gojira.yaml`,
+`k8s/`, the `gojira-*` workflows) to the platform. Gojira then merges its own
+PRs there, the first one and every regeneration after it, and each PR says so.
+Only say it when the owner agreed to exactly that where they connected the
+repo: the first PR regenerates the `k8s/` they wrote. An app connected before
+its owner agreed is handed over later with
+`POST /api/v1/apps/<id>/provision` and the body `{"handed_over": true}`.
+The repo is still the owner's on GitHub, so a branch rule that refuses the
+merge wins: the PR stays open and the app waits for a person to merge it.
 
 ## 7. Merge the setup PR
 
