@@ -61,6 +61,8 @@ jobs:
           service_account: {{ d.v(env, 'DEPLOY_SA') }}
 
       - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f  # v2.2.1
+
+{{ d.runner_tools(kustomize) }}
 {% if source %}
 
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e  # v0.4

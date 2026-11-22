@@ -30,6 +30,16 @@ log = logging.getLogger(__name__)
 
 APP_PORT = 8080
 ARCHES = ("amd64", "arm64")
+# The kustomize the generated workflow fetches onto a runner that has none
+# (GitHub's hosted runners carry their own). Version and the sha256 of each
+# linux tarball from the release's checksums.txt; bump both together.
+KUSTOMIZE = {
+    "version": "v5.8.3",
+    "sha256": {
+        "amd64": "cb9e31198d3f63b44848bd0afc4c8efc56e6cfef9c93a4a39a211940e6decd61",
+        "arm64": "9867b76482cfc6d25b546abc1d2b5a32bd137505aba640649b4b378f64f6d68f",
+    },
+}
 
 # Kinds the app's deploy identity (roles/container.developer) cannot create
 # and must not: a base holding one fails every deploy after twenty retries
@@ -1095,6 +1105,7 @@ def render(spec: GeneratorSpec) -> dict[str, str]:
         "port": spec.port,
         "is_cron": spec.workload_class == "cron",
         "has_service": _has_service(cls),
+        "kustomize": KUSTOMIZE,
     }
 
     files: dict[str, str] = {}
