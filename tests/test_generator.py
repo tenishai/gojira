@@ -544,3 +544,26 @@ def test_a_build_contract_renders_exactly_as_before():
     """No image: means the build path, byte for byte (the goldens pin it)."""
     ci = render(GOLDEN_CASES["web"])[".github/workflows/gojira-ci.yaml"]
     assert "docker build" in ci and "crane" not in ci
+
+
+def test_workflows_fetch_the_tools_a_bare_runner_lacks():
+    """A self-hosted runner needs only docker. GitHub's bare actions-runner
+    image has python3 without pip and no kubectl or kustomize: the first
+    deploy through actions-runner-controller died in the contract check's
+    `pip install pyyaml`. The workflows now fetch what is missing, pinned,
+    right after gcloud is set up and before anything uses it."""
+    from gojira.generator import KUSTOMIZE
+
+    files = render(GOLDEN_CASES["web"])
+    for name in (".github/workflows/gojira-ci.yaml", ".github/workflows/gojira-promote.yaml"):
+        text = files[name]
+        assert "sudo apt-get -qq install -y python3-yaml" in text, f"{name}: no PyYAML fallback"
+        tools = text.index("Tools the runner may lack")
+        assert text.index("setup-gcloud@") < tools < text.index("get-gke-credentials@")
+        assert "gcloud components install kubectl" in text
+        for arch in ("amd64", "arm64"):
+            sha = KUSTOMIZE["sha256"][arch]
+            assert re.fullmatch(r"[0-9a-f]{64}", sha)
+            assert sha in text, f"{name}: kustomize {arch} tarball not pinned by sha"
+        assert f"kustomize_{KUSTOMIZE['version']}_linux_" in text
+        assert "sha256sum -c" in text

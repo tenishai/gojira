@@ -62,7 +62,12 @@ jobs:
         # these manifests were rendered from — same canonical hash as
         # gojira.generator.contract_fingerprint. Fail here, before a build.
         run: |
-          python3 -c 'import yaml' 2>/dev/null || python3 -m pip install -q pyyaml
+          # A bare self-hosted runner (GitHub's actions-runner image) has python3
+          # without pip; its sudo is passwordless, so the distro package does.
+          python3 -c 'import yaml' 2>/dev/null \
+            || python3 -m pip install -q pyyaml 2>/dev/null \
+            || { sudo apt-get -qq update && sudo apt-get -qq install -y python3-yaml >/dev/null; } \
+            || { echo "::error::this runner has no python3 with PyYAML and none could be installed"; exit 1; }
           actual=$(python3 -c 'import hashlib, json, yaml; doc = yaml.safe_load(open("gojira.yaml")); print(hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest())')
           if [ "$actual" != "$GOJIRA_CONTRACT" ]; then
             echo "::error::k8s/ and workflows are stale for this gojira.yaml (contract $actual, manifests rendered from $GOJIRA_CONTRACT). Merge Gojira's setup PR, or press Provision again, then redeploy."
@@ -76,6 +81,29 @@ jobs:
           service_account: ${{ vars.GOJIRA_QA_DEPLOY_SA }}
 
       - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f  # v2.2.1
+
+      - name: Tools the runner may lack
+        # GitHub's hosted runners carry all of these. A self-hosted runner
+        # needs docker (for apps built from their repo) and nothing else:
+        # what is missing is fetched here, pinned. kubectl comes from the
+        # gcloud setup-gcloud just installed; kustomize is not a gcloud
+        # component, so its release tarball is fetched and checked against
+        # the sha256 kustomize publishes. The GKE auth plugin is not needed:
+        # get-gke-credentials writes the auth step's token into kubeconfig.
+        run: |
+          command -v kubectl >/dev/null || gcloud components install kubectl --quiet
+          if ! command -v kustomize >/dev/null; then
+            case "$(uname -m)" in
+              x86_64) arch=amd64; sum=cb9e31198d3f63b44848bd0afc4c8efc56e6cfef9c93a4a39a211940e6decd61 ;;
+              aarch64|arm64) arch=arm64; sum=9867b76482cfc6d25b546abc1d2b5a32bd137505aba640649b4b378f64f6d68f ;;
+              *) echo "::error::no kustomize build for $(uname -m)"; exit 1 ;;
+            esac
+            curl -fsSLo kustomize.tgz "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.8.3/kustomize_v5.8.3_linux_${arch}.tar.gz"
+            echo "$sum  kustomize.tgz" | sha256sum -c - >/dev/null
+            tar -xzf kustomize.tgz kustomize && rm kustomize.tgz
+            mkdir -p "$HOME/.local/bin" && mv kustomize "$HOME/.local/bin/kustomize"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
 
       - name: Configure docker for Artifact Registry
         run: gcloud auth configure-docker "${IMAGE%%/*}" --quiet
@@ -209,7 +237,12 @@ jobs:
         # these manifests were rendered from — same canonical hash as
         # gojira.generator.contract_fingerprint. Fail here, before a build.
         run: |
-          python3 -c 'import yaml' 2>/dev/null || python3 -m pip install -q pyyaml
+          # A bare self-hosted runner (GitHub's actions-runner image) has python3
+          # without pip; its sudo is passwordless, so the distro package does.
+          python3 -c 'import yaml' 2>/dev/null \
+            || python3 -m pip install -q pyyaml 2>/dev/null \
+            || { sudo apt-get -qq update && sudo apt-get -qq install -y python3-yaml >/dev/null; } \
+            || { echo "::error::this runner has no python3 with PyYAML and none could be installed"; exit 1; }
           actual=$(python3 -c 'import hashlib, json, yaml; doc = yaml.safe_load(open("gojira.yaml")); print(hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest())')
           if [ "$actual" != "$GOJIRA_CONTRACT" ]; then
             echo "::error::k8s/ and workflows are stale for this gojira.yaml (contract $actual, manifests rendered from $GOJIRA_CONTRACT). Merge Gojira's setup PR, or press Provision again, then redeploy."
@@ -223,6 +256,29 @@ jobs:
           service_account: ${{ vars.GOJIRA_PROD_DEPLOY_SA }}
 
       - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f  # v2.2.1
+
+      - name: Tools the runner may lack
+        # GitHub's hosted runners carry all of these. A self-hosted runner
+        # needs docker (for apps built from their repo) and nothing else:
+        # what is missing is fetched here, pinned. kubectl comes from the
+        # gcloud setup-gcloud just installed; kustomize is not a gcloud
+        # component, so its release tarball is fetched and checked against
+        # the sha256 kustomize publishes. The GKE auth plugin is not needed:
+        # get-gke-credentials writes the auth step's token into kubeconfig.
+        run: |
+          command -v kubectl >/dev/null || gcloud components install kubectl --quiet
+          if ! command -v kustomize >/dev/null; then
+            case "$(uname -m)" in
+              x86_64) arch=amd64; sum=cb9e31198d3f63b44848bd0afc4c8efc56e6cfef9c93a4a39a211940e6decd61 ;;
+              aarch64|arm64) arch=arm64; sum=9867b76482cfc6d25b546abc1d2b5a32bd137505aba640649b4b378f64f6d68f ;;
+              *) echo "::error::no kustomize build for $(uname -m)"; exit 1 ;;
+            esac
+            curl -fsSLo kustomize.tgz "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.8.3/kustomize_v5.8.3_linux_${arch}.tar.gz"
+            echo "$sum  kustomize.tgz" | sha256sum -c - >/dev/null
+            tar -xzf kustomize.tgz kustomize && rm kustomize.tgz
+            mkdir -p "$HOME/.local/bin" && mv kustomize "$HOME/.local/bin/kustomize"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
 
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e  # v0.4
 
