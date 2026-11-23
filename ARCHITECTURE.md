@@ -1,7 +1,7 @@
 ---
 card: repo-card:gojira
 updated: 2026-11-22
-anchor: pyproject.toml sha=6ca1d7de7ddc781f76ac1a6ff404dc829461fb30
+anchor: pyproject.toml sha=cdc27d2f0f94f4d749b12f38023a34f8c906bb98
 anchor: gojira/web/__main__.py sha=0aaa920c9cc2a9f82f65d9477eafc654a0a038d5
 ---
 # gojira — repo card

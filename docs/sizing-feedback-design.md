@@ -3,7 +3,7 @@
 **Status:** Proposal — for review
 **Date:** 2026-06-23
 **Authors:** Shaz + Ember (SRE AI)
-**License:** AGPL-3.0-or-later
+**License:** MIT (relicensed from AGPL-3.0-or-later on 2026-11-23)
 
 > **Design record.** Written in June 2026 to decide what to build, and kept as the
 > record of why. Parts may no longer match the code; the [README](../README.md)
