@@ -230,6 +230,13 @@ have had AI help.
 In this repo, "Ember (SRE AI)" in docs and pull requests is the agent Shaz pairs
 with. Its commits name the Claude model in the trailer, not Ember.
 
+## Community
+
+[CONTRIBUTING.md](CONTRIBUTING.md) for how to work on Gojira, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+for how we treat each other, [SUPPORT.md](SUPPORT.md) for where questions go,
+[SECURITY.md](SECURITY.md) for reporting a vulnerability, [RELEASING.md](RELEASING.md)
+for how a version ships, and [CHANGELOG.md](CHANGELOG.md) for what changed.
+
 ## License
 
 [MIT](LICENSE)
