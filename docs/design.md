@@ -409,4 +409,4 @@ default implementation. Phase 4 works as a per-service thermostat without it.
    endpoint for a cluster registered with access `internal`, which keeps the DNS endpoint closed) before accepting the
    cluster. A cluster Gojira can't reach is a registration error, not a
    deploy-time surprise.
-5. **License** — AGPL-3.0-or-later (relicensed from the Apache-2.0 draft in PR #7).
+5. **License** — MIT since 2026-11-23 (#148); before that AGPL-3.0-or-later, relicensed from the Apache-2.0 draft in PR #7.
