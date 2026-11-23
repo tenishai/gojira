@@ -1,14 +1,12 @@
 name: ci
 
-# CI_RUNNER (repo variable) names a self-hosted runner label (spark, an arm64
-# box); unset, jobs fall back to GitHub-hosted ubuntu-latest. Tests, kustomize
-# and terraform validate are arch-neutral; images build in Cloud Build.
-#
-# A pull request from a fork always runs on GitHub-hosted ubuntu-latest: a
-# self-hosted runner must never run a fork's code. This is defence in depth,
-# not the boundary (a fork's pull_request runs the fork's copy of this file),
-# so the real control is fork-PR approval for outside collaborators.
-# tests/test_ci_workflow.py keeps every job on this expression.
+# Every job runs on a GitHub-hosted runner. A public repo must never let a
+# pull request reach a self-hosted machine (agora discussion 71, rule 4), and
+# nothing here needs one: tests, kustomize and terraform validate are
+# arch-neutral, and images build in Cloud Build. The `ci` job at the end is
+# the one required check: it passes only when every other job passed, so a
+# skipped or cancelled job can never count as green.
+# tests/test_ci_workflow.py keeps both of those true.
 
 on:
   pull_request:
@@ -17,11 +15,9 @@ on:
 
 jobs:
   test:
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     env:
-      # uv's own interpreter, never one the runner happens to carry: on
-      # 2026-10-23 a stale copy in a self-hosted tool cache segfaulted under
-      # anyio while the system python ran the same suite fine.
+      # uv's own interpreter, never one the runner happens to carry.
       UV_PYTHON_PREFERENCE: only-managed
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -29,9 +25,8 @@ jobs:
         with:
           python-version: "3.12"
       # --locked: the versions in uv.lock, nothing newer; a lock that no longer
-      # matches pyproject fails here instead of resolving silently. Fresh venv
-      # per job: self-hosted workspaces persist.
-      - run: rm -rf .venv && uv sync --locked --extra dev
+      # matches pyproject fails here instead of resolving silently.
+      - run: uv sync --locked --extra dev
       - run: uv run --no-sync ruff check gojira tests
       - run: uv run --no-sync pytest -q
 
@@ -39,7 +34,7 @@ jobs:
     # Every script must at least parse; the deploy manifests must render.
     # The install path (bootstrap.sh + deploy/) had drifted apart unnoticed for
     # six weeks before this job existed — see tests/test_deploy_contract.py.
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
       - run: for f in scripts/*.sh; do bash -n "$f"; done
@@ -50,11 +45,20 @@ jobs:
       - run: kubectl kustomize deploy/ingress/ > /dev/null
 
   terraform:
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3.1.2
         with:
-          terraform_wrapper: false  # the wrapper needs a `node` on PATH; self-hosted runners don't expose theirs
+          terraform_wrapper: false
       - run: terraform -chdir=terraform init -backend=false -input=false
       - run: terraform -chdir=terraform validate
+
+  ci:
+    # The summary the branch ruleset requires. `if: always()` so it reports even
+    # when a job fails; the check then fails unless every result is "success".
+    needs: [test, scripts, terraform]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ join(needs.*.result, ',') }}" = "success,success,success"
