@@ -541,9 +541,11 @@ class GeneratorSpec(BaseModel):
     environments: list[EnvSpec]
     default_branch: str = "main"
     # A public repository's workflows run on GitHub's hosted runners outright
-    # and read no runner variable: a fork's pull request must never reach a
-    # self-hosted machine, whatever the install names (issue #155). Private
-    # repos read `vars.GOJIRA_CI_RUNNER`, which SetRepoVariables owns.
+    # and read no runner variable (issue #155; the rule every tenish repo
+    # adopted for going public: hosted runners only on public repos). The
+    # generated workflow runs on push and dispatch, never on pull_request, so
+    # this is the rule, not a fork hazard. Private repos read
+    # `vars.GOJIRA_CI_RUNNER`, which SetRepoVariables owns.
     public_repo: bool = False
     schedule: str | None = None  # cron class only
     overrides: Overrides | None = None  # from the repo's gojira.yaml, if any
