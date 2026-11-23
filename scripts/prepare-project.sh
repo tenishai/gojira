@@ -73,7 +73,7 @@ fi
 step "3/5 platform roles"
 # A service account made a moment ago is not yet visible to IAM: the first
 # binding answers INVALID_ARGUMENT "does not exist" for up to a minute
-# (fubo-ai-agents-prod, 2026-10-23). Wait for that one error, nothing else.
+# (seen on a live project, 2026-10-23). Wait for that one error, nothing else.
 grant() {
   local role=$1 attempt out
   for attempt in 1 2 3 4 5 6 7 8; do
