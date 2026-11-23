@@ -40,8 +40,10 @@ build:
 preflight:
 	./scripts/preflight.sh
 
-# Cut a release: bump the version, tag main, push, publish the GitHub release.
-# Installs that pull main then build gojira:vX.Y.Z@sha256:<digest>.
+# Cut a release, in two runs: the first opens the release pull request (version
+# bump on release/vX.Y.Z); after it merges, the second tags the merged commit and
+# publishes the GitHub release. Nothing pushes to main. Installs that pull main
+# then build gojira:vX.Y.Z@sha256:<digest>.
 release:
 	./scripts/release.sh $(VERSION)
 

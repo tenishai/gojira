@@ -36,19 +36,27 @@ MIT license.
 
 ## Cut a release
 
-A release is a tag on `main`. From a clean, up-to-date checkout of `main`:
+A release is a tag on `main`, and the version bump that precedes it arrives
+through a pull request like every other change. From a clean, up-to-date
+checkout of `main`, run the same command twice:
 
 ```bash
-make release VERSION=v1.2.0
+make release VERSION=v1.2.0   # opens the release pull request
+# merge it (squash), pull main, then:
+make release VERSION=v1.2.0   # tags the merged commit, publishes the release
 ```
 
-`scripts/release.sh` bumps the version in `pyproject.toml`, `gojira/__init__.py`
-and `uv.lock`, re-anchors the repo card (`ARCHITECTURE.md` pins `pyproject.toml`
-and names the version), commits that as `release: v1.2.0`, tags it, pushes both, and
-publishes a GitHub release with generated notes. It refuses to run off `main`,
-with tracked changes, behind `origin/main`, or for a tag that exists. Every
-install that pulls `main` afterwards builds `gojira:v1.2.0@sha256:<digest>`;
-between releases an install names its build `v1.2.0-<n>-g<commit>`.
+The first run bumps the version in `pyproject.toml`, `gojira/__init__.py` and
+`uv.lock`, re-anchors the repo card (`ARCHITECTURE.md` pins `pyproject.toml` and
+names the version), commits that as `release: v1.2.0` on a branch
+`release/v1.2.0`, pushes it and opens the pull request. The second run, which
+sees the version already on `main`, tags that commit, pushes the tag and
+publishes a GitHub release with generated notes. `scripts/release.sh` refuses to
+run off `main`, with tracked changes, behind `origin/main`, for a tag that
+exists, or while a release pull request is still open. Nothing in it pushes to
+`main`. Every install that pulls `main` afterwards builds
+`gojira:v1.2.0@sha256:<digest>`; between releases an install names its build
+`v1.2.0-<n>-g<commit>`.
 
 ## Using AI tools
 
