@@ -1,7 +1,7 @@
 ---
 card: arch-card:gojira-provisioner-steps
-updated: 2026-11-18
-anchor: gojira/steps.py sha=06698b77b40051ff3766ae8def468ff9e93a076d
+updated: 2026-11-23
+anchor: gojira/steps.py sha=6ccec7f8f91a1e4e62c29acdc796ba27c7d5d99f
 ---
 # provisioner-steps — the idempotent scoped step engine (Deploy loop)
 
@@ -65,3 +65,4 @@ CHANGE 2026-11-15: a seed's needs are typed (`SeedNeeds`, strict: a wrong shape 
 CHANGE 2026-11-16: `App.handed_over` (set by the caller, with `auto_merge_setup_pr`): `MergeSetupPr` merges an adopted repo's setup PR, `ConnectIn` accepts a seed with auto-merge, the PR body says nobody is asked to review, and a refused merge waits in `awaiting_pr`. Without it nothing changes (finding #22 stands).
 CHANGE 2026-11-17: `label_namespaces` (per-app, after `bind_cluster_roles`, `rechecks = True`) sets the contract's `namespace_labels:` on the app's namespace in every environment via `KubectlClient.label_namespace` (`kubectl label --overwrite`); `ensure_namespace` still creates the namespace with the install's labels only, since it runs before the contract is read. A key the install sets itself is refused with ValueError.
 CHANGE 2026-11-18: `Cluster.access` (dns | internal): `ensure_cluster_dns_access` skips a cluster registered as internal (`rechecks = True` so a change of mode is seen at the next provision), `EnvSpec.access` renders `use_internal_ip: true` instead of `use_dns_based_endpoint: true` in both workflows, and `GCPClient.get_gke_credentials` takes the mode (`--internal-ip` / `--dns-endpoint`). Default dns = every cluster registered before.
+CHANGE 2026-11-23: `set_repo_variables` owns `GOJIRA_CI_RUNNER` (was the plain `CI_RUNNER`) and now takes away what it no longer wants (issue #155): the runner variable when `ci.runner` is empty or the repo is public, and an old `CI_RUNNER` that still equals this install's runner. `GitHubClient` gained `delete_repo_variable` and `repo_is_public`; `build_spec` sets `GeneratorSpec.public_repo` from the latter (private when GitHub can't be asked), and the workflow templates render `runs-on: ubuntu-latest` outright for a public repo.

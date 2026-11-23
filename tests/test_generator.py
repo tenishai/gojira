@@ -546,6 +546,20 @@ def test_a_build_contract_renders_exactly_as_before():
     assert "docker build" in ci and "crane" not in ci
 
 
+def test_a_public_repo_reads_no_runner_variable():
+    """Issue #155: a fork's pull request must never reach a self-hosted runner.
+    A public repo's workflows name GitHub's runner outright; a private repo's
+    read the variable Gojira owns, never the plain CI_RUNNER a repo's own CI
+    might also read."""
+    for name in (".github/workflows/gojira-ci.yaml", ".github/workflows/gojira-promote.yaml"):
+        public = render(make_spec(multiproject=True, public_repo=True))[name]
+        assert "runs-on: ubuntu-latest" in public and "vars." not in public.split("runs-on")[1].split("\n")[0]
+        assert "GOJIRA_CI_RUNNER" not in public
+        private = render(make_spec(multiproject=True))[name]
+        assert "runs-on: ${{ vars.GOJIRA_CI_RUNNER || 'ubuntu-latest' }}" in private
+        assert "vars.CI_RUNNER" not in private
+
+
 def test_workflows_fetch_the_tools_a_bare_runner_lacks():
     """A self-hosted runner needs only docker. GitHub's bare actions-runner
     image has python3 without pip and no kubectl or kustomize: the first

@@ -250,6 +250,7 @@ class FakeGitHubClient(GitHubClient):
         self.cloned = None
         self.branch = None
         self.variables: dict[tuple[str, str], str] = {}  # (repo, name) -> value
+        self.public_repos: set[str] = set()  # repo_is_public(); everything else is private
         self.committed = False
         self.pushed = None
         self.tags: list[tuple[str, str, str]] = []  # (repo, tag, sha)
@@ -299,6 +300,12 @@ class FakeGitHubClient(GitHubClient):
 
     def set_repo_variable(self, repo, name, value):
         self.variables[(repo, name)] = value
+
+    def delete_repo_variable(self, repo, name):
+        self.variables.pop((repo, name), None)
+
+    def repo_is_public(self, repo):
+        return repo in self.public_repos
 
     def dispatch_workflow(self, repo, workflow, ref):
         if self.dispatch_error:

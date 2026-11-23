@@ -158,9 +158,10 @@ node_selector:                              # added to the pod verbatim: how THI
   cloud.google.com/compute-class: Scale-Out #   provides arm64 (Autopilot), a pool, …
 ```
 
-Generated workflows run on `${{ vars.CI_RUNNER || 'ubuntu-latest' }}`: a
-repo or org variable names a self-hosted runner label; unset, GitHub's
-runners. An install whose runners are arm64 machines builds arm64 images and
+Generated workflows run on `${{ vars.GOJIRA_CI_RUNNER || 'ubuntu-latest' }}`:
+a repository variable Gojira sets and removes names a self-hosted runner
+label; unset, GitHub's runners. A public repo's workflows name
+`ubuntu-latest` outright and read no variable (issue #155). An install whose runners are arm64 machines builds arm64 images and
 says `arch: arm64` in its contracts; the platform never assumes the
 runner's and the cluster's architectures agree.
 
@@ -206,7 +207,7 @@ Nothing of the *install* is written into the repo. The generated workflows
 read the registry, the deploy identity and the cluster coordinates of every
 environment from repository Actions variables Gojira sets at provision
 (`GOJIRA_<ENV>_AR_REPO`, `_WIF_PROVIDER`, `_DEPLOY_SA`, `_PROJECT`,
-`_LOCATION`, `_GKE_CLUSTER`, plus `CI_RUNNER`), and the overlay names the
+`_LOCATION`, `_GKE_CLUSTER`, plus `GOJIRA_CI_RUNNER`), and the overlay names the
 image `gojira-app` for CI to resolve. A repo is therefore identical under any
 Gojira; a second install that connects it sets its own values instead of
 rewriting files (issue #87, 2026-10-06). The first workflow step refuses to

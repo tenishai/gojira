@@ -1052,7 +1052,21 @@ def build_spec(ctx: ProvisionContext, gcp: GCPClient) -> GeneratorSpec:
         # these when GenerateArtifacts reads the repo's gojira.yaml.
         platform_arch=ctx.config.defaults.arch or "amd64",
         platform_node_selector=dict(ctx.config.defaults.node_selector),
+        public_repo=_repo_is_public(ctx),
     )
+
+
+def _repo_is_public(ctx: ProvisionContext) -> bool:
+    """A public repo gets hosted-runner workflows and no runner variable (issue
+    #155). When GitHub cannot be asked, assume private: that keeps an install's
+    in-network runner for the repos it was set up for, and a public repo's
+    workflow still falls back to ubuntu-latest once its variable is removed."""
+    try:
+        return _github(ctx).repo_is_public(ctx.app.repo_full_name)
+    except Exception as exc:
+        log.warning("could not read the visibility of %s, treating it as private: %s",
+                    ctx.app.repo_full_name, exc)
+        return False
 
 
 def _env(ctx: ProvisionContext) -> Environment:
@@ -1487,12 +1501,24 @@ class LabelNamespaces:
         return ", ".join(f"{env.name}:{env.namespace}" for env in ctx.environments)
 
 
+RUNNER_VARIABLE = "GOJIRA_CI_RUNNER"
+# What this step wrote before 2026-11-23. A plain name a repo's own CI may
+# also read, so Gojira's value could move jobs it did not write (issue #155).
+LEGACY_RUNNER_VARIABLE = "CI_RUNNER"
+
+
 class SetRepoVariables:
     """The install's facts on the repository, as Actions variables (issue #87).
 
     The generated workflows read the registry, the deploy identity and the
     cluster coordinates of every environment from `vars.GOJIRA_<ENV>_*`,
-    and the runner label from `vars.CI_RUNNER` when the install names one.
+    and the runner label from `vars.GOJIRA_CI_RUNNER` when the install names
+    one and the repository is private. The step also takes away what it no
+    longer wants (issue #155): the runner variable when the install stops
+    naming a runner or the repository has gone public, and its old
+    `CI_RUNNER` when that still holds the value this install wrote. So
+    "empty GOJIRA_CI_RUNNER, press Provision" is the whole move back to
+    hosted runners, and a public repository never carries one.
     Setting them here, before the setup PR is opened, is what lets the
     workflow in the repo be identical under any Gojira: nothing of this
     install is written into the repo, and a second install that connects
@@ -1511,8 +1537,8 @@ class SetRepoVariables:
         spec = _app_spec(ctx)
         for env in spec.environments:
             want.update(env.platform_variables(spec.run_gsa(env)))
-        if ctx.config.ci.runner:
-            want["CI_RUNNER"] = ctx.config.ci.runner
+        if ctx.config.ci.runner and not spec.public_repo:
+            want[RUNNER_VARIABLE] = ctx.config.ci.runner
         want.update(ctx.config.ci.repo_variables)
         return want
 
@@ -1523,17 +1549,41 @@ class SetRepoVariables:
             if self._github_call(ctx, lambda gh, k=k: gh.repo_variable(repo, k)) != v
         ]
 
+    def _unwanted(self, ctx: ProvisionContext, want: dict[str, str]) -> list[str]:
+        """Variables of ours on the repo that should not be there any more."""
+        repo = ctx.app.repo_full_name
+        current = lambda name: self._github_call(ctx, lambda gh: gh.repo_variable(repo, name))  # noqa: E731
+        gone: list[str] = []
+        if RUNNER_VARIABLE not in want and current(RUNNER_VARIABLE) is not None:
+            gone.append(RUNNER_VARIABLE)
+        # The old name goes only when it holds the value this install wrote;
+        # any other value is somebody else's and stays.
+        legacy = current(LEGACY_RUNNER_VARIABLE)
+        if legacy is not None and ctx.config.ci.runner and legacy == ctx.config.ci.runner:
+            gone.append(LEGACY_RUNNER_VARIABLE)
+        return gone
+
     def check(self, ctx: ProvisionContext) -> str | None:
         want = self._wanted(ctx)
-        return None if self._stale(ctx, want) else f"{len(want)} variables current"
+        if self._stale(ctx, want) or self._unwanted(ctx, want):
+            return None
+        return f"{len(want)} variables current"
 
     def apply(self, ctx: ProvisionContext) -> str:
         want = self._wanted(ctx)
         stale = self._stale(ctx, want)
+        gone = self._unwanted(ctx, want)
         repo = ctx.app.repo_full_name
         for k in stale:
             self._github_call(ctx, lambda gh, k=k: gh.set_repo_variable(repo, k, want[k]))
-        return "set " + ", ".join(stale)
+        for k in gone:
+            self._github_call(ctx, lambda gh, k=k: gh.delete_repo_variable(repo, k))
+        parts = []
+        if stale:
+            parts.append("set " + ", ".join(stale))
+        if gone:
+            parts.append("removed " + ", ".join(gone))
+        return "; ".join(parts)
 
     @staticmethod
     def _github_call(ctx: ProvisionContext, call):

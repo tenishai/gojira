@@ -8,6 +8,19 @@ All notable changes to Gojira are documented here. The format loosely follows
 
 ### Changed
 
+- **The runner variable is Gojira's, and it leaves when unwanted** (#155).
+  Generated workflows read `vars.GOJIRA_CI_RUNNER` instead of the plain
+  `CI_RUNNER` a repo's own CI might also read. `set_repo_variables` writes it
+  only for a private repo while the install names a runner, removes it when
+  either stops being true, and removes an old `CI_RUNNER` that still holds
+  the value this install wrote. A public repo's workflows say `ubuntu-latest`
+  outright. Installs that named a runner before: provision each repo once on
+  this version *before* emptying `GOJIRA_CI_RUNNER`; that Provision
+  regenerates the workflows and moves the variable over, and removes the old
+  `CI_RUNNER` only while it still equals the runner the install names. When
+  the repo's visibility cannot be read, the step treats it as private, on
+  purpose.
+
 - **Licence: MIT.** Relicensed from AGPL-3.0-or-later with every contributor's
   agreement (tenishai/agora discussion 69). Releases already published keep the
   licence they shipped under. (#148)
