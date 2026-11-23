@@ -99,6 +99,16 @@ class GitHubClient(ABC):
         ...
 
     @abstractmethod
+    def delete_repo_variable(self, repo: str, name: str) -> None:
+        """Remove an Actions repository variable; one that is not there is fine."""
+        ...
+
+    @abstractmethod
+    def repo_is_public(self, repo: str) -> bool:
+        """Whether anyone can read (and fork) the repository."""
+        ...
+
+    @abstractmethod
     def default_branch(self, repo: str) -> str: ...
 
     @abstractmethod
@@ -282,6 +292,15 @@ class GhCLI(_LocalGit, GitHubClient):
 
     def set_repo_variable(self, repo: str, name: str, value: str) -> None:
         self._exec([self._gh, "variable", "set", name, "--repo", repo, "--body", value])
+
+    def delete_repo_variable(self, repo: str, name: str) -> None:
+        if self.repo_variable(repo, name) is None:  # `gh variable delete` fails on a missing one
+            return
+        self._exec([self._gh, "variable", "delete", name, "--repo", repo])
+
+    def repo_is_public(self, repo: str) -> bool:
+        out = self._exec([self._gh, "repo", "view", repo, "--json", "visibility", "--jq", ".visibility"])
+        return out.strip().lower() == "public"
 
     def dispatch_workflow(self, repo: str, workflow: str, ref: str) -> None:
         self._exec(
@@ -504,6 +523,17 @@ class GitHubAppClient(_LocalGit, GitHubClient):
         if r.status_code == 404:
             r = self._request("POST", f"/repos/{repo}/actions/variables", repo, json=body)
         self._check(r, f"set variable {name} in {repo}")
+
+    def delete_repo_variable(self, repo: str, name: str) -> None:
+        r = self._request("DELETE", f"/repos/{repo}/actions/variables/{name}", repo)
+        if r.status_code == 404:
+            return
+        self._check(r, f"delete variable {name} in {repo}")
+
+    def repo_is_public(self, repo: str) -> bool:
+        r = self._request("GET", f"/repos/{repo}", repo)
+        self._check(r, f"read {repo}")
+        return not bool(r.json().get("private", True))
 
     def deploy_history(self, repo: str, workflow: str, branch: str, limit: int = 10) -> list[dict]:
         r = self._request(

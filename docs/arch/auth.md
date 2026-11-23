@@ -2,7 +2,7 @@
 card: arch-card:gojira-auth
 updated: 2026-11-23
 anchor: gojira/web/auth.py sha=a1241f6cfab86d6380710dc2c8a3085cd6b5e5e5
-anchor: gojira/config.py sha=5b40a28df646559cee0333d395ca1e7de37e1433
+anchor: gojira/config.py sha=1c20c267d727140b6613cae1e4fd0960baa5773b
 ---
 # auth — three independent front-door mechanisms
 

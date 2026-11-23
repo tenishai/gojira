@@ -25,8 +25,8 @@ env:
 
 jobs:
   deploy-qa:
-    # A repo or org variable CI_RUNNER names a self-hosted runner label; unset, GitHub's.
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    # The repository variable GOJIRA_CI_RUNNER names a self-hosted runner label; unset, GitHub's.
+    runs-on: ${{ vars.GOJIRA_CI_RUNNER || 'ubuntu-latest' }}
     env:
       IMAGE: ${{ vars.GOJIRA_QA_AR_REPO }}/clips-worker
     steps:
@@ -178,8 +178,8 @@ jobs:
 
   deploy-prod:
     needs: deploy-qa
-    # A repo or org variable CI_RUNNER names a self-hosted runner label; unset, GitHub's.
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    # The repository variable GOJIRA_CI_RUNNER names a self-hosted runner label; unset, GitHub's.
+    runs-on: ${{ vars.GOJIRA_CI_RUNNER || 'ubuntu-latest' }}
     environment: production
     env:
       IMAGE: ${{ vars.GOJIRA_PROD_AR_REPO }}/clips-worker

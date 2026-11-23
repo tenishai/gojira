@@ -186,11 +186,13 @@ class ObserveConfig(BaseModel):
 
 class CIConfig(BaseModel):
     # A self-hosted runner label (e.g. "my-runners"). Generated workflows run on
-    # `${{ vars.CI_RUNNER || 'ubuntu-latest' }}`; when set, provisioning
-    # writes CI_RUNNER as a repository variable on every connected repo. A
-    # repository variable, not an organization one: on GitHub's Free plan
-    # org-level variables never reach private repositories (2026-09-30).
-    # Empty: GitHub's hosted runners.
+    # `${{ vars.GOJIRA_CI_RUNNER || 'ubuntu-latest' }}`; when set, provisioning
+    # writes GOJIRA_CI_RUNNER as a repository variable on every connected
+    # private repo, and removes it again when this is emptied. A public repo
+    # never gets one: its workflows run on GitHub's hosted runners outright
+    # (issue #155). A repository variable, not an organization one: on
+    # GitHub's Free plan org-level variables never reach private repositories
+    # (2026-09-30). Empty: GitHub's hosted runners.
     runner: str = ""
     # Values a contract may reference instead of writing: `build_args:
     # {EXTRA_INDEX_URL: ${GOJIRA_PYTHON_INDEX}}` in gojira.yaml reads

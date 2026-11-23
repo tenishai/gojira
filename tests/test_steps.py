@@ -698,7 +698,7 @@ def test_platform_facts_are_set_on_the_repo_as_variables(single_env):
     for name, value in EXPECTED_DEV_VARS.items():
         assert got[name] == value
     assert {"GOJIRA_DEV_LOCATION", "GOJIRA_DEV_GKE_CLUSTER"} <= set(got)
-    assert "CI_RUNNER" not in got  # hosted runners: nothing to say
+    assert "GOJIRA_CI_RUNNER" not in got  # hosted runners: nothing to say
     assert SetRepoVariables().check(ctx) == "6 variables current"  # idempotent
 
 
@@ -708,8 +708,63 @@ def test_ci_runner_rides_along_when_the_install_names_one(single_env):
     gh = FakeGitHubClient()
     ctx = _app_ctx(single_env, gh, runner="self-hosted-0")
     SetRepoVariables().apply(ctx)
-    assert gh.variables[("acme/clips-api", "CI_RUNNER")] == "self-hosted-0"
+    assert gh.variables[("acme/clips-api", "GOJIRA_CI_RUNNER")] == "self-hosted-0"
+    assert ("acme/clips-api", "CI_RUNNER") not in gh.variables  # the old name is not written
     assert SetRepoVariables().check(ctx) == "7 variables current"
+
+
+# --- issue #155: the runner variable is Gojira's, and it leaves when unwanted ---
+
+
+def test_the_runner_variable_goes_when_the_install_stops_naming_one(single_env):
+    from gojira.steps import SetRepoVariables
+
+    gh = FakeGitHubClient()
+    SetRepoVariables().apply(_app_ctx(single_env, gh, runner="self-hosted-0"))
+    hosted = _app_ctx(single_env, gh, runner="")
+    assert SetRepoVariables().check(hosted) is None
+    assert SetRepoVariables().apply(hosted) == "removed GOJIRA_CI_RUNNER"
+    assert ("acme/clips-api", "GOJIRA_CI_RUNNER") not in gh.variables
+    assert SetRepoVariables().check(hosted) == "6 variables current"
+
+
+def test_a_public_repo_never_gets_a_runner_variable(single_env):
+    from gojira.steps import SetRepoVariables
+
+    gh = FakeGitHubClient()
+    gh.public_repos.add("acme/clips-api")
+    gh.variables[("acme/clips-api", "GOJIRA_CI_RUNNER")] = "self-hosted-0"  # from before the flip
+    ctx = _app_ctx(single_env, gh, runner="self-hosted-0")  # the install still names one
+    assert SetRepoVariables().check(ctx) is None
+    out = SetRepoVariables().apply(ctx)
+    assert out.endswith("removed GOJIRA_CI_RUNNER")
+    assert ("acme/clips-api", "GOJIRA_CI_RUNNER") not in gh.variables
+    assert SetRepoVariables().check(ctx) == "6 variables current"
+
+
+def test_a_public_repo_renders_hosted_runners_outright(single_env):
+    from gojira.steps import build_spec
+    from gojira.generator import render
+
+    gh = FakeGitHubClient()
+    gh.public_repos.add("acme/clips-api")
+    files = render(build_spec(_app_ctx(single_env, gh, runner="self-hosted-0"), FakeGCPClient()))
+    text = files[".github/workflows/gojira-ci.yaml"]
+    assert "runs-on: ubuntu-latest" in text and "vars.GOJIRA_CI_RUNNER" not in text
+
+
+@pytest.mark.parametrize("legacy,runner,removed", [
+    ("self-hosted-0", "self-hosted-0", True),   # our own leftover: goes
+    ("theirs", "self-hosted-0", False),         # somebody else's value: stays
+    ("self-hosted-0", "", False),               # install names nothing: we can't tell, stays
+])
+def test_the_legacy_ci_runner_goes_only_when_it_is_this_installs(single_env, legacy, runner, removed):
+    from gojira.steps import SetRepoVariables
+
+    gh = FakeGitHubClient()
+    gh.variables[("acme/clips-api", "CI_RUNNER")] = legacy
+    SetRepoVariables().apply(_app_ctx(single_env, gh, runner=runner))
+    assert (("acme/clips-api", "CI_RUNNER") not in gh.variables) is removed
 
 
 def test_only_drifted_variables_are_rewritten(single_env):
@@ -718,11 +773,11 @@ def test_only_drifted_variables_are_rewritten(single_env):
     gh = FakeGitHubClient()
     ctx = _app_ctx(single_env, gh, runner="self-hosted-0")
     SetRepoVariables().apply(ctx)
-    gh.variables[("acme/clips-api", "CI_RUNNER")] = "old"          # someone changed it
+    gh.variables[("acme/clips-api", "GOJIRA_CI_RUNNER")] = "old"   # someone changed it
     gh.variables[("acme/clips-api", "GOJIRA_DEV_PROJECT")] = "x"    # or that
     assert SetRepoVariables().check(ctx) is None
-    assert SetRepoVariables().apply(ctx) == "set GOJIRA_DEV_PROJECT, CI_RUNNER"
-    assert gh.variables[("acme/clips-api", "CI_RUNNER")] == "self-hosted-0"
+    assert SetRepoVariables().apply(ctx) == "set GOJIRA_DEV_PROJECT, GOJIRA_CI_RUNNER"
+    assert gh.variables[("acme/clips-api", "GOJIRA_CI_RUNNER")] == "self-hosted-0"
     assert gh.variables[("acme/clips-api", "GOJIRA_DEV_PROJECT")] == "acme-499303"
 
 

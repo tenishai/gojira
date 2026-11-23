@@ -42,6 +42,7 @@ class FakeGitHubServer:
     def __init__(self):
         self.installations = [{"id": 100}]
         self.repo_installation = {"acme/web": 100}
+        self.public_repos: set[str] = set()
         self.repos_by_installation = {100: [{"full_name": "acme/web", "pushed_at": "2026-01-02"}]}
         self.contents = {("acme/web", "Dockerfile"): True}
         self.pulls: list[dict] = []
@@ -90,6 +91,11 @@ class FakeGitHubServer:
                 body = _json(request)
                 self.variables[(repo, body["name"])] = body["value"]
                 return httpx.Response(201)
+            if method == "DELETE":
+                if (repo, name) not in self.variables:
+                    return httpx.Response(404, json={"message": "Not Found"})
+                del self.variables[(repo, name)]
+                return httpx.Response(204)
 
         if method == "GET" and path == "/installation/repositories":
             iid = int(request.headers["Authorization"].rsplit("-", 1)[1])
@@ -158,7 +164,9 @@ class FakeGitHubServer:
             return httpx.Response(200, json={"sha": self.commit_sha})
 
         if method == "GET" and re.fullmatch(r"/repos/[^/]+/[^/]+", path):
-            return httpx.Response(200, json={"default_branch": self.default_branch})
+            repo = "/".join(path.split("/")[2:4])
+            return httpx.Response(200, json={"default_branch": self.default_branch,
+                                             "private": repo not in self.public_repos})
 
         return httpx.Response(500, json={"message": f"unhandled {method} {path}"})
 
@@ -392,7 +400,7 @@ def test_clone_failure_raises(keypair, tmp_path):
         client.clone("acme/web", tmp_path / "wt")
 
 
-# --- repository variables (CI_RUNNER) -------------------------------------------
+# --- repository variables (GOJIRA_CI_RUNNER and the platform facts) --------------
 
 
 def test_set_repo_variable_creates_then_updates(keypair):
@@ -405,3 +413,21 @@ def test_set_repo_variable_creates_then_updates(keypair):
     assert server.variables[("acme/web", "CI_RUNNER")] == "self-hosted-1"
     assert client.repo_variable("acme/web", "CI_RUNNER") == "self-hosted-1"
     assert server.variable_calls == ["GET", "PATCH", "POST", "PATCH", "GET"]
+
+
+def test_delete_repo_variable_is_quiet_about_one_that_is_gone(keypair):
+    server = FakeGitHubServer()
+    client = make_client(server, keypair)
+    client.set_repo_variable("acme/web", "GOJIRA_CI_RUNNER", "self-hosted-0")
+    client.delete_repo_variable("acme/web", "GOJIRA_CI_RUNNER")        # DELETE 204
+    assert ("acme/web", "GOJIRA_CI_RUNNER") not in server.variables
+    client.delete_repo_variable("acme/web", "GOJIRA_CI_RUNNER")        # DELETE 404: nothing to do
+    assert server.variable_calls[-2:] == ["DELETE", "DELETE"]
+
+
+def test_repo_is_public_reads_the_private_flag(keypair):
+    server = FakeGitHubServer()
+    client = make_client(server, keypair)
+    assert client.repo_is_public("acme/web") is False
+    server.public_repos.add("acme/web")
+    assert client.repo_is_public("acme/web") is True

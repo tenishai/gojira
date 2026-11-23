@@ -909,7 +909,7 @@ def test_every_generated_workflow_takes_the_runner_from_a_variable():
     files = render(spec_class("web"))  # web has both workflows: ci and promote
     for path, text in files.items():
         if path.startswith(".github/workflows/"):
-            assert "runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}" in text, path
+            assert "runs-on: ${{ vars.GOJIRA_CI_RUNNER || 'ubuntu-latest' }}" in text, path
 
 
 # --- the platform's arch: applies when the contract is silent (2026-10-02) ------

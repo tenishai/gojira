@@ -21,8 +21,8 @@ env:
 
 jobs:
   build-and-deploy-dev:
-    # A repo or org variable CI_RUNNER names a self-hosted runner label; unset, GitHub's.
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    # The repository variable GOJIRA_CI_RUNNER names a self-hosted runner label; unset, GitHub's.
+    runs-on: ${{ vars.GOJIRA_CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
