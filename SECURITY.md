@@ -33,9 +33,9 @@ testing.
 
 ## Supported versions
 
-gojira is pre-1.0 and has no tagged releases yet. Security fixes land on the
-`main` branch; run the current `main`. Once releases exist, only the latest one
-will be patched.
+gojira has tagged releases (`vX.Y.Z` on `main`, listed under Releases). Security
+fixes land on `main` and ship in the next release; only the latest release is
+patched. Run the latest release, or the current `main`.
 
 ## Scope
 
