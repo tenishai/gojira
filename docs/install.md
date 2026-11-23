@@ -324,7 +324,7 @@ What you have now is the whole install. Secrets are Kubernetes Secrets you
 create in the app's namespace (`secrets_from` names them), and sizing runs
 on Managed Prometheus with the sizing agent. The sibling projects that go
 further are upgrades with their own prerequisites, not steps you skipped:
-[ladon](https://github.com/tenishai/sero) puts secrets on a vault you
+[sero](https://github.com/tenishai/sero) puts secrets on a vault you
 unseal and front with an identity proxy, and
 [noto](https://github.com/tenishai/noto) adds dashboards, logs and traces
 on a Standard cluster of its own. Reach for them when you have several
