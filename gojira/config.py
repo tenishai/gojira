@@ -185,7 +185,7 @@ class ObserveConfig(BaseModel):
 
 
 class CIConfig(BaseModel):
-    # A self-hosted runner label (e.g. "spark"). Generated workflows run on
+    # A self-hosted runner label (e.g. "my-runners"). Generated workflows run on
     # `${{ vars.CI_RUNNER || 'ubuntu-latest' }}`; when set, provisioning
     # writes CI_RUNNER as a repository variable on every connected repo. A
     # repository variable, not an organization one: on GitHub's Free plan
