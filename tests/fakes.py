@@ -251,6 +251,7 @@ class FakeGitHubClient(GitHubClient):
         self.branch = None
         self.variables: dict[tuple[str, str], str] = {}  # (repo, name) -> value
         self.public_repos: set[str] = set()  # repo_is_public(); everything else is private
+        self.merge_error: Exception | None = None  # merge_pr raises this when set
         self.committed = False
         self.pushed = None
         self.tags: list[tuple[str, str, str]] = []  # (repo, tag, sha)
@@ -358,6 +359,8 @@ class FakeGitHubClient(GitHubClient):
 
     def merge_pr(self, repo, pr_url):
         self.calls.append(f"merge_pr:{pr_url}")
+        if self.merge_error is not None:   # tests: GitHub declines or the call fails
+            raise self.merge_error
         self.merged.append(pr_url)
         self.merged_urls.add(pr_url)
         self._repo_ever_merged = True

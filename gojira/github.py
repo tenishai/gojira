@@ -14,6 +14,7 @@ Both share the auth-free local git mechanics in _LocalGit.
 
 import json
 import logging
+import re
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -38,7 +39,34 @@ _ACCEPT = "application/vnd.github+json"
 
 
 class GitHubError(RuntimeError):
-    """A git, gh, or GitHub API call failed."""
+    """A git, gh, or GitHub API call failed.
+
+    `status` is the HTTP status when the call was a REST request (the App
+    client); None for a gh or git subprocess, whose stderr is the message."""
+
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
+
+# What GitHub says when it declines a merge for a reason a person settles: a
+# branch rule wants a review or a check, the head moved, the base changed. The
+# App client sees the status; gh prints the same sentences on stderr.
+_MERGE_REFUSAL = re.compile(
+    r"rule violations|not mergeable|review (is )?required|required status check"
+    r"|protected branch|base branch was modified|cannot be cleanly created",
+    re.IGNORECASE,
+)
+
+
+def merge_refused(exc: GitHubError) -> bool:
+    """GitHub refused THIS merge (405 not mergeable or rules, 409 head changed,
+    422 validation; or gh's text saying one of those), as opposed to the call
+    failing (a 5xx, a dead network). The first is a person's merge now; the
+    second is a step that should fail and be retried (#144)."""
+    if exc.status is not None:
+        return exc.status in (405, 409, 422)
+    return bool(_MERGE_REFUSAL.search(str(exc)))
 
 
 class GitHubClient(ABC):
@@ -410,7 +438,7 @@ class GitHubAppClient(_LocalGit, GitHubClient):
     @staticmethod
     def _check(r: httpx.Response, what: str) -> None:
         if r.status_code >= 300:
-            raise GitHubError(f"{what} failed: {r.status_code} {r.text}")
+            raise GitHubError(f"{what} failed: {r.status_code} {r.text}", status=r.status_code)
 
     def _request(self, method: str, path: str, repo: str, **kwargs) -> httpx.Response:
         """An installation-scoped REST call for repo."""

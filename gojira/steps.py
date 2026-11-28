@@ -38,7 +38,7 @@ from gojira.generator import (
     render,
     seed_needs,
 )
-from gojira.github import SETUP_BRANCH, GitHubClient, GitHubError
+from gojira.github import SETUP_BRANCH, GitHubClient, GitHubError, merge_refused
 from gojira.k8s import K8sError, KubectlClient, kustomize_build
 from gojira.models import App, AppStatus, Environment
 from gojira.opinions import WORKLOAD_CLASSES
@@ -905,8 +905,10 @@ class MergeSetupPr:
     no human content to protect, so the review gate is theirs to waive. A repo
     with human content is merged only when the caller says its owner handed
     it over (`App.handed_over`); the waiver is the owner's then, given to the
-    caller before it connected the app. Like OpenSetupPr, re-decides against
-    the real world each run.
+    caller before it connected the app. A merge GitHub refuses (a branch rule
+    wanting a review or a check) is left open for a person on any repo; only
+    a failed call fails the step. Like OpenSetupPr, re-decides against the
+    real world each run.
     """
 
     name = "merge_setup_pr"
@@ -955,16 +957,20 @@ class MergeSetupPr:
         try:
             gh.merge_pr(repo, url)
         except GitHubError as exc:
-            if not ctx.app.handed_over:
+            if not merge_refused(exc):
+                # The call failed, not the merge: a 5xx, a dead network. The
+                # step fails and the next provision tries again (#144).
                 raise
-            # A handed-over repo is still its owner's on GitHub, and a branch
-            # rule there (a required review, a required check) outranks the
-            # hand-over. That is a person's merge, not a failed provision:
-            # the PR stays open and the app waits in awaiting_pr, the state
-            # every caller already knows how to wait on. The next run tries
-            # again.
-            log.warning("handed-over app %s: GitHub refused the merge of %s (%s); "
-                        "left open for a person", ctx.app.name, url, exc)
+            # GitHub refused THIS merge: a branch rule on the repo wants a
+            # review or a check, or the head moved. That is a person's merge
+            # now, not a failed provision: the PR stays open and the app waits
+            # in awaiting_pr, the state every caller already knows how to wait
+            # on; a sync or the next run picks the merge up. Any repo can carry
+            # such a rule (a deploy repo in a public org did, 2026-11-27), so
+            # this no longer depends on handed_over.
+            log.warning("%s: GitHub refused the merge of %s (%s); left open for a person",
+                        ctx.app.name, url, exc)
+            ctx.app.status = AppStatus.AWAITING_PR  # for direct apply() callers; provision_app recomputes
             return f"left open: GitHub refused the merge of {url}"
         # Load-bearing for direct apply() callers; provision_app's recompute
         # derives the same status from the cleared setup_pr_url below.

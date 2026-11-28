@@ -6,6 +6,17 @@ All notable changes to Gojira are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A merge GitHub refuses waits for a person; a failed call fails the step**
+  (#144). A branch ruleset that wants a review or a check answers the setup
+  PR's merge with 405. `merge_setup_pr` used to fail on that, leaving the app
+  in `failed` beside a green, mergeable PR nobody was pointed at (a deploy
+  repo in a public org, 2026-11-27). Now the PR stays open and the app waits
+  in `awaiting_pr`, where every caller and the sync already know what to do;
+  only a 5xx or a dead network fails the step, on a handed-over repo too.
+  `GitHubError.status` carries the HTTP status from the App client.
+
 ### Changed
 
 - **The runner variable is Gojira's, and it leaves when unwanted** (#155).
