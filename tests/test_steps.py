@@ -21,6 +21,7 @@ from gojira.provisioner import (
     ProvisionEngine,
     provision_app,
 )
+from gojira.github import GitHubError, merge_refused
 from gojira.steps import (
     DEPLOY_ROLES,
     MANAGED_LABEL,
@@ -312,6 +313,54 @@ def test_merge_setup_pr_merges_and_activates(single_env):
     assert github.merged == ["https://github.com/acme/agent-clio/pull/1"]
     assert ctx.app.status == AppStatus.ACTIVE
     assert "merged" in result
+
+
+def _merge_ctx(single_env, github, **app_fields):
+    app, cluster, env = single_env
+    app.auto_merge_setup_pr = True
+    app.setup_pr_url = "https://github.com/acme/agent-clio/pull/1"
+    for k, v in app_fields.items():
+        setattr(app, k, v)
+    return ProvisionContext(app=app, config=Config(), clients={"github": github}, environments=[env])
+
+
+def test_merge_setup_pr_refused_by_a_rule_leaves_the_pr_for_a_person(single_env):
+    """A branch ruleset that wants a review answers the merge with 405 (a deploy
+    repo in a public org did, 2026-11-27). Before this the step failed and the
+    app sat in FAILED with a green, mergeable PR nobody was told about. Now the
+    PR stays open, the app waits in awaiting_pr, and the ledger says why."""
+    github = FakeGitHubClient()
+    github.merge_error = GitHubError(
+        'merge PR … failed: 405 {"message":"Repository rule violations found\n\n'
+        'At least 1 approving review is required by reviewers with write access."}', status=405)
+    ctx = _merge_ctx(single_env, github)
+    result = MergeSetupPr().apply(ctx)
+    assert result.startswith("left open: GitHub refused the merge of https://github.com/acme/agent-clio/pull/1")
+    assert ctx.app.setup_pr_url == "https://github.com/acme/agent-clio/pull/1"   # kept: the sync finds it
+    assert ctx.app.status == AppStatus.AWAITING_PR
+    assert github.merged == []
+
+
+def test_merge_setup_pr_failed_call_fails_the_step(single_env):
+    """A 502 is the call failing, not GitHub declining: the step fails and the
+    next provision retries (#144). With handed_over too — before this a handed-
+    over repo swallowed every GitHubError, a dead network included."""
+    for handed_over in (False, True):
+        github = FakeGitHubClient()
+        github.merge_error = GitHubError("merge PR … failed: 502 bad gateway", status=502)
+        ctx = _merge_ctx(single_env, github, handed_over=handed_over)
+        with pytest.raises(GitHubError, match="502"):
+            MergeSetupPr().apply(ctx)
+        assert ctx.app.setup_pr_url is not None
+
+
+def test_merge_refused_reads_gh_stderr_when_there_is_no_status():
+    """The gh backend has no status code, only GitHub's sentence on stderr."""
+    assert merge_refused(GitHubError("gh: X Pull request #13 is not mergeable: the base branch policy "
+                                     "prohibits the merge (mergePullRequest)"))
+    assert merge_refused(GitHubError("GraphQL: Repository rule violations found (mergePullRequest)"))
+    assert not merge_refused(GitHubError("gh: error connecting to api.github.com: connection reset"))
+    assert merge_refused(GitHubError("x", status=422)) and not merge_refused(GitHubError("x", status=500))
 
 
 def test_merge_setup_pr_retry_skips_already_merged_pr(single_env):
